@@ -1,0 +1,27 @@
+# Core chatbot / RAG stack
+# NOTE: this environment has the CUDA 12.1 build (torch==2.5.1+cu121). Plain
+# `pip install -r requirements.txt` gives you the CPU wheel instead -- for GPU,
+# install torch first following https://pytorch.org/get-started/locally/
+torch==2.5.1
+transformers==5.9.0
+sentence-transformers==5.5.1
+faiss-cpu==1.14.2
+numpy==2.4.4
+langdetect==1.0.9
+gradio==6.19.0
+openai==2.44.0
+
+# Knowledge-base document ingestion (.pdf / .docx support)
+# Not currently installed in this environment -- install before using
+# KNOWLEDGE_ENABLED=true with PDF/Word documents.
+pypdf
+python-docx
+
+# Auxiliary offline scripts (preprocessing.py, sentiment_zh.py) -- not required
+# by the chatbot/Web_GUI runtime path, only if you run those scripts directly.
+jieba==0.42.1
+spacy==3.8.14
+scikit-learn==1.8.0
+
+# Testing
+pytest

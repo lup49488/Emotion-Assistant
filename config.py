@@ -1,3 +1,4 @@
+import logging
 import os
 import re
 from pathlib import Path
@@ -6,6 +7,31 @@ BASE_DIR = Path(__file__).resolve().parent
 from env_loader import load_project_env
 
 LOADED_ENV_FILES = load_project_env(BASE_DIR)
+
+_logger = logging.getLogger(__name__)
+
+
+def _env_float(name: str, default: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        _logger.warning("环境变量 %s=%r 不是合法的浮点数，使用默认值 %s", name, raw, default)
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        _logger.warning("环境变量 %s=%r 不是合法的整数，使用默认值 %s", name, raw, default)
+        return default
+
 USERS_DIR = BASE_DIR / "users"
 KNOWLEDGE_DIR = BASE_DIR / "knowledge_base"
 KNOWLEDGE_DOCS_DIR = KNOWLEDGE_DIR / "documents"
@@ -36,24 +62,24 @@ HF_TOKEN             = os.getenv("HF_TOKEN") or None
 DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "local_hf")
 DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
 DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")
-DEFAULT_TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.8"))
-DEFAULT_TOP_P = float(os.getenv("LLM_TOP_P", "0.9"))
-DEFAULT_MAX_NEW_TOKENS = int(os.getenv("LLM_MAX_NEW_TOKENS", "300"))
+DEFAULT_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.8)
+DEFAULT_TOP_P = _env_float("LLM_TOP_P", 0.9)
+DEFAULT_MAX_NEW_TOKENS = _env_int("LLM_MAX_NEW_TOKENS", 300)
 
 KNOWLEDGE_ENABLED = os.getenv("KNOWLEDGE_ENABLED", "false").lower() == "true"
-KNOWLEDGE_TOP_K = int(os.getenv("KNOWLEDGE_TOP_K", "4"))
-KNOWLEDGE_RETRIEVAL_THRESHOLD = float(os.getenv("KNOWLEDGE_RETRIEVAL_THRESHOLD", "0.35"))
-KNOWLEDGE_CHUNK_SIZE = int(os.getenv("KNOWLEDGE_CHUNK_SIZE", "700"))
-KNOWLEDGE_CHUNK_OVERLAP = int(os.getenv("KNOWLEDGE_CHUNK_OVERLAP", "120"))
+KNOWLEDGE_TOP_K = _env_int("KNOWLEDGE_TOP_K", 4)
+KNOWLEDGE_RETRIEVAL_THRESHOLD = _env_float("KNOWLEDGE_RETRIEVAL_THRESHOLD", 0.35)
+KNOWLEDGE_CHUNK_SIZE = _env_int("KNOWLEDGE_CHUNK_SIZE", 700)
+KNOWLEDGE_CHUNK_OVERLAP = _env_int("KNOWLEDGE_CHUNK_OVERLAP", 120)
 
 STYLE_ENABLED = os.getenv("STYLE_ENABLED", "false").lower() == "true"
-STYLE_TOP_K = int(os.getenv("STYLE_TOP_K", "3"))
-STYLE_RETRIEVAL_THRESHOLD = float(os.getenv("STYLE_RETRIEVAL_THRESHOLD", "0.30"))
-STYLE_CHUNK_SIZE = int(os.getenv("STYLE_CHUNK_SIZE", "900"))
-STYLE_CHUNK_OVERLAP = int(os.getenv("STYLE_CHUNK_OVERLAP", "120"))
+STYLE_TOP_K = _env_int("STYLE_TOP_K", 3)
+STYLE_RETRIEVAL_THRESHOLD = _env_float("STYLE_RETRIEVAL_THRESHOLD", 0.30)
+STYLE_CHUNK_SIZE = _env_int("STYLE_CHUNK_SIZE", 900)
+STYLE_CHUNK_OVERLAP = _env_int("STYLE_CHUNK_OVERLAP", 120)
 
 # 同时允许的最大会话缓存数（防止长期运行的服务内存无限增长）
-MAX_CACHED_SESSIONS = int(os.getenv("MAX_CACHED_SESSIONS", "1000"))
+MAX_CACHED_SESSIONS = _env_int("MAX_CACHED_SESSIONS", 1000)
 
 INTEREST_PATTERNS = [
     "我喜欢", "我爱", "我讨厌", "我不喜欢", "我想成为",
