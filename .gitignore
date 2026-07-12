@@ -1,0 +1,27 @@
+# Secrets / local config
+.env
+.env.local
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+
+# User data / runtime state
+users/
+knowledge_base/
+style_base/
+*.index
+.gradio/
+
+# Datasets (large, not source)
+*.csv
+ChnSentiCorp/
+imdb_reviews/
+
+# Editor / OS
+.vscode/
+
+.agents
+.claude
