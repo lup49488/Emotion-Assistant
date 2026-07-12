@@ -10,6 +10,9 @@ numpy==2.4.4
 langdetect==1.0.9
 gradio==6.19.0
 openai==2.44.0
+sentencepiece==0.1.99
+accelerate==2.3.0
+sacremoses==0.1.1
 
 # Knowledge-base document ingestion (.pdf / .docx support)
 # Not currently installed in this environment -- install before using
