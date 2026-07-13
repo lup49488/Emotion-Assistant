@@ -10,6 +10,7 @@ __pycache__/
 
 # User data / runtime state
 users/
+exports/
 knowledge_base/
 style_base/
 *.index

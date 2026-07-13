@@ -1,5 +1,10 @@
 from unittest.mock import Mock, patch
+import json
+from pathlib import Path
 
+import export_store
+import gui_memory
+import session_store
 import Web_GUI
 from session_store import SessionState
 
@@ -41,8 +46,9 @@ def test_clear_memory_section_clears_selected_interest_memory():
     state.interest_store.append({"text": "remove me"})
     state.vector_index = Mock()
 
-    with patch.object(Web_GUI, "session_store", DummySessionStore(state)):
-        result = Web_GUI.clear_memory_section("alice", "interest")
+    with patch.object(gui_memory, "session_store", DummySessionStore(state)):
+        with patch.object(gui_memory, "authorize_or_message", return_value=("alice", None)):
+            result = Web_GUI.clear_memory_section("alice", "alice-secret", "interest")
 
     assert "alice" in result
     assert state.history == [{"role": "user", "content": "keep me"}]
@@ -165,3 +171,147 @@ def test_weekly_mood_chart_defaults_to_light_palette():
     assert 'data-chart-theme="light"' in chart
     assert "background:#ffffff" in chart
     assert 'fill="#6b7280"' in chart
+
+
+def test_load_theme_and_weekly_chart_requires_access_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.submit_mood_checkin("alice", "alice-secret", "2026-07-12", "开心", 4, "")
+
+    theme, chart, summary = Web_GUI.load_theme_and_weekly_chart(
+        "alice", "", "2026-07-12", "light"
+    )
+
+    assert theme == "light"
+    assert "开心" not in chart
+    assert "请输入 User ID 和访问密码" in summary
+
+
+def test_load_theme_and_weekly_chart_allowed_with_correct_passphrase(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.submit_mood_checkin("alice", "alice-secret", "2026-07-12", "开心", 4, "")
+
+    _, chart, summary = Web_GUI.load_theme_and_weekly_chart(
+        "alice", "alice-secret", "2026-07-12", "light"
+    )
+
+    assert "开心" in chart
+    assert "记录天数" in summary
+
+
+def test_save_access_key_from_gui_reports_saved_password(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    result = Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+
+    assert "已为用户 alice 保存访问密码" in result
+
+
+def test_save_access_key_from_gui_reports_verified_password(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+
+    result = Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+
+    assert "验证通过" in result
+
+
+def test_change_access_key_from_gui_updates_password(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+
+    message, _, _ = Web_GUI.change_access_key_from_gui(
+        "alice", "alice-secret", "new-secret!"
+    )
+
+    assert "已修改" in message
+    assert "不正确" in Web_GUI.refresh_mood_panel("alice", "alice-secret")
+    assert "还没有 Mood Check-in 记录" in Web_GUI.refresh_mood_panel("alice", "new-secret!")
+
+
+def test_login_status_reports_verified_user(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+
+    result = Web_GUI.login_status_text("alice", "alice-secret")
+
+    assert result == "已验证：alice"
+
+
+def test_export_user_data_from_gui_requires_access_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    message, file_path = Web_GUI.export_user_data_from_gui("alice", "")
+
+    assert "请输入 User ID 和访问密码" in message
+    assert file_path is None
+
+
+def test_export_user_data_from_gui_writes_private_user_snapshot(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(export_store, "EXPORTS_DIR", tmp_path / "exports")
+    Web_GUI.submit_mood_checkin("alice", "alice-secret", "2026-07-12", "开心", 4, "ok")
+
+    message, file_path = Web_GUI.export_user_data_from_gui("alice", "alice-secret")
+
+    assert "已导出 alice 的用户数据" in message
+    assert file_path is not None
+    payload = json.loads((tmp_path / "exports" / Path(file_path).name).read_text(encoding="utf-8"))
+    assert payload["user_id"] == "alice"
+    assert payload["mood_checkins"][0]["mood"] == "开心"
+    assert "access_key" not in json.dumps(payload, ensure_ascii=False)
+
+
+def test_refresh_mood_panel_registers_passphrase_on_first_use(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    result = Web_GUI.refresh_mood_panel("alice", "alice-secret")
+
+    assert "还没有 Mood Check-in 记录" in result
+
+
+def test_refresh_mood_panel_blocks_wrong_passphrase(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.refresh_mood_panel("alice", "alice-secret")
+
+    result = Web_GUI.refresh_mood_panel("alice", "someone-else-guess")
+
+    assert "不正确" in result
+    assert "Mood Check-in" not in result
+
+
+def test_submit_mood_checkin_blocked_without_correct_passphrase(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.refresh_mood_panel("alice", "alice-secret")
+
+    result = Web_GUI.submit_mood_checkin(
+        "alice", "wrong-pass", "2026-07-12", "开心", 4, ""
+    )
+
+    assert "不正确" in result
+    assert Web_GUI.refresh_mood_panel("alice", "alice-secret") == "用户：alice\n\n还没有 Mood Check-in 记录。"
+
+
+def test_load_memory_editor_blocked_without_correct_passphrase(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.refresh_mood_panel("alice", "alice-secret")
+    state = SessionState(user_id="alice")
+    state.history.append({"role": "user", "content": "private"})
+
+    with patch.object(gui_memory, "session_store", DummySessionStore(state)):
+        editor_text, message = Web_GUI.load_memory_editor("alice", "wrong-pass", "history")
+
+    assert editor_text == ""
+    assert "不正确" in message
+    assert "private" not in message
+
+
+def test_load_memory_editor_allowed_with_correct_passphrase(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.refresh_mood_panel("alice", "alice-secret")
+    state = SessionState(user_id="alice")
+    state.history.append({"role": "user", "content": "private"})
+
+    with patch.object(gui_memory, "session_store", DummySessionStore(state)):
+        editor_text, message = Web_GUI.load_memory_editor("alice", "alice-secret", "history")
+
+    assert "private" in editor_text
