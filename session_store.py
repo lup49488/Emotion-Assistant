@@ -50,6 +50,7 @@ def user_paths(user_id: str) -> dict[str, Path]:
         "emotion_memory": d / "emotion_memory.json",
         "interest_memory": d / "interest_memory.json",
         "long_memory": d / "long_memory.json",
+        "mood_checkins": d / "mood_checkins.json",
         "vector_index": d / "memory.index",
         "lock": d / ".lock",
     }

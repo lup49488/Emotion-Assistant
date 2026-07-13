@@ -1,5 +1,7 @@
 import os
 import threading
+import logging
+import time
 import torch
 
 from dataclasses import dataclass
@@ -16,14 +18,41 @@ from config import (
     DEFAULT_API_BASE_URL,
     HF_TOKEN,
     EMBEDDING_MODEL_NAME,
+    LOCAL_MODEL_ATTN_IMPLEMENTATION,
+    LOCAL_MODEL_COMPILE,
+    LOCAL_MODEL_CPU_THREADS,
+    LOCAL_MODEL_DTYPE,
+    LOCAL_MODEL_LOW_CPU_MEM_USAGE,
 )
 
+logger = logging.getLogger(__name__)
 
 _embedding_model: Any | None = None
 _tokenizer: Any | None = None
 _llm_model: Any | None = None
 _model_init_lock = threading.Lock()       # 保护模型懒加载本身的并发初始化
 _llm_inference_lock = threading.Lock()    # 保护 model.generate() 调用的并发执行
+
+def _resolve_torch_dtype() -> Any | None:
+    dtype = LOCAL_MODEL_DTYPE
+    if dtype in {"", "auto"}:
+        if torch.cuda.is_available():
+            return torch.bfloat16 if torch.cuda.is_bf16_supported() else torch.float16
+        return None
+    if dtype in {"bf16", "bfloat16"}:
+        return torch.bfloat16
+    if dtype in {"fp16", "float16"}:
+        return torch.float16
+    if dtype in {"fp32", "float32"}:
+        return torch.float32
+    logger.warning("未知 LOCAL_MODEL_DTYPE=%r，将使用默认 dtype。", LOCAL_MODEL_DTYPE)
+    return None
+
+
+def _configure_torch_runtime() -> None:
+    if LOCAL_MODEL_CPU_THREADS > 0:
+        torch.set_num_threads(LOCAL_MODEL_CPU_THREADS)
+
 
 @dataclass
 class ModelRuntimeConfig:
@@ -121,8 +150,11 @@ def get_embedding_model() -> Any:
     if _embedding_model is None:
         with _model_init_lock:
             if _embedding_model is None:
+                start = time.perf_counter()
+                logger.info("正在加载向量模型：%s", EMBEDDING_MODEL_NAME)
                 SentenceTransformer = require_sentence_transformer()
                 _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+                logger.info("向量模型加载完成，用时 %.2fs", time.perf_counter() - start)
     return _embedding_model
 
 
@@ -142,14 +174,36 @@ def get_llm() -> tuple[Any, Any]:
     if _tokenizer is None or _llm_model is None:
         with _model_init_lock:
             if _tokenizer is None or _llm_model is None:
+                start = time.perf_counter()
+                _configure_torch_runtime()
+                logger.info("正在加载本地聊天模型：%s", CHAT_MODEL_NAME)
                 AutoModelForCausalLM, AutoTokenizer, _ = require_transformers()
                 if _tokenizer is None:
-                    _tokenizer = AutoTokenizer.from_pretrained(CHAT_MODEL_NAME, token=HF_TOKEN)
+                    _tokenizer = AutoTokenizer.from_pretrained(
+                        CHAT_MODEL_NAME,
+                        token=HF_TOKEN,
+                        use_fast=True,
+                    )
                 if _llm_model is None:
-                    kwargs: dict[str, Any] = {"token": HF_TOKEN, "device_map": "auto"}
-                    if torch.cuda.is_available():
-                        kwargs["torch_dtype"] = torch.bfloat16
+                    kwargs: dict[str, Any] = {
+                        "token": HF_TOKEN,
+                        "device_map": "auto",
+                        "low_cpu_mem_usage": LOCAL_MODEL_LOW_CPU_MEM_USAGE,
+                    }
+                    dtype = _resolve_torch_dtype()
+                    if dtype is not None:
+                        kwargs["torch_dtype"] = dtype
+                    if LOCAL_MODEL_ATTN_IMPLEMENTATION:
+                        kwargs["attn_implementation"] = LOCAL_MODEL_ATTN_IMPLEMENTATION
                     _llm_model = AutoModelForCausalLM.from_pretrained(CHAT_MODEL_NAME, **kwargs)
+                    _llm_model.eval()
+                    if LOCAL_MODEL_COMPILE and hasattr(torch, "compile"):
+                        try:
+                            _llm_model = torch.compile(_llm_model, mode="reduce-overhead")
+                            logger.info("已启用 torch.compile 优化本地模型。")
+                        except Exception:
+                            logger.exception("torch.compile 失败，继续使用未编译模型。")
+                logger.info("本地聊天模型加载完成，用时 %.2fs", time.perf_counter() - start)
     return _tokenizer, _llm_model
 
 def get_text_iterator_streamer() -> type:
@@ -163,6 +217,7 @@ def get_text_iterator_streamer() -> type:
 def _stream_local_hf(
     full_messages: list[dict[str, str]], config: ModelRuntimeConfig
 ) -> Generator[str, None, None]:
+    start = time.perf_counter()
     tokenizer, model = get_llm()
     prompt  = tokenizer.apply_chat_template(full_messages, tokenize=False, add_generation_prompt=True)
     encoded = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -180,7 +235,7 @@ def _stream_local_hf(
         max_new_tokens=config.max_new_tokens,
         temperature=config.temperature,
         top_p=config.top_p,
-        do_sample=True,
+        do_sample=config.temperature > 0,
         use_cache=True,
     )
 
@@ -197,6 +252,7 @@ def _stream_local_hf(
                 yield chunk
     finally:
         generate_thread.join(timeout=60)
+        logger.info("本地模型回复完成，用时 %.2fs", time.perf_counter() - start)
 
 
 def _stream_openai_compatible(

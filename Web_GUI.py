@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import threading
-from datetime import datetime
+from html import escape
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
 import gradio as gr
 
+from app_logging import clear_logs, get_log_text, setup_gui_logging
 import goemotions_local as goemotions
 from chatbot import (
     DEFAULT_LLM_PROVIDER,
@@ -19,6 +22,7 @@ from chatbot import (
     session_store,
 )
 from config import (
+    BASE_DIR,
     DEFAULT_API_BASE_URL,
     DEFAULT_API_MODEL,
     DEFAULT_MAX_NEW_TOKENS,
@@ -35,6 +39,14 @@ from knowledge_store import (
     rebuild_knowledge_index,
 )
 from llm_providers import ModelRuntimeConfig, require_openai_client
+from mood_store import (
+    MOOD_CHOICES,
+    add_mood_checkin,
+    delete_mood_checkin,
+    format_mood_checkins,
+    format_weekly_mood_summary,
+    get_weekly_mood_points,
+)
 from style_store import (
     build_style_context,
     import_style_documents,
@@ -42,6 +54,8 @@ from style_store import (
     style_status,
 )
 
+setup_gui_logging()
+logger = logging.getLogger(__name__)
 
 PROVIDER_CHOICES = [
     "local_hf",
@@ -59,6 +73,8 @@ PROVIDER_API_KEYS = {
     "openai_compatible": ["LLM_API_KEY"],
     "custom": ["LLM_API_KEY"],
 }
+
+LOCAL_ENV_PATH = BASE_DIR / ".env.local"
 
 MEMORY_SECTION_LABELS = {
     "history": "短期对话",
@@ -224,6 +240,12 @@ def respond(
         max_new_tokens=max_new_tokens,
     )
     partial = ""
+    logger.info(
+        "开始对话请求：user=%s provider=%s model=%s",
+        user_id or "local",
+        config.normalized_provider(),
+        config.resolved_model(),
+    )
     set_chat_status(f"正在请求 {config.normalized_provider()} / {config.resolved_model()}")
     try:
         for chunk in handle_user_message_stream(
@@ -256,18 +278,172 @@ def refresh_status(provider: str, model: str, base_url: str, api_key: str) -> st
     return build_status_text(provider, model, base_url, api_key)
 
 
+def _env_quote(value: str) -> str:
+    if value == "":
+        return ""
+    if any(char.isspace() or char in '#"\\' for char in value):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
+    return value
+
+
+def _read_env_lines(path: Path) -> list[str]:
+    if not path.exists():
+        return []
+    return path.read_text(encoding="utf-8").splitlines()
+
+
+def _upsert_env_values(path: Path, updates: dict[str, str]) -> None:
+    lines = _read_env_lines(path)
+    remaining = dict(updates)
+    new_lines: list[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        prefix = ""
+        candidate = stripped
+        if candidate.startswith("export "):
+            prefix = "export "
+            candidate = candidate[7:].lstrip()
+        if not candidate or candidate.startswith("#") or "=" not in candidate:
+            new_lines.append(line)
+            continue
+
+        key = candidate.split("=", 1)[0].strip()
+        if key in remaining:
+            new_lines.append(f"{prefix}{key}={_env_quote(remaining.pop(key))}")
+        else:
+            new_lines.append(line)
+
+    if remaining and new_lines and new_lines[-1].strip():
+        new_lines.append("")
+    for key, value in remaining.items():
+        new_lines.append(f"{key}={_env_quote(value)}")
+
+    path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
+
+
+def _provider_key_name(provider: str) -> str:
+    if provider == "deepseek":
+        return "DEEPSEEK_API_KEY"
+    if provider == "openai":
+        return "OPENAI_API_KEY"
+    if provider == "openrouter":
+        return "OPENROUTER_API_KEY"
+    return "LLM_API_KEY"
+
+
+def save_model_config_to_env(
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    temperature: float,
+    top_p: float,
+    max_new_tokens: int,
+) -> str:
+    provider = (provider or "local_hf").strip()
+    model = (model or "").strip()
+    base_url = (base_url or "").strip()
+
+    updates = {
+        "LLM_PROVIDER": provider,
+        "LLM_TEMPERATURE": str(float(temperature)),
+        "LLM_TOP_P": str(float(top_p)),
+        "LLM_MAX_NEW_TOKENS": str(int(max_new_tokens)),
+    }
+
+    if provider == "local_hf":
+        updates["CHAT_MODEL_NAME"] = model
+    else:
+        updates["LLM_API_MODEL"] = model
+        if base_url:
+            updates["LLM_API_BASE_URL"] = base_url
+        if provider == "deepseek":
+            updates["DEEPSEEK_MODEL"] = model
+        elif provider == "openai":
+            updates["OPENAI_MODEL"] = model
+        elif provider == "openrouter":
+            updates["OPENROUTER_MODEL"] = model
+
+    key_saved = False
+    if api_key and api_key.strip():
+        updates[_provider_key_name(provider)] = api_key.strip()
+        key_saved = True
+
+    _upsert_env_values(LOCAL_ENV_PATH, updates)
+    os.environ.update(updates)
+    logger.info("模型配置已保存：provider=%s model=%s path=%s", provider, model, LOCAL_ENV_PATH.name)
+
+    message = f"已保存模型配置到 {LOCAL_ENV_PATH.name}。"
+    if key_saved:
+        message += " API Key 已写入本机 .env.local，请不要提交该文件。"
+    else:
+        message += " API Key 输入为空，未改动已有密钥。"
+    return message
+
+
+def save_model_config_and_refresh(
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    temperature: float,
+    top_p: float,
+    max_new_tokens: int,
+) -> tuple[str, str]:
+    result = save_model_config_to_env(
+        provider,
+        model,
+        base_url,
+        api_key,
+        temperature,
+        top_p,
+        max_new_tokens,
+    )
+    return result, build_status_text(provider, model, base_url, api_key)
+
+
+def _connection_result(level: str, message: str, detail: str = "") -> str:
+    parts = [f"[{level}] {message}"]
+    if detail:
+        parts.append(f"详情：{detail}")
+    return "\n".join(parts)
+
+
+def classify_connection_error(exc: Exception, provider: str) -> str:
+    text = str(exc)
+    type_name = type(exc).__name__.lower()
+    lowered = text.lower()
+    provider = (provider or "").lower()
+
+    if "api key" in lowered or "缺少" in text:
+        return _connection_result("配置错误", "缺少 API Key", text)
+    if "module" in lowered or "缺少依赖" in text or "modulenotfounderror" in type_name:
+        return _connection_result("依赖缺失", "缺少运行依赖", text)
+    if "401" in lowered or "unauthorized" in lowered or "authentication" in lowered:
+        return _connection_result("认证失败", "API Key 无效或无权限", text)
+    if "429" in lowered or "rate limit" in lowered or "quota" in lowered or "insufficient" in lowered:
+        return _connection_result("限流/额度", "请求频率或账户额度受限", text)
+    if any(word in lowered for word in ["timeout", "timed out", "connection", "network", "proxy", "dns", "ssl"]):
+        return _connection_result("网络错误", "无法稳定连接模型服务", text)
+    if provider == "local_hf":
+        return _connection_result("本地模型错误", "本地模型加载或推理失败", text)
+    return _connection_result("响应异常", "模型服务返回异常响应", text)
+
+
 def _test_local_connection(config: ModelRuntimeConfig) -> str:
     tokenizer, model = get_llm()
     model_name = getattr(getattr(model, "config", None), "name_or_path", None)
     tokenizer_name = getattr(tokenizer, "name_or_path", None)
     loaded_name = model_name or tokenizer_name or config.resolved_model()
-    return f"本地模型加载成功：{loaded_name}"
+    return _connection_result("成功", f"本地模型加载成功：{loaded_name}")
 
 
 def _test_api_connection(config: ModelRuntimeConfig) -> str:
     api_key = config.resolved_api_key()
     if not api_key:
-        raise RuntimeError("当前 Provider 缺少 API Key，请在 GUI 输入或写入 .env")
+        raise RuntimeError("当前 Provider 缺少 API Key，请在 GUI 输入或写入 .env.local")
 
     OpenAI = require_openai_client()
     client_kwargs: dict[str, Any] = {"api_key": api_key}
@@ -285,7 +461,10 @@ def _test_api_connection(config: ModelRuntimeConfig) -> str:
     )
     if not response.choices:
         raise RuntimeError("接口返回成功，但没有 choices 字段")
-    return f"API 连接成功：{config.normalized_provider()} / {config.resolved_model()}"
+    return _connection_result(
+        "成功",
+        f"API 连接成功：{config.normalized_provider()} / {config.resolved_model()}",
+    )
 
 
 def test_model_connection(
@@ -315,7 +494,7 @@ def test_model_connection(
         set_connection_status(result)
         return result
     except Exception as exc:
-        result = f"连接失败：{exc}"
+        result = classify_connection_error(exc, config.normalized_provider())
         set_connection_status(result)
         return result
 
@@ -502,6 +681,180 @@ def clear_memory_section_and_reload(user_id: str, section: str) -> tuple[str, st
     return editor_text, f"{message}\n\n{snapshot}"
 
 
+def refresh_mood_panel(user_id: str) -> str:
+    user_id = user_id or "local"
+    try:
+        return format_mood_checkins(user_id)
+    except Exception as exc:
+        return f"读取 Mood Check-in 失败：{exc}"
+
+
+def submit_mood_checkin(
+    user_id: str,
+    checkin_date: str,
+    mood: str,
+    intensity: int | float,
+    note: str,
+) -> str:
+    user_id = user_id or "local"
+    try:
+        record = add_mood_checkin(
+            user_id=user_id,
+            mood=mood,
+            intensity=intensity,
+            note=note,
+            checkin_date=checkin_date,
+        )
+        logger.info("Mood check-in saved for user=%s date=%s", user_id, record["date"])
+        return f"已保存 {record['date']} 的 Mood Check-in。\n\n{format_mood_checkins(user_id)}"
+    except Exception as exc:
+        logger.warning("Failed to save mood check-in for user=%s: %s", user_id, exc)
+        return f"保存 Mood Check-in 失败：{exc}"
+
+
+def delete_mood_checkin_from_gui(user_id: str, checkin_date: str) -> str:
+    user_id = user_id or "local"
+    try:
+        deleted = delete_mood_checkin(user_id, checkin_date)
+        prefix = f"已删除 {checkin_date} 的 Mood Check-in。" if deleted else f"没有找到 {checkin_date} 的记录。"
+        if deleted:
+            logger.info("Mood check-in deleted for user=%s date=%s", user_id, checkin_date)
+        return f"{prefix}\n\n{format_mood_checkins(user_id)}"
+    except Exception as exc:
+        logger.warning("Failed to delete mood check-in for user=%s: %s", user_id, exc)
+        return f"删除 Mood Check-in 失败：{exc}"
+
+
+def _render_weekly_mood_chart(
+    points: list[dict[str, Any]], theme_mode: str = "light"
+) -> str:
+    dark = theme_mode == "dark"
+    colors = {
+        "surface": "#111827" if dark else "#ffffff",
+        "surface_alt": "#1f2937" if dark else "#f9fafb",
+        "border": "#475569" if dark else "#e5e7eb",
+        "grid": "#374151" if dark else "#e5e7eb",
+        "axis": "#94a3b8" if dark else "#9ca3af",
+        "text": "#f8fafc" if dark else "#111827",
+        "muted": "#cbd5e1" if dark else "#6b7280",
+        "date": "#e2e8f0" if dark else "#374151",
+        "label_border": "#64748b" if dark else "#cbd5e1",
+        "missing": "#64748b" if dark else "#d1d5db",
+        "accent": "#60a5fa" if dark else "#2563eb",
+    }
+    width = 720
+    height = 300
+    left = 52
+    right = 24
+    top = 28
+    bottom = 56
+    chart_width = width - left - right
+    chart_height = height - top - bottom
+    step = chart_width / max(1, len(points) - 1)
+
+    def x_at(index: int) -> float:
+        return left + index * step
+
+    def y_at(value: int | float) -> float:
+        return top + (5 - float(value)) / 4 * chart_height
+
+    y_lines = []
+    for value in range(1, 6):
+        y = y_at(value)
+        y_lines.append(
+            f'<line x1="{left}" y1="{y:.1f}" x2="{width - right}" y2="{y:.1f}" '
+            f'stroke="{colors["grid"]}" stroke-width="1" />'
+            f'<text x="18" y="{y + 4:.1f}" font-size="12" fill="{colors["muted"]}">{value}</text>'
+        )
+
+    recorded_points = [
+        (index, point)
+        for index, point in enumerate(points)
+        if point.get("intensity") is not None
+    ]
+    path = ""
+    if recorded_points:
+        commands = []
+        for index, point in recorded_points:
+            prefix = "M" if not commands else "L"
+            commands.append(f"{prefix}{x_at(index):.1f},{y_at(int(point['intensity'])):.1f}")
+        path = (
+            f'<path d="{" ".join(commands)}" fill="none" '
+            f'stroke="{colors["accent"]}" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />'
+        )
+
+    marks = []
+    for index, point in enumerate(points):
+        x = x_at(index)
+        label = escape(str(point["label"]))
+        date_text = escape(str(point["date"]))
+        intensity = point.get("intensity")
+        if intensity is None:
+            marks.append(
+                f'<circle cx="{x:.1f}" cy="{y_at(1):.1f}" r="4" fill="{colors["missing"]}" />'
+                f'<text x="{x:.1f}" y="{height - 24}" text-anchor="middle" font-size="12" fill="{colors["muted"]}">{label}</text>'
+            )
+            continue
+        mood = escape(str(point.get("mood") or ""))
+        note = escape(str(point.get("note") or ""))
+        y = y_at(int(intensity))
+        label_width = max(44, len(mood) * 14 + 16)
+        label_x = min(max(x - label_width / 2, left), width - right - label_width)
+        label_y = max(6, y - 30)
+        tooltip = f"{date_text} {mood} 强度 {intensity}/5"
+        if note:
+            tooltip += f"：{note}"
+        marks.append(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="7" fill="{colors["accent"]}">'
+            f'<title>{escape(tooltip)}</title></circle>'
+            f'<rect x="{label_x:.1f}" y="{label_y:.1f}" width="{label_width:.1f}" height="20" '
+            f'rx="5" fill="{colors["surface_alt"]}" stroke="{colors["label_border"]}" stroke-width="1" />'
+            f'<text x="{label_x + label_width / 2:.1f}" y="{label_y + 14:.1f}" '
+            f'text-anchor="middle" font-size="12" font-weight="600" fill="{colors["text"]}">'
+            f'{mood}</text>'
+            f'<text x="{x:.1f}" y="{height - 24}" text-anchor="middle" font-size="12" fill="{colors["date"]}">{label}</text>'
+        )
+
+    empty_note = ""
+    if not recorded_points:
+        empty_note = (
+            f'<text x="{width / 2:.1f}" y="{height / 2:.1f}" text-anchor="middle" '
+            f'font-size="15" fill="{colors["muted"]}">暂无本周 Mood Check-in 数据</text>'
+        )
+
+    return (
+        f'<div data-chart-theme="{theme_mode}" style="width:100%;overflow-x:auto;'
+        f'background:{colors["surface"]};border:1px solid {colors["border"]};border-radius:8px;padding:8px;">'
+        f'<svg viewBox="0 0 {width} {height}" role="img" '
+        'aria-label="Weekly Mood Chart" style="max-width:100%;height:auto;">'
+        f'{"".join(y_lines)}'
+        f'<line x1="{left}" y1="{top}" x2="{left}" y2="{height - bottom}" stroke="{colors["axis"]}" />'
+        f'<line x1="{left}" y1="{height - bottom}" x2="{width - right}" y2="{height - bottom}" stroke="{colors["axis"]}" />'
+        f'{path}{"".join(marks)}{empty_note}'
+        f'<text x="18" y="18" font-size="12" fill="{colors["muted"]}">强度</text>'
+        '</svg></div>'
+    )
+
+
+def refresh_weekly_mood_chart(
+    user_id: str, end_date: str, theme_mode: str = "light"
+) -> tuple[str, str]:
+    user_id = user_id or "local"
+    try:
+        points = get_weekly_mood_points(user_id, end_date=end_date)
+        return _render_weekly_mood_chart(points, theme_mode), format_weekly_mood_summary(user_id, end_date=end_date)
+    except Exception as exc:
+        logger.warning("Failed to refresh weekly mood chart for user=%s: %s", user_id, exc)
+        return "", f"刷新 Weekly Mood Chart 失败：{exc}"
+
+
+def load_theme_and_weekly_chart(
+    user_id: str, end_date: str, theme_mode: str = "light"
+) -> tuple[str, str, str]:
+    chart, summary = refresh_weekly_mood_chart(user_id, end_date, theme_mode)
+    return theme_mode, chart, summary
+
+
 def _uploaded_file_path(file_obj: Any) -> str:
     if isinstance(file_obj, (str, Path)):
         return str(file_obj)
@@ -657,6 +1010,39 @@ initial_model_choices = MODEL_CHOICES.get(initial_provider, MODEL_CHOICES["local
 initial_model = DEFAULT_MODELS.get(initial_provider, initial_model_choices[0])
 initial_base_url = DEFAULT_BASE_URLS.get(initial_provider, "")
 
+THEME_CSS = """
+#theme-mode {
+    max-width: 360px;
+    margin-bottom: 8px;
+}
+#theme-mode .wrap {
+    gap: 6px;
+}
+"""
+
+REFRESH_CHART_THEME_JS = """
+(userId, endDate, theme) => {
+    const dark = theme === "dark";
+    document.documentElement.classList.toggle("dark", dark);
+    document.body.classList.toggle("dark", dark);
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    localStorage.setItem("chatbot-theme", theme);
+    return [userId, endDate, theme];
+}
+"""
+
+LOAD_THEME_JS = """
+(userId, endDate, theme) => {
+    const saved = localStorage.getItem("chatbot-theme");
+    const selected = saved === "dark" ? "dark" : "light";
+    const dark = selected === "dark";
+    document.documentElement.classList.toggle("dark", dark);
+    document.body.classList.toggle("dark", dark);
+    document.documentElement.style.colorScheme = dark ? "dark" : "light";
+    return [userId, endDate, selected];
+}
+"""
+
 with gr.Blocks(title="情绪感知对话助手") as demo:
     provider_input = gr.Dropdown(
         label="Provider",
@@ -723,6 +1109,13 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         render=False,
     )
 
+    theme_mode_input = gr.Radio(
+        label="页面主题",
+        choices=[("浅色", "light"), ("深色", "dark")],
+        value="light",
+        elem_id="theme-mode",
+    )
+
     gr.ChatInterface(
         fn=respond,
         title="情绪感知对话助手",
@@ -751,8 +1144,79 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         with gr.Row():
             refresh_button = gr.Button("刷新状态")
             connection_button = gr.Button("测试连接")
+            save_model_config_button = gr.Button("保存模型配置")
         connection_result = gr.Textbox(label="连接测试结果", interactive=False)
+        save_model_config_result = gr.Textbox(label="模型配置保存结果", interactive=False)
         status_timer = gr.Timer(value=2.0)
+
+    with gr.Accordion("日志面板", open=False):
+        log_box = gr.Textbox(
+            label="最近日志",
+            value=get_log_text,
+            lines=14,
+            interactive=False,
+        )
+        with gr.Row():
+            refresh_logs_button = gr.Button("刷新日志")
+            clear_logs_button = gr.Button("清空日志")
+        log_timer = gr.Timer(value=3.0)
+
+    with gr.Accordion("Mood Check-in", open=False):
+        with gr.Row():
+            mood_date_input = gr.Textbox(
+                label="日期",
+                value=date.today().isoformat(),
+                placeholder="YYYY-MM-DD",
+            )
+            mood_choice_input = gr.Dropdown(
+                label="今天的心情",
+                choices=MOOD_CHOICES,
+                value="一般",
+                allow_custom_value=True,
+            )
+            mood_intensity_input = gr.Slider(
+                label="强度",
+                minimum=1,
+                maximum=5,
+                value=3,
+                step=1,
+            )
+        mood_note_input = gr.Textbox(
+            label="备注",
+            placeholder="可以写下触发原因、身体状态、需要被记住的背景。",
+            lines=3,
+        )
+        with gr.Row():
+            save_mood_button = gr.Button("保存 Mood")
+            refresh_mood_button = gr.Button("刷新 Mood")
+            delete_mood_button = gr.Button("删除当天记录")
+        mood_box = gr.Textbox(
+            label="最近 Mood Check-ins",
+            value="点击“刷新 Mood”查看当前用户的记录。",
+            lines=10,
+            interactive=False,
+        )
+
+    with gr.Accordion("Weekly Mood Chart", open=False):
+        weekly_mood_end_date_input = gr.Textbox(
+            label="结束日期",
+            value=date.today().isoformat(),
+            placeholder="YYYY-MM-DD",
+        )
+        refresh_weekly_mood_button = gr.Button("刷新周情绪图")
+        weekly_mood_chart = gr.HTML(
+            value=_render_weekly_mood_chart(
+                get_weekly_mood_points(os.getenv("CHATBOT_USER_ID", "local")),
+                "light",
+            )
+        )
+        weekly_mood_summary = gr.Textbox(
+            label="一周摘要",
+            value=format_weekly_mood_summary(os.getenv("CHATBOT_USER_ID", "local")),
+            lines=6,
+            interactive=False,
+        )
+
 
     with gr.Accordion("记忆管理", open=False):
         memory_section = gr.Radio(
@@ -855,6 +1319,71 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         ],
         outputs=[connection_result, status_box],
     )
+    save_model_config_button.click(
+        fn=save_model_config_and_refresh,
+        inputs=[
+            provider_input,
+            model_input,
+            base_url_input,
+            api_key_input,
+            temperature_input,
+            top_p_input,
+            max_new_tokens_input,
+        ],
+        outputs=[save_model_config_result, status_box],
+    )
+    refresh_logs_button.click(
+        fn=get_log_text,
+        outputs=log_box,
+    )
+    clear_logs_button.click(
+        fn=clear_logs,
+        outputs=log_box,
+    )
+    log_timer.tick(
+        fn=get_log_text,
+        outputs=log_box,
+    )
+    save_mood_button.click(
+        fn=submit_mood_checkin,
+        inputs=[
+            user_id_input,
+            mood_date_input,
+            mood_choice_input,
+            mood_intensity_input,
+            mood_note_input,
+        ],
+        outputs=mood_box,
+    )
+    refresh_mood_button.click(
+        fn=refresh_mood_panel,
+        inputs=user_id_input,
+        outputs=mood_box,
+    )
+    delete_mood_button.click(
+        fn=delete_mood_checkin_from_gui,
+        inputs=[user_id_input, mood_date_input],
+        outputs=mood_box,
+    )
+    refresh_weekly_mood_button.click(
+        fn=refresh_weekly_mood_chart,
+        inputs=[user_id_input, weekly_mood_end_date_input, theme_mode_input],
+        outputs=[weekly_mood_chart, weekly_mood_summary],
+    )
+    theme_mode_input.change(
+        fn=refresh_weekly_mood_chart,
+        inputs=[user_id_input, weekly_mood_end_date_input, theme_mode_input],
+        outputs=[weekly_mood_chart, weekly_mood_summary],
+        js=REFRESH_CHART_THEME_JS,
+        show_progress="hidden",
+    )
+    demo.load(
+        fn=load_theme_and_weekly_chart,
+        inputs=[user_id_input, weekly_mood_end_date_input, theme_mode_input],
+        outputs=[theme_mode_input, weekly_mood_chart, weekly_mood_summary],
+        js=LOAD_THEME_JS,
+        show_progress="hidden",
+    )
     load_memory_button.click(
         fn=load_memory_editor,
         inputs=[user_id_input, memory_section],
@@ -914,4 +1443,5 @@ if __name__ == "__main__":
         server_name=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"),
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
         share=os.getenv("GRADIO_SHARE", "false").lower() == "true",
+        css=THEME_CSS,
     )
