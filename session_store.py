@@ -50,6 +50,7 @@ def user_paths(user_id: str) -> dict[str, Path]:
         "emotion_memory": d / "emotion_memory.json",
         "interest_memory": d / "interest_memory.json",
         "long_memory": d / "long_memory.json",
+        "stable_profile": d / "stable_profile.json",
         "mood_checkins": d / "mood_checkins.json",
         "vector_index": d / "memory.index",
         "lock": d / ".lock",
@@ -112,6 +113,7 @@ class SessionState:
     history: list[dict[str, str]] = field(default_factory=list)
     emotion_memory: list[dict[str, Any]] = field(default_factory=list)
     long_memory: list[dict[str, Any]] = field(default_factory=list)
+    stable_profile: list[dict[str, Any]] = field(default_factory=list)
     interest_store: InterestMemoryStore = field(default_factory=InterestMemoryStore)
     vector_index: VectorIndexManager | None = None
     preferences: dict[str, str | None] = field(
@@ -134,10 +136,31 @@ def load_state(user_id: str) -> SessionState:
         state = SessionState(user_id=user_id)
         state.history = load_json(paths["history"])
         state.emotion_memory = load_json(paths["emotion_memory"])
-        raw_long_memory = clean_long_term(load_json(paths["long_memory"]))
+        raw_long_memory = load_json(paths["long_memory"])
+        state.stable_profile = [
+            item for item in load_json(paths["stable_profile"])
+            if isinstance(item, dict) and str(item.get("text", "")).strip()
+        ]
+        # Move profiles created before the dedicated stable-profile store existed.
+        legacy_profiles = [
+            item for item in raw_long_memory
+            if isinstance(item, dict) and item.get("kind") == "profile" and str(item.get("text", "")).strip()
+        ]
+        known_texts = {str(item["text"]).strip() for item in state.stable_profile}
+        for item in legacy_profiles:
+            text = str(item["text"]).strip()
+            if text not in known_texts:
+                state.stable_profile.append(dict(item))
+                known_texts.add(text)
+        raw_long_memory = [
+            item for item in raw_long_memory
+            if not (isinstance(item, dict) and item.get("kind") == "profile")
+        ]
+        raw_long_memory = clean_long_term(raw_long_memory)
         state.long_memory = compact_long_memory(raw_long_memory)
         state.interest_store.load(load_json(paths["interest_memory"]))
         save_json(paths["long_memory"], state.long_memory)
+        save_json(paths["stable_profile"], state.stable_profile)
     return state
 
 
@@ -147,6 +170,7 @@ def persist_state(state: SessionState) -> None:
         save_json(paths["history"], state.history)
         save_json(paths["emotion_memory"], state.emotion_memory)
         save_json(paths["long_memory"], state.long_memory)
+        save_json(paths["stable_profile"], state.stable_profile)
         save_json(paths["interest_memory"], state.interest_store.items)
 
 

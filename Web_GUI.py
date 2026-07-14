@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -24,6 +25,11 @@ from config import (
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
     KNOWLEDGE_ENABLED,
+    LOCAL_MODEL_ATTN_IMPLEMENTATION,
+    LOCAL_MODEL_COMPILE,
+    LOCAL_MODEL_CPU_THREADS,
+    LOCAL_MODEL_DTYPE,
+    LOCAL_MODEL_LOW_CPU_MEM_USAGE,
     LOADED_ENV_FILES,
     STYLE_ENABLED,
 )
@@ -46,17 +52,31 @@ from gui_memory import (
     MEMORY_SECTION_LABELS,
     clear_memory_section,
     clear_memory_section_and_reload,
+    clear_stable_profile,
     format_memory_snapshot,
+    add_stable_profile,
     load_memory_editor,
     load_memory_panel,
+    load_stable_profile_editor,
     save_memory_editor,
+    save_stable_profile_editor,
+)
+from gui_knowledge import (
+    clear_knowledge_documents,
+    delete_knowledge_document,
+    format_knowledge_document_list,
+    refresh_knowledge_document_panel,
 )
 from gui_mood import (
     _render_weekly_mood_chart,
+    delete_mood_checkin_and_refresh_dashboard,
     delete_mood_checkin_from_gui,
+    load_theme_and_weekly_dashboard,
     load_theme_and_weekly_chart,
     refresh_mood_panel,
+    refresh_weekly_mood_dashboard,
     refresh_weekly_mood_chart,
+    submit_mood_checkin_and_refresh_dashboard,
     submit_mood_checkin,
 )
 from knowledge_store import (
@@ -83,6 +103,14 @@ _status_lock = threading.Lock()
 _warmup_status = "未启动"
 _last_chat_status = "尚未开始对话"
 _last_connection_status = "尚未测试连接"
+
+LOCAL_DTYPE_CHOICES = ["auto", "bfloat16", "float16", "float32"]
+LOCAL_ATTENTION_CHOICES = [
+    ("自动 / 默认", ""),
+    ("PyTorch SDPA", "sdpa"),
+    ("Flash Attention 2", "flash_attention_2"),
+    ("Eager", "eager"),
+]
 
 
 def _now() -> str:
@@ -398,6 +426,95 @@ def save_model_config_and_refresh(
     return result, build_status_text(provider, model, base_url, api_key)
 
 
+def _normalize_local_dtype(dtype: str) -> str:
+    normalized = (dtype or "auto").strip().lower()
+    aliases = {"bf16": "bfloat16", "fp16": "float16", "fp32": "float32"}
+    normalized = aliases.get(normalized, normalized)
+    if normalized not in LOCAL_DTYPE_CHOICES:
+        raise ValueError("模型精度仅支持 auto、bfloat16、float16 或 float32。")
+    return normalized
+
+
+def build_local_runtime_config_text(
+    dtype: str,
+    attention_implementation: str,
+    low_cpu_mem_usage: bool,
+    compile_model: bool,
+    cpu_threads: int | float,
+) -> str:
+    attention = (attention_implementation or "").strip() or "自动 / 默认"
+    threads = int(cpu_threads or 0)
+    return "\n".join([
+        "本地 Hugging Face 模型运行配置",
+        f"模型精度：{_normalize_local_dtype(dtype)}",
+        f"注意力实现：{attention}",
+        f"低内存加载：{'开启' if low_cpu_mem_usage else '关闭'}",
+        f"torch.compile：{'开启' if compile_model else '关闭'}",
+        f"CPU 线程：{'使用 PyTorch 默认值' if threads == 0 else threads}",
+        "提示：配置保存后需重启应用，下一次加载本地模型时才会生效。",
+    ])
+
+
+def save_local_runtime_config_to_env(
+    dtype: str,
+    attention_implementation: str,
+    low_cpu_mem_usage: bool,
+    compile_model: bool,
+    cpu_threads: int | float,
+) -> str:
+    normalized_dtype = _normalize_local_dtype(dtype)
+    attention = (attention_implementation or "").strip()
+    if "\r" in attention or "\n" in attention:
+        raise ValueError("注意力实现不能包含换行符。")
+    threads = int(cpu_threads or 0)
+    if not 0 <= threads <= 512:
+        raise ValueError("CPU 线程数应在 0 到 512 之间。")
+
+    updates = {
+        "LOCAL_MODEL_DTYPE": normalized_dtype,
+        "LOCAL_MODEL_ATTN_IMPLEMENTATION": attention,
+        "LOCAL_MODEL_LOW_CPU_MEM_USAGE": str(bool(low_cpu_mem_usage)).lower(),
+        "LOCAL_MODEL_COMPILE": str(bool(compile_model)).lower(),
+        "LOCAL_MODEL_CPU_THREADS": str(threads),
+    }
+    _upsert_env_values(LOCAL_ENV_PATH, updates)
+    os.environ.update(updates)
+    logger.info("本地模型运行配置已保存：path=%s", LOCAL_ENV_PATH.name)
+    return f"已保存本地模型运行配置到 {LOCAL_ENV_PATH.name}。请重启应用后再加载本地模型。"
+
+
+def save_local_runtime_config_and_refresh(
+    dtype: str,
+    attention_implementation: str,
+    low_cpu_mem_usage: bool,
+    compile_model: bool,
+    cpu_threads: int | float,
+) -> tuple[str, str]:
+    try:
+        message = save_local_runtime_config_to_env(
+            dtype,
+            attention_implementation,
+            low_cpu_mem_usage,
+            compile_model,
+            cpu_threads,
+        )
+    except Exception as exc:
+        return f"保存失败：{exc}", build_local_runtime_config_text(
+            dtype,
+            attention_implementation,
+            low_cpu_mem_usage,
+            compile_model,
+            cpu_threads,
+        )
+    return message, build_local_runtime_config_text(
+        dtype,
+        attention_implementation,
+        low_cpu_mem_usage,
+        compile_model,
+        cpu_threads,
+    )
+
+
 def _connection_result(level: str, message: str, detail: str = "") -> str:
     parts = [f"[{level}] {message}"]
     if detail:
@@ -493,6 +610,37 @@ def test_model_connection(
         return result
 
 
+def build_connection_test_detail(
+    result: str,
+    provider: str,
+    model: str,
+    base_url: str,
+    elapsed_seconds: float,
+) -> str:
+    level = result.split("]", 1)[0].lstrip("[") if result.startswith("[") else "未知"
+    suggestions = {
+        "成功": "连接可用，可以开始对话。",
+        "配置错误": "检查 Provider、模型名和 API Key 是否填写完整。",
+        "认证失败": "检查 API Key、账户权限和所选模型是否可用。",
+        "限流/额度": "稍后重试，或检查服务商账户余额与请求额度。",
+        "网络错误": "检查网络、代理设置、Base URL 和证书环境。",
+        "依赖缺失": "安装提示中提到的 Python 依赖后重启应用。",
+        "本地模型错误": "检查模型名称、显存/内存和本地运行配置。",
+        "响应异常": "检查服务商返回信息、模型名称和接口兼容性。",
+    }
+    endpoint = base_url.strip() or ("本地 Hugging Face" if provider == "local_hf" else "服务商默认地址")
+    return "\n".join([
+        f"测试状态：{level}",
+        f"Provider：{provider or '未选择'}",
+        f"模型：{model or '未选择'}",
+        f"目标：{endpoint}",
+        f"耗时：{elapsed_seconds:.2f} 秒",
+        f"建议：{suggestions.get(level, '请根据下方详情检查配置。')}",
+        "",
+        result,
+    ])
+
+
 def test_model_connection_and_refresh(
     provider: str,
     model: str,
@@ -501,7 +649,8 @@ def test_model_connection_and_refresh(
     temperature: float,
     top_p: float,
     max_new_tokens: int,
-) -> tuple[str, str]:
+) -> tuple[str, str, str]:
+    started_at = time.perf_counter()
     result = test_model_connection(
         provider,
         model,
@@ -511,7 +660,14 @@ def test_model_connection_and_refresh(
         top_p,
         max_new_tokens,
     )
-    return result, build_status_text(provider, model, base_url, api_key)
+    detail = build_connection_test_detail(
+        result,
+        provider,
+        model,
+        base_url,
+        time.perf_counter() - started_at,
+    )
+    return result, detail, build_status_text(provider, model, base_url, api_key)
 
 
 def _uploaded_file_path(file_obj: Any) -> str:
@@ -575,6 +731,27 @@ def preview_knowledge_search(query: str) -> str:
         return "请输入检索问题。"
     context = build_knowledge_context(query)
     return context or "没有检索到高相关资料。"
+
+
+def refresh_knowledge_documents_from_gui() -> tuple[Any, str]:
+    names, document_list = refresh_knowledge_document_panel()
+    return gr.update(choices=names, value=None), document_list
+
+
+def import_knowledge_files_and_refresh(files: list[Any] | None) -> tuple[str, Any, str]:
+    status = import_knowledge_files(files)
+    selector, document_list = refresh_knowledge_documents_from_gui()
+    return status, selector, document_list
+
+
+def delete_knowledge_document_from_gui(name: str) -> tuple[Any, str, str]:
+    names, document_list, status = delete_knowledge_document(name)
+    return gr.update(choices=names, value=None), document_list, status
+
+
+def clear_knowledge_documents_from_gui() -> tuple[Any, str, str]:
+    names, document_list, status = clear_knowledge_documents()
+    return gr.update(choices=names, value=None), document_list, status
 
 
 def import_style_files(files: list[Any] | None) -> str:
@@ -741,6 +918,37 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         precision=0,
         render=False,
     )
+    local_dtype_input = gr.Dropdown(
+        label="模型精度",
+        choices=LOCAL_DTYPE_CHOICES,
+        value=LOCAL_MODEL_DTYPE if LOCAL_MODEL_DTYPE in LOCAL_DTYPE_CHOICES else "auto",
+        render=False,
+    )
+    local_attention_input = gr.Dropdown(
+        label="注意力实现",
+        choices=LOCAL_ATTENTION_CHOICES,
+        value=LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
+        allow_custom_value=True,
+        render=False,
+    )
+    local_low_cpu_mem_input = gr.Checkbox(
+        label="低内存加载",
+        value=LOCAL_MODEL_LOW_CPU_MEM_USAGE,
+        render=False,
+    )
+    local_compile_input = gr.Checkbox(
+        label="启用 torch.compile",
+        value=LOCAL_MODEL_COMPILE,
+        render=False,
+    )
+    local_cpu_threads_input = gr.Number(
+        label="CPU 线程数（0 为默认）",
+        value=LOCAL_MODEL_CPU_THREADS,
+        minimum=0,
+        maximum=512,
+        precision=0,
+        render=False,
+    )
 
     theme_mode_input = gr.Radio(
         label="页面主题",
@@ -813,9 +1021,45 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             refresh_button = gr.Button("刷新状态")
             connection_button = gr.Button("测试连接")
             save_model_config_button = gr.Button("保存模型配置")
-        connection_result = gr.Textbox(label="连接测试结果", interactive=False)
+        connection_result = gr.Textbox(label="连接测试摘要", interactive=False)
+        connection_detail_result = gr.Textbox(
+            label="连接测试详情",
+            value="尚未测试连接。",
+            lines=9,
+            interactive=False,
+        )
         save_model_config_result = gr.Textbox(label="模型配置保存结果", interactive=False)
         status_timer = gr.Timer(value=2.0)
+
+    with gr.Accordion("本地模型运行配置", open=False):
+        with gr.Row():
+            local_dtype_input.render()
+            local_attention_input.render()
+        with gr.Row():
+            local_low_cpu_mem_input.render()
+            local_compile_input.render()
+            local_cpu_threads_input.render()
+        with gr.Row():
+            save_local_runtime_button = gr.Button("保存本地运行配置")
+            refresh_local_runtime_button = gr.Button("查看当前配置")
+        local_runtime_status = gr.Textbox(
+            label="本地模型配置状态",
+            value=lambda: build_local_runtime_config_text(
+                LOCAL_MODEL_DTYPE,
+                LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
+                LOCAL_MODEL_LOW_CPU_MEM_USAGE,
+                LOCAL_MODEL_COMPILE,
+                LOCAL_MODEL_CPU_THREADS,
+            ),
+            lines=8,
+            interactive=False,
+        )
+        local_runtime_save_result = gr.Textbox(
+            label="保存结果",
+            value="尚未保存本地运行配置。",
+            lines=3,
+            interactive=False,
+        )
 
     with gr.Accordion("日志面板", open=False):
         log_box = gr.Textbox(
@@ -881,6 +1125,12 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             lines=6,
             interactive=False,
         )
+        weekly_mood_analysis = gr.Textbox(
+            label="情绪波动分析",
+            value=AUTH_REQUIRED_MESSAGE,
+            lines=8,
+            interactive=False,
+        )
 
 
     with gr.Accordion("记忆管理", open=False):
@@ -891,6 +1141,7 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
                 ("情绪记忆", "emotion"),
                 ("长期记忆", "long"),
                 ("兴趣记忆", "interest"),
+                ("稳定资料", "stable"),
                 ("全部记忆", "all"),
             ],
             value="history",
@@ -909,6 +1160,30 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             label="当前用户记忆",
             value="点击“查看记忆”加载当前用户的记忆。",
             lines=18,
+            interactive=False,
+        )
+
+    with gr.Accordion("稳定资料", open=False):
+        stable_profile_input = gr.Textbox(
+            label="新增稳定资料",
+            placeholder="例如：我是学生；我喜欢被简洁地称呼；我来自北京",
+            lines=2,
+        )
+        with gr.Row():
+            add_stable_profile_button = gr.Button("添加资料")
+            load_stable_profile_button = gr.Button("查看资料")
+            save_stable_profile_button = gr.Button("保存编辑")
+            clear_stable_profile_button = gr.Button("清空稳定资料", variant="stop")
+        stable_profile_editor = gr.Textbox(
+            label="稳定资料 JSON 编辑区",
+            value="[]",
+            lines=10,
+            interactive=True,
+        )
+        stable_profile_box = gr.Textbox(
+            label="稳定资料状态",
+            value="点击“查看资料”加载当前用户的稳定资料。",
+            lines=10,
             interactive=False,
         )
 
@@ -933,6 +1208,23 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             lines=16,
             interactive=False,
         )
+        with gr.Accordion("RAG 文档管理", open=False):
+            knowledge_document_selector = gr.Dropdown(
+                label="已入库文档",
+                choices=refresh_knowledge_document_panel()[0],
+                value=None,
+                interactive=True,
+            )
+            with gr.Row():
+                refresh_knowledge_documents_button = gr.Button("刷新文档列表")
+                delete_knowledge_document_button = gr.Button("删除所选文档", variant="stop")
+                clear_knowledge_documents_button = gr.Button("清空全部文档", variant="stop")
+            knowledge_document_box = gr.Textbox(
+                label="文档清单",
+                value=format_knowledge_document_list,
+                lines=10,
+                interactive=False,
+            )
 
     with gr.Accordion("风格库 / Style RAG", open=False):
         style_files = gr.File(
@@ -982,7 +1274,7 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             top_p_input,
             max_new_tokens_input,
         ],
-        outputs=[connection_result, status_box],
+        outputs=[connection_result, connection_detail_result, status_box],
     )
     save_model_config_button.click(
         fn=save_model_config_and_refresh,
@@ -996,6 +1288,28 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             max_new_tokens_input,
         ],
         outputs=[save_model_config_result, status_box],
+    )
+    save_local_runtime_button.click(
+        fn=save_local_runtime_config_and_refresh,
+        inputs=[
+            local_dtype_input,
+            local_attention_input,
+            local_low_cpu_mem_input,
+            local_compile_input,
+            local_cpu_threads_input,
+        ],
+        outputs=[local_runtime_save_result, local_runtime_status],
+    )
+    refresh_local_runtime_button.click(
+        fn=build_local_runtime_config_text,
+        inputs=[
+            local_dtype_input,
+            local_attention_input,
+            local_low_cpu_mem_input,
+            local_compile_input,
+            local_cpu_threads_input,
+        ],
+        outputs=local_runtime_status,
     )
     save_access_key_button.click(
         fn=save_access_key_and_status,
@@ -1025,7 +1339,7 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         outputs=log_box,
     )
     save_mood_button.click(
-        fn=submit_mood_checkin,
+        fn=submit_mood_checkin_and_refresh_dashboard,
         inputs=[
             user_id_input,
             access_key_input,
@@ -1033,8 +1347,16 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             mood_choice_input,
             mood_intensity_input,
             mood_note_input,
+            weekly_mood_end_date_input,
+            theme_mode_input,
         ],
-        outputs=mood_box,
+        outputs=[
+            mood_box,
+            weekly_mood_end_date_input,
+            weekly_mood_chart,
+            weekly_mood_summary,
+            weekly_mood_analysis,
+        ],
     )
     refresh_mood_button.click(
         fn=refresh_mood_panel,
@@ -1042,26 +1364,38 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         outputs=mood_box,
     )
     delete_mood_button.click(
-        fn=delete_mood_checkin_from_gui,
-        inputs=[user_id_input, access_key_input, mood_date_input],
-        outputs=mood_box,
+        fn=delete_mood_checkin_and_refresh_dashboard,
+        inputs=[
+            user_id_input,
+            access_key_input,
+            mood_date_input,
+            weekly_mood_end_date_input,
+            theme_mode_input,
+        ],
+        outputs=[
+            mood_box,
+            weekly_mood_end_date_input,
+            weekly_mood_chart,
+            weekly_mood_summary,
+            weekly_mood_analysis,
+        ],
     )
     refresh_weekly_mood_button.click(
-        fn=refresh_weekly_mood_chart,
+        fn=refresh_weekly_mood_dashboard,
         inputs=[user_id_input, access_key_input, weekly_mood_end_date_input, theme_mode_input],
-        outputs=[weekly_mood_chart, weekly_mood_summary],
+        outputs=[weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
     )
     theme_mode_input.change(
-        fn=refresh_weekly_mood_chart,
+        fn=refresh_weekly_mood_dashboard,
         inputs=[user_id_input, access_key_input, weekly_mood_end_date_input, theme_mode_input],
-        outputs=[weekly_mood_chart, weekly_mood_summary],
+        outputs=[weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
         js=REFRESH_CHART_THEME_JS,
         show_progress="hidden",
     )
     demo.load(
-        fn=load_theme_and_weekly_chart,
+        fn=load_theme_and_weekly_dashboard,
         inputs=[user_id_input, access_key_input, weekly_mood_end_date_input, theme_mode_input],
-        outputs=[theme_mode_input, weekly_mood_chart, weekly_mood_summary],
+        outputs=[theme_mode_input, weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
         js=LOAD_THEME_JS,
         show_progress="hidden",
     )
@@ -1080,10 +1414,30 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         inputs=[user_id_input, access_key_input, memory_section],
         outputs=[memory_editor, memory_box],
     )
+    add_stable_profile_button.click(
+        fn=add_stable_profile,
+        inputs=[user_id_input, access_key_input, stable_profile_input],
+        outputs=[stable_profile_input, stable_profile_editor, stable_profile_box],
+    )
+    load_stable_profile_button.click(
+        fn=load_stable_profile_editor,
+        inputs=[user_id_input, access_key_input],
+        outputs=[stable_profile_editor, stable_profile_box],
+    )
+    save_stable_profile_button.click(
+        fn=save_stable_profile_editor,
+        inputs=[user_id_input, access_key_input, stable_profile_editor],
+        outputs=[stable_profile_editor, stable_profile_box],
+    )
+    clear_stable_profile_button.click(
+        fn=clear_stable_profile,
+        inputs=[user_id_input, access_key_input],
+        outputs=[stable_profile_editor, stable_profile_box],
+    )
     import_knowledge_button.click(
-        fn=import_knowledge_files,
+        fn=import_knowledge_files_and_refresh,
         inputs=knowledge_files,
-        outputs=knowledge_box,
+        outputs=[knowledge_box, knowledge_document_selector, knowledge_document_box],
     )
     rebuild_knowledge_button.click(
         fn=rebuild_knowledge_panel,
@@ -1097,6 +1451,19 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         fn=preview_knowledge_search,
         inputs=knowledge_query,
         outputs=knowledge_box,
+    )
+    refresh_knowledge_documents_button.click(
+        fn=refresh_knowledge_documents_from_gui,
+        outputs=[knowledge_document_selector, knowledge_document_box],
+    )
+    delete_knowledge_document_button.click(
+        fn=delete_knowledge_document_from_gui,
+        inputs=knowledge_document_selector,
+        outputs=[knowledge_document_selector, knowledge_document_box, knowledge_box],
+    )
+    clear_knowledge_documents_button.click(
+        fn=clear_knowledge_documents_from_gui,
+        outputs=[knowledge_document_selector, knowledge_document_box, knowledge_box],
     )
     import_style_button.click(
         fn=import_style_files,

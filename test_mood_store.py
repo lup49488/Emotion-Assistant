@@ -7,6 +7,8 @@ from mood_store import (
     add_mood_checkin,
     delete_mood_checkin,
     format_mood_checkins,
+    format_mood_fluctuation_analysis,
+    format_weekly_mood_analysis,
     format_weekly_mood_summary,
     get_weekly_mood_points,
     load_mood_checkins,
@@ -110,3 +112,20 @@ def test_format_weekly_mood_summary_describes_recorded_days(isolated_users_dir):
     assert "平均强度：3.0/5" in text
     assert "最高：2026-07-10 开心 4/5" in text
     assert "最低：2026-07-12 平静 2/5" in text
+
+
+def test_weekly_mood_analysis_reports_fluctuation_and_care_note(isolated_users_dir):
+    add_mood_checkin("alice", "平静", 1, "A", "2026-07-10")
+    add_mood_checkin("alice", "焦虑", 5, "B", "2026-07-11")
+    text = format_weekly_mood_analysis("alice", end_date="2026-07-11")
+
+    assert "强度范围：1 到 5/5，跨度 4" in text
+    assert "最大单日变化：2026-07-10 到 2026-07-11 上升 4 点" in text
+    assert "波动程度：较明显" in text
+    assert "关怀提示" in text
+
+
+def test_mood_fluctuation_analysis_handles_no_records():
+    text = format_mood_fluctuation_analysis([])
+
+    assert "暂无足够" in text

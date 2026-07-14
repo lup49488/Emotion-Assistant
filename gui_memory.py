@@ -5,6 +5,7 @@ from typing import Any
 
 from chatbot import session_store
 from gui_auth import authorize_or_message
+from memory_store import update_stable_profile
 
 
 MEMORY_SECTION_LABELS = {
@@ -12,6 +13,7 @@ MEMORY_SECTION_LABELS = {
     "emotion": "情绪记忆",
     "long": "长期记忆",
     "interest": "兴趣记忆",
+    "stable": "稳定资料",
     "all": "全部记忆",
 }
 
@@ -40,12 +42,14 @@ def format_memory_snapshot(user_id: str, state: Any) -> str:
     history = list(state.history)
     emotion_memory = list(state.emotion_memory)
     long_memory = list(state.long_memory)
+    stable_profile = list(state.stable_profile)
     interest_items = list(state.interest_store.items)
 
     sections = [
         ("短期对话", history),
         ("情绪记忆", emotion_memory),
         ("长期记忆", long_memory),
+        ("稳定资料", stable_profile),
         ("兴趣记忆", interest_items),
     ]
     lines = [
@@ -55,6 +59,7 @@ def format_memory_snapshot(user_id: str, state: Any) -> str:
             f"短期对话 {len(history)} 条，"
             f"情绪记忆 {len(emotion_memory)} 条，"
             f"长期记忆 {len(long_memory)} 条，"
+            f"稳定资料 {len(stable_profile)} 条，"
             f"兴趣记忆 {len(interest_items)} 条"
         ),
     ]
@@ -89,12 +94,15 @@ def _memory_section_items(state: Any, section: str) -> list[dict[str, Any]]:
         return list(state.long_memory)
     if section == "interest":
         return list(state.interest_store.items)
+    if section == "stable":
+        return list(state.stable_profile)
     if section == "all":
         return [
             {"section": "history", "items": list(state.history)},
             {"section": "emotion", "items": list(state.emotion_memory)},
             {"section": "long", "items": list(state.long_memory)},
             {"section": "interest", "items": list(state.interest_store.items)},
+            {"section": "stable", "items": list(state.stable_profile)},
         ]
     raise ValueError(f"未知记忆区块：{section}")
 
@@ -113,6 +121,15 @@ def _replace_memory_section(state: Any, section: str, items: list[dict[str, Any]
         state.interest_store.replace_all(items)
         if state.vector_index is not None:
             state.vector_index.mark_dirty_for_rebuild()
+        return
+    if section == "stable":
+        normalized: list[dict[str, Any]] = []
+        for item in items:
+            text = str(item.get("text", "")).strip()
+            if not text:
+                raise ValueError("稳定资料的每一项都需要 text 字段。")
+            normalized.append({**item, "text": text, "kind": "profile"})
+        state.stable_profile = normalized
         return
     raise ValueError(f"未知记忆区块：{section}")
 
@@ -175,6 +192,8 @@ def clear_memory_section(user_id: str, access_key: str, section: str) -> str:
             if section in {"interest", "all"}:
                 state.interest_store.replace_all([])
                 state.vector_index.mark_dirty_for_rebuild()
+            if section in {"stable", "all"}:
+                state.stable_profile.clear()
         label = MEMORY_SECTION_LABELS.get(section, section)
         return f"已清理 {user_id} 的{label}。\n\n{load_memory_panel(user_id, access_key)}"
     except Exception as exc:
@@ -190,3 +209,34 @@ def clear_memory_section_and_reload(
     message = clear_memory_section(user_id, access_key, section)
     editor_text, snapshot = load_memory_editor(user_id, access_key, section)
     return editor_text, f"{message}\n\n{snapshot}"
+
+
+def load_stable_profile_editor(user_id: str, access_key: str) -> tuple[str, str]:
+    return load_memory_editor(user_id, access_key, "stable")
+
+
+def save_stable_profile_editor(
+    user_id: str, access_key: str, editor_text: str
+) -> tuple[str, str]:
+    return save_memory_editor(user_id, access_key, "stable", editor_text)
+
+
+def clear_stable_profile(user_id: str, access_key: str) -> tuple[str, str]:
+    return clear_memory_section_and_reload(user_id, access_key, "stable")
+
+
+def add_stable_profile(user_id: str, access_key: str, text: str) -> tuple[str, str, str]:
+    user_id, auth_error = authorize_or_message(user_id, access_key)
+    if auth_error:
+        return text, "", auth_error
+    try:
+        profile_text = (text or "").strip()
+        if not profile_text:
+            raise ValueError("请先输入要保存的稳定资料。")
+        with session_store.session(user_id) as state:
+            update_stable_profile(state, {"text": profile_text, "source": "manual"})
+            editor_text = json.dumps(state.stable_profile, ensure_ascii=False, indent=2)
+            snapshot = format_memory_snapshot(user_id, state)
+        return "", editor_text, f"已保存稳定资料。\n\n{snapshot}"
+    except Exception as exc:
+        return text, "", f"保存稳定资料失败：{exc}"

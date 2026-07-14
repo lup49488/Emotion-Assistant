@@ -9,6 +9,7 @@ from mood_store import (
     add_mood_checkin,
     delete_mood_checkin,
     format_mood_checkins,
+    format_weekly_mood_analysis,
     format_weekly_mood_summary,
     get_weekly_mood_points,
 )
@@ -196,6 +197,56 @@ def refresh_weekly_mood_chart(
     return weekly_mood_view(user_id, end_date, theme_mode)
 
 
+def refresh_weekly_mood_dashboard(
+    user_id: str, access_key: str, end_date: str, theme_mode: str = "light"
+) -> tuple[str, str, str]:
+    user_id, auth_error = authorize_or_message(user_id, access_key)
+    if auth_error:
+        return "", auth_error, auth_error
+    chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
+    try:
+        analysis = format_weekly_mood_analysis(user_id, end_date=end_date)
+    except Exception as exc:
+        logger.warning("Failed to analyze weekly mood for user=%s: %s", user_id, exc)
+        analysis = f"情绪波动分析失败：{exc}"
+    return chart, summary, analysis
+
+
+def submit_mood_checkin_and_refresh_dashboard(
+    user_id: str,
+    access_key: str,
+    checkin_date: str,
+    mood: str,
+    intensity: int | float,
+    note: str,
+    current_end_date: str,
+    theme_mode: str = "light",
+) -> tuple[str, str, str, str, str]:
+    mood_panel = submit_mood_checkin(user_id, access_key, checkin_date, mood, intensity, note)
+    if not mood_panel.startswith("已保存 "):
+        return mood_panel, current_end_date, "", "", mood_panel
+    chart, summary, analysis = refresh_weekly_mood_dashboard(
+        user_id, access_key, checkin_date, theme_mode
+    )
+    return mood_panel, checkin_date, chart, summary, analysis
+
+
+def delete_mood_checkin_and_refresh_dashboard(
+    user_id: str,
+    access_key: str,
+    checkin_date: str,
+    current_end_date: str,
+    theme_mode: str = "light",
+) -> tuple[str, str, str, str, str]:
+    mood_panel = delete_mood_checkin_from_gui(user_id, access_key, checkin_date)
+    if mood_panel.startswith(("删除 Mood Check-in 失败", "请先", "访问密码")):
+        return mood_panel, current_end_date, "", "", mood_panel
+    chart, summary, analysis = refresh_weekly_mood_dashboard(
+        user_id, access_key, checkin_date, theme_mode
+    )
+    return mood_panel, checkin_date, chart, summary, analysis
+
+
 def load_theme_and_weekly_chart(
     user_id: str, access_key: str, end_date: str, theme_mode: str = "light"
 ) -> tuple[str, str, str]:
@@ -204,6 +255,16 @@ def load_theme_and_weekly_chart(
         return theme_mode, render_weekly_mood_chart([], theme_mode), auth_error
     chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
     return theme_mode, chart, summary
+
+
+def load_theme_and_weekly_dashboard(
+    user_id: str, access_key: str, end_date: str, theme_mode: str = "light"
+) -> tuple[str, str, str, str]:
+    user_id, auth_error = authorize_or_message(user_id, access_key)
+    if auth_error:
+        return theme_mode, render_weekly_mood_chart([], theme_mode), auth_error, auth_error
+    chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
+    return theme_mode, chart, summary, format_weekly_mood_analysis(user_id, end_date=end_date)
 
 
 # Backward-compatible name used by existing tests and Web_GUI imports.

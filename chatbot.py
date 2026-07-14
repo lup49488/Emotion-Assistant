@@ -55,6 +55,7 @@ from memory_store import (
     update_long_term,
     update_mid_term,
     update_short_term,
+    update_stable_profile,
 )
 from prompt_builder import build_messages
 from style_store import build_style_context
@@ -88,7 +89,10 @@ USERS_DIR = CONFIG_USERS_DIR
 
 
 def _sync_user_paths() -> None:
-    _session_store.USERS_DIR = USERS_DIR
+    # Keep the legacy override for callers that explicitly set chatbot.USERS_DIR,
+    # but do not overwrite a lower-level directory override with the default path.
+    if USERS_DIR != CONFIG_USERS_DIR:
+        _session_store.USERS_DIR = USERS_DIR
 
 
 def user_dir(user_id: str):

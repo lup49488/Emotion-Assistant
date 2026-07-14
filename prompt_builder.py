@@ -27,6 +27,9 @@ def build_messages(
     fluct_style = fluctuation_to_style(fluct_level)
     related_interests = retrieve_interests(user_text, state)
     interest_text = "\n".join(f"- {item.get('text', '')}" for item in related_interests) or "无"
+    stable_profile_text = "\n".join(
+        f"- {item.get('text', '')}" for item in getattr(state, "stable_profile", [])
+    ) or "无"
 
     preference_lines: list[str] = []
     if state.preferences.get("language"):
@@ -59,6 +62,9 @@ def build_messages(
 
 相关长期兴趣：
 {interest_text}
+
+稳定资料（用户明确陈述的长期背景，优先作为事实参考）：
+{stable_profile_text}
 
 知识库参考资料：
 {knowledge_text}

@@ -156,6 +156,60 @@ def list_documents() -> list[str]:
     return sorted(path.name for path in KNOWLEDGE_DOCS_DIR.iterdir() if path.is_file())
 
 
+def list_document_details() -> list[dict[str, Any]]:
+    """Return stored-document metadata for management views without reading file contents."""
+    chunks_by_source: dict[str, int] = {}
+    for chunk in load_chunks():
+        source = str(chunk.get("source", "")).strip()
+        if source:
+            chunks_by_source[source] = chunks_by_source.get(source, 0) + 1
+
+    details: list[dict[str, Any]] = []
+    for name in list_documents():
+        path = KNOWLEDGE_DOCS_DIR / name
+        stat = path.stat()
+        details.append({
+            "name": name,
+            "chunks": chunks_by_source.get(name, 0),
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+        })
+    return details
+
+
+def _stored_document_path(name: str) -> Path:
+    clean_name = (name or "").strip()
+    if not clean_name or Path(clean_name).name != clean_name:
+        raise ValueError("请选择知识库中的有效文档。")
+    path = KNOWLEDGE_DOCS_DIR / clean_name
+    if not path.exists() or not path.is_file():
+        raise FileNotFoundError(f"知识库中不存在该文档：{clean_name}")
+    return path
+
+
+def delete_document(name: str) -> dict[str, Any]:
+    """Delete one stored source document and rebuild derived RAG data."""
+    ensure_knowledge_dirs()
+    path = _stored_document_path(name)
+    path.unlink()
+    result = rebuild_knowledge_index()
+    result["deleted"] = path.name
+    return result
+
+
+def clear_documents() -> dict[str, Any]:
+    """Remove all supported RAG source documents and rebuild an empty index."""
+    ensure_knowledge_dirs()
+    removed: list[str] = []
+    for path in KNOWLEDGE_DOCS_DIR.iterdir():
+        if path.is_file() and path.suffix.lower() in SUPPORTED_EXTENSIONS:
+            path.unlink()
+            removed.append(path.name)
+    result = rebuild_knowledge_index()
+    result["removed"] = sorted(removed)
+    return result
+
+
 def ingest_document(path: str | Path, *, copy_to_store: bool = True) -> list[dict[str, Any]]:
     stored_path = copy_document_to_store(path) if copy_to_store else Path(path)
     text = extract_text(stored_path)

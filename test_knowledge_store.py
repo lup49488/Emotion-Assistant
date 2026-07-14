@@ -63,6 +63,41 @@ def test_knowledge_status_reports_counts():
     assert "索引状态：已建立" in status
 
 
+def test_delete_document_removes_only_selected_source_and_rebuilds():
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        docs_dir = base / "documents"
+        chunks_path = base / "chunks.json"
+        index_path = base / "knowledge.index"
+        docs_dir.mkdir(parents=True)
+        (docs_dir / "keep.txt").write_text("保留", encoding="utf-8")
+        (docs_dir / "remove.txt").write_text("删除", encoding="utf-8")
+
+        with patch.object(knowledge_store, "KNOWLEDGE_DIR", base), \
+             patch.object(knowledge_store, "KNOWLEDGE_DOCS_DIR", docs_dir), \
+             patch.object(knowledge_store, "KNOWLEDGE_CHUNKS_PATH", chunks_path), \
+             patch.object(knowledge_store, "KNOWLEDGE_INDEX_PATH", index_path), \
+             patch.object(knowledge_store, "_write_index"):
+            result = knowledge_store.delete_document("remove.txt")
+
+        assert result["deleted"] == "remove.txt"
+        assert (docs_dir / "keep.txt").exists()
+        assert not (docs_dir / "remove.txt").exists()
+
+
+def test_delete_document_rejects_path_traversal():
+    with tempfile.TemporaryDirectory() as tmp:
+        docs_dir = Path(tmp) / "documents"
+        docs_dir.mkdir(parents=True)
+        with patch.object(knowledge_store, "KNOWLEDGE_DOCS_DIR", docs_dir):
+            try:
+                knowledge_store.delete_document("../outside.txt")
+            except ValueError as exc:
+                assert "有效文档" in str(exc)
+            else:
+                raise AssertionError("Expected invalid document name to be rejected")
+
+
 def test_build_messages_includes_knowledge_context():
     state = SessionState(user_id="default")
     messages = build_messages(

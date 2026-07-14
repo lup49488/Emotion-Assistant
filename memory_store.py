@@ -229,17 +229,63 @@ def score_memory(user_text: str, emo_label: str, emo_score: float) -> float:
     score = float(emo_score) * SCORE_EMOTION_MULTIPLIER
     if emo_label in {"sadness", "fear", "anger", "anxiety"}:
         score += SCORE_NEGATIVE_BONUS
-    if any(kw in user_text for kw in MEMORY_KEYWORDS):
-        score += SCORE_MEMORY_KEYWORD_BONUS
-    if any(kw in user_text for kw in PERSONAL_KEYWORDS):
-        score += SCORE_PERSONAL_KEYWORD_BONUS
+    if not is_memory_query(user_text):
+        if any(kw in user_text for kw in MEMORY_KEYWORDS):
+            score += SCORE_MEMORY_KEYWORD_BONUS
+        if any(kw in user_text for kw in PERSONAL_KEYWORDS):
+            score += SCORE_PERSONAL_KEYWORD_BONUS
     return score
 
 
+def is_memory_query(text: str) -> bool:
+    """Identify questions about stored facts so they are not saved as new facts."""
+    normalized = (text or "").strip()
+    if not normalized:
+        return False
+    lowered = normalized.lower()
+    if normalized.endswith(("?", "？", "吗", "呢")):
+        return True
+    if any(marker in normalized for marker in ("什么", "哪些", "谁", "哪里", "怎么", "为何", "为什么", "多少")):
+        return True
+    return any(phrase in lowered for phrase in (
+        "what do i like", "what are my interests", "do you remember", "who am i",
+    ))
+
+
 def extract_long_term_interest(text: str) -> dict[str, Any] | None:
-    lowered = text.lower()
-    if any(p.lower() in lowered for p in INTEREST_PATTERNS):
-        return {"text": text.strip(), "time": datetime.now().isoformat()}
+    normalized = (text or "").strip()
+    lowered = normalized.lower()
+    if is_memory_query(normalized):
+        return None
+    for pattern in INTEREST_PATTERNS:
+        position = lowered.find(pattern.lower())
+        if position < 0:
+            continue
+        remainder = normalized[position + len(pattern):].strip(" ：:，,。.!！")
+        if remainder:
+            return {"text": normalized, "time": datetime.now().isoformat()}
+    return None
+
+
+def extract_personal_profile(text: str) -> dict[str, Any] | None:
+    """Extract explicit, declarative identity facts as durable profile memory."""
+    normalized = (text or "").strip()
+    if is_memory_query(normalized):
+        return None
+    lowered = normalized.lower()
+    chinese_prefixes = {
+        "我是": "identity", "我叫": "name", "我的名字是": "name", "我来自": "origin", "我今年": "age",
+    }
+    english_prefixes = {
+        "i am ": "identity", "i'm ": "identity", "my name is ": "name",
+        "i am from ": "origin", "i live in ": "location",
+    }
+    for prefix, key in chinese_prefixes.items():
+        if normalized.startswith(prefix) and normalized[len(prefix):].strip():
+            return {"text": normalized, "time": datetime.now().isoformat(), "kind": "profile", "key": key}
+    for prefix, key in english_prefixes.items():
+        if lowered.startswith(prefix) and lowered[len(prefix):].strip():
+            return {"text": normalized, "time": datetime.now().isoformat(), "kind": "profile", "key": key}
     return None
 
 
@@ -350,8 +396,29 @@ def update_long_term(state: Any, info: dict[str, Any]) -> None:
         state.long_memory.append(info)
 
 
+def update_stable_profile(state: Any, info: dict[str, Any]) -> None:
+    """Save a durable personal fact, replacing an older value in the same profile field."""
+    text = str(info.get("text", "")).strip()
+    if not text:
+        return
+    now = datetime.now().isoformat()
+    item = {**info, "text": text, "kind": "profile", "updated_at": now}
+    key = str(item.get("key", "")).strip()
+    for index, existing in enumerate(state.stable_profile):
+        if (key and existing.get("key") == key) or existing.get("text") == text:
+            item["created_at"] = existing.get("created_at") or now
+            state.stable_profile[index] = item
+            return
+    item["created_at"] = now
+    state.stable_profile.append(item)
+
+
 def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: float) -> str:
     score = score_memory(user_text, emo_label, emo_score)
+    profile = extract_personal_profile(user_text)
+    if profile is not None:
+        update_stable_profile(state, profile)
+        return "stable"
     interest = extract_long_term_interest(user_text)
     if interest and not memory_exists(interest["text"], state):
         outcome = save_interest(interest, state)

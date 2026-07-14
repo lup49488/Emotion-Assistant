@@ -23,6 +23,7 @@ from unittest.mock import patch
 
 import conftest  # noqa: F401  (确保 stub 在 chatbot 导入前注册)
 import chatbot
+from prompt_builder import build_messages
 
 
 # ═══════════════════════════════════════════════════════════
@@ -100,6 +101,10 @@ class TestScoreMemory(unittest.TestCase):
         # "我是" 命中 PERSONAL_KEYWORDS（+1.5）：0.1*2 + 1.5 = 1.7
         score = chatbot.score_memory("我是程序员", "neutral", 0.1)
         self.assertAlmostEqual(score, 1.7)
+
+    def test_memory_query_does_not_receive_keyword_bonus(self):
+        score = chatbot.score_memory("我喜欢什么？", "neutral", 0.1)
+        self.assertAlmostEqual(score, 0.2)
 
     def test_all_bonuses_stack(self):
         # "我喜欢" 同时命中 MEMORY_KEYWORDS(+2) 和负面情绪(+1)
@@ -389,9 +394,39 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
         result = chatbot.extract_long_term_interest("今天天气怎么样")
         self.assertIsNone(result)
 
+    def test_interest_question_is_not_extracted_as_a_preference(self):
+        result = chatbot.extract_long_term_interest("我喜欢什么？")
+        self.assertIsNone(result)
+
+    def test_explicit_identity_is_saved_as_stable_profile(self):
+        state = chatbot.SessionState()
+
+        outcome = chatbot.smart_memory_filter(state, "我是学生", "neutral", 0.0)
+
+        self.assertEqual(outcome, "stable")
+        self.assertEqual(state.stable_profile[0]["text"], "我是学生")
+        self.assertEqual(state.stable_profile[0]["kind"], "profile")
+
+    def test_identity_question_is_not_saved_as_profile(self):
+        state = chatbot.SessionState()
+
+        outcome = chatbot.smart_memory_filter(state, "你觉得我是学生吗？", "neutral", 0.0)
+
+        self.assertEqual(outcome, "discard")
+        self.assertEqual(state.stable_profile, [])
+
     def test_extract_long_term_interest_english_pattern(self):
         result = chatbot.extract_long_term_interest("I love hiking on weekends")
         self.assertIsNotNone(result)
+
+    def test_stable_profile_is_included_in_prompt_context(self):
+        state = chatbot.SessionState()
+        state.stable_profile.append({"text": "我是学生", "kind": "profile"})
+
+        messages = build_messages(state, "帮我规划学习", "neutral", 0.0)
+
+        assert "稳定资料" in messages[0]["content"]
+        assert "我是学生" in messages[0]["content"]
 
 
 class TestModelRuntimeConfig(unittest.TestCase):

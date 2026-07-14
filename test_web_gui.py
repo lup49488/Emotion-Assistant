@@ -5,6 +5,7 @@ from pathlib import Path
 import export_store
 import gui_memory
 import session_store
+import chatbot
 import Web_GUI
 from session_store import SessionState
 
@@ -29,6 +30,7 @@ def test_format_memory_snapshot_includes_all_sections():
     state.history.append({"role": "user", "content": "hello"})
     state.emotion_memory.append({"label": "joy", "score": 0.9, "time": "2026-01-01T00:00:00"})
     state.long_memory.append({"text": "likes coding", "time": "2026-01-02T00:00:00"})
+    state.stable_profile.append({"text": "is a student", "kind": "profile"})
     state.interest_store.append({"text": "likes NLP", "time": "2026-01-03T00:00:00"})
 
     text = Web_GUI.format_memory_snapshot("alice", state)
@@ -37,6 +39,7 @@ def test_format_memory_snapshot_includes_all_sections():
     assert "hello" in text
     assert "joy" in text
     assert "likes coding" in text
+    assert "is a student" in text
     assert "likes NLP" in text
 
 
@@ -146,6 +149,37 @@ def test_save_model_config_to_env_writes_explicit_api_key(tmp_path):
     assert "OPENAI_MODEL=gpt-4.1-mini" in text
 
 
+def test_save_local_runtime_config_writes_supported_values(tmp_path):
+    env_path = tmp_path / ".env.local"
+
+    with patch.object(Web_GUI, "LOCAL_ENV_PATH", env_path):
+        result = Web_GUI.save_local_runtime_config_to_env(
+            "bfloat16", "sdpa", True, False, 6
+        )
+
+    text = env_path.read_text(encoding="utf-8")
+    assert "已保存本地模型运行配置" in result
+    assert "LOCAL_MODEL_DTYPE=bfloat16" in text
+    assert "LOCAL_MODEL_ATTN_IMPLEMENTATION=sdpa" in text
+    assert "LOCAL_MODEL_LOW_CPU_MEM_USAGE=true" in text
+    assert "LOCAL_MODEL_COMPILE=false" in text
+    assert "LOCAL_MODEL_CPU_THREADS=6" in text
+
+
+def test_connection_test_detail_includes_timing_and_suggestion():
+    detail = Web_GUI.build_connection_test_detail(
+        "[认证失败] API Key 无效或无权限",
+        "deepseek",
+        "deepseek-chat",
+        "https://api.deepseek.com",
+        0.42,
+    )
+
+    assert "耗时：0.42 秒" in detail
+    assert "API Key、账户权限" in detail
+    assert "deepseek-chat" in detail
+
+
 def test_weekly_mood_chart_uses_dark_palette():
     points = [
         {
@@ -248,8 +282,10 @@ def test_export_user_data_from_gui_requires_access_key(tmp_path, monkeypatch):
 
 def test_export_user_data_from_gui_writes_private_user_snapshot(tmp_path, monkeypatch):
     monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(chatbot, "USERS_DIR", tmp_path / "users")
     monkeypatch.setattr(export_store, "EXPORTS_DIR", tmp_path / "exports")
     Web_GUI.submit_mood_checkin("alice", "alice-secret", "2026-07-12", "开心", 4, "ok")
+    Web_GUI.add_stable_profile("alice", "alice-secret", "我是学生")
 
     message, file_path = Web_GUI.export_user_data_from_gui("alice", "alice-secret")
 
@@ -258,6 +294,7 @@ def test_export_user_data_from_gui_writes_private_user_snapshot(tmp_path, monkey
     payload = json.loads((tmp_path / "exports" / Path(file_path).name).read_text(encoding="utf-8"))
     assert payload["user_id"] == "alice"
     assert payload["mood_checkins"][0]["mood"] == "开心"
+    assert payload["stable_profile"][0]["text"] == "我是学生"
     assert "access_key" not in json.dumps(payload, ensure_ascii=False)
 
 

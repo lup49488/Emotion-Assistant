@@ -22,7 +22,7 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
     paths = user_paths(user_id)
     with user_file_lock(user_id):
         return {
-            "schema_version": 1,
+            "schema_version": 2,
             "exported_at": datetime.now().isoformat(timespec="seconds"),
             "user_id": user_id,
             "notes": [
@@ -32,6 +32,7 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
             "history": load_json(paths["history"]),
             "emotion_memory": load_json(paths["emotion_memory"]),
             "long_memory": load_json(paths["long_memory"]),
+            "stable_profile": load_json(paths["stable_profile"]),
             "interest_memory": load_json(paths["interest_memory"]),
             "mood_checkins": load_json(paths["mood_checkins"]),
         }

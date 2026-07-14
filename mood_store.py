@@ -217,3 +217,72 @@ def format_weekly_mood_summary(
         f"最低：{min_point['date']} {min_point['mood']} {min_point['intensity']}/5",
         f"趋势：{trend}",
     ])
+
+
+def format_mood_fluctuation_analysis(points: list[dict[str, Any]]) -> str:
+    """Summarize changes in self-reported intensity without inferring a diagnosis."""
+    recorded = [point for point in points if point.get("intensity") is not None]
+    if not recorded:
+        return "暂无足够的 Mood Check-in 数据，记录几天后可查看情绪波动分析。"
+
+    values = [int(point["intensity"]) for point in recorded]
+    intensity_range = max(values) - min(values)
+    lines = [
+        "情绪波动分析（基于自评强度，不构成医学判断）",
+        f"有效记录：{len(recorded)}/{len(points)} 天",
+        f"强度范围：{min(values)} 到 {max(values)}/5，跨度 {intensity_range}",
+    ]
+
+    adjacent_changes: list[tuple[dict[str, Any], dict[str, Any], int]] = []
+    for previous, current in zip(recorded, recorded[1:]):
+        previous_date = datetime.strptime(previous["date"], "%Y-%m-%d").date()
+        current_date = datetime.strptime(current["date"], "%Y-%m-%d").date()
+        if (current_date - previous_date).days == 1:
+            adjacent_changes.append((previous, current, int(current["intensity"]) - int(previous["intensity"])))
+
+    if adjacent_changes:
+        absolute_changes = [abs(change) for _, _, change in adjacent_changes]
+        largest_previous, largest_current, largest_change = max(
+            adjacent_changes, key=lambda item: abs(item[2])
+        )
+        direction = "上升" if largest_change > 0 else "下降" if largest_change < 0 else "持平"
+        average_change = sum(absolute_changes) / len(absolute_changes)
+        if intensity_range >= 3 or average_change >= 2:
+            fluctuation = "较明显"
+        elif intensity_range >= 2 or average_change >= 1:
+            fluctuation = "中等"
+        else:
+            fluctuation = "较平稳"
+        lines.extend([
+            f"连续记录平均变化：{average_change:.1f}",
+            f"最大单日变化：{largest_previous['date']} 到 {largest_current['date']} {direction} {abs(largest_change)} 点",
+            f"波动程度：{fluctuation}",
+        ])
+    else:
+        lines.append("连续记录不足，暂不计算单日波动。")
+
+    if len(recorded) >= 2:
+        recent_change = int(recorded[-1]["intensity"]) - int(recorded[0]["intensity"])
+        if recent_change > 0:
+            recent_text = f"近期强度较首条记录上升 {recent_change} 点"
+        elif recent_change < 0:
+            recent_text = f"近期强度较首条记录下降 {abs(recent_change)} 点"
+        else:
+            recent_text = "近期强度与首条记录基本持平"
+        lines.append(f"近期变化：{recent_text}")
+
+    latest = recorded[-1]
+    negative_moods = {"疲惫", "焦虑", "难过", "生气", "压力大"}
+    if latest["mood"] in negative_moods and int(latest["intensity"]) >= 4:
+        lines.append("关怀提示：最近记录为高强度不适感受；若持续或影响生活，可以考虑和信任的人或专业人士聊聊。")
+    return "\n".join(lines)
+
+
+def format_weekly_mood_analysis(
+    user_id: str,
+    end_date: str | None = None,
+    days: int = 7,
+) -> str:
+    return format_mood_fluctuation_analysis(
+        get_weekly_mood_points(user_id, end_date=end_date, days=days)
+    )

@@ -125,6 +125,24 @@ class TestPersistenceRoundTrip(MultiUserTestBase):
         with self.cb.session_store.session("alice") as state:
             self.assertTrue(state.interest_store.exact_exists("我喜欢弹吉他"))
 
+    def test_stable_profile_persists_across_sessions(self):
+        with self.cb.session_store.session("alice") as state:
+            self.cb.update_stable_profile(state, {"text": "我是学生", "key": "identity"})
+
+        self.cb.session_store = self.cb.SessionStore()
+        with self.cb.session_store.session("alice") as state:
+            self.assertEqual(state.stable_profile[0]["text"], "我是学生")
+
+    def test_legacy_profile_is_migrated_out_of_long_memory(self):
+        paths = self.cb.user_paths("alice")
+        self.cb.save_json(paths["long_memory"], [
+            {"text": "我是学生", "kind": "profile", "time": "2026-01-01T00:00:00"}
+        ])
+
+        with self.cb.session_store.session("alice") as state:
+            self.assertEqual(state.long_memory, [])
+            self.assertEqual(state.stable_profile[0]["text"], "我是学生")
+
 # 4. 并发安全：同一用户的并发请求
 
 class TestConcurrency(MultiUserTestBase):
