@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import session_store
-from auth_store import change_access_key, has_access_key, verify_access
+from auth_store import admin_reset_access_key, change_access_key, has_access_key, verify_access
 
 
 def test_first_access_registers_passphrase(tmp_path, monkeypatch):
@@ -109,3 +109,57 @@ def test_corrupt_access_key_record_does_not_allow_reset(tmp_path, monkeypatch):
     assert ok is False
     assert "已损坏" in message
     assert access_path.read_text(encoding="utf-8") == "{broken json"
+
+
+def test_admin_recovery_is_disabled_without_server_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.delenv("CHATBOT_ADMIN_RECOVERY_KEY", raising=False)
+    verify_access("alice", "alice-secret")
+
+    ok, message = admin_reset_access_key("alice", "guess", "new-secret!")
+
+    assert ok is False
+    assert "未启用" in message
+    assert verify_access("alice", "alice-secret")[0] is True
+
+
+def test_admin_recovery_rejects_wrong_key(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setenv("CHATBOT_ADMIN_RECOVERY_KEY", "server-recovery-key-12345")
+    verify_access("alice", "alice-secret")
+
+    ok, message = admin_reset_access_key("alice", "wrong-key", "new-secret!")
+
+    assert ok is False
+    assert "不正确" in message
+    assert verify_access("alice", "alice-secret")[0] is True
+
+
+def test_admin_recovery_resets_existing_password_and_writes_safe_audit(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    recovery_key = "server-recovery-key-12345"
+    monkeypatch.setenv("CHATBOT_ADMIN_RECOVERY_KEY", recovery_key)
+    verify_access("alice", "alice-secret")
+
+    ok, message = admin_reset_access_key("alice", recovery_key, "new-secret!")
+
+    assert ok is True
+    assert "已重置" in message
+    assert verify_access("alice", "alice-secret")[0] is False
+    assert verify_access("alice", "new-secret!")[0] is True
+    audit_text = (session_store.user_dir("alice") / "auth_audit.json").read_text(encoding="utf-8")
+    assert "admin_password_reset" in audit_text
+    assert recovery_key not in audit_text
+    assert "new-secret!" not in audit_text
+
+
+def test_admin_recovery_does_not_create_unknown_account(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    recovery_key = "server-recovery-key-12345"
+    monkeypatch.setenv("CHATBOT_ADMIN_RECOVERY_KEY", recovery_key)
+
+    ok, message = admin_reset_access_key("missing", recovery_key, "new-secret!")
+
+    assert ok is False
+    assert "尚未设置" in message
+    assert has_access_key("missing") is False

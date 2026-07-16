@@ -17,8 +17,8 @@ from mood_store import (
 logger = logging.getLogger(__name__)
 
 
-def refresh_mood_panel(user_id: str, access_key: str) -> str:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+def refresh_mood_panel(user_id: str, access_key: str, locale: str = "zh-CN") -> str:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return auth_error
     try:
@@ -34,8 +34,9 @@ def submit_mood_checkin(
     mood: str,
     intensity: int | float,
     note: str,
+    locale: str = "zh-CN",
 ) -> str:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return auth_error
     try:
@@ -53,8 +54,10 @@ def submit_mood_checkin(
         return f"保存 Mood Check-in 失败：{exc}"
 
 
-def delete_mood_checkin_from_gui(user_id: str, access_key: str, checkin_date: str) -> str:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+def delete_mood_checkin_from_gui(
+    user_id: str, access_key: str, checkin_date: str, locale: str = "zh-CN"
+) -> str:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return auth_error
     try:
@@ -189,18 +192,20 @@ def weekly_mood_view(user_id: str, end_date: str, theme_mode: str) -> tuple[str,
 
 
 def refresh_weekly_mood_chart(
-    user_id: str, access_key: str, end_date: str, theme_mode: str = "light"
+    user_id: str, access_key: str, end_date: str, theme_mode: str = "light",
+    locale: str = "zh-CN",
 ) -> tuple[str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return "", auth_error
     return weekly_mood_view(user_id, end_date, theme_mode)
 
 
 def refresh_weekly_mood_dashboard(
-    user_id: str, access_key: str, end_date: str, theme_mode: str = "light"
+    user_id: str, access_key: str, end_date: str, theme_mode: str = "light",
+    locale: str = "zh-CN",
 ) -> tuple[str, str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return "", auth_error, auth_error
     chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
@@ -221,12 +226,16 @@ def submit_mood_checkin_and_refresh_dashboard(
     note: str,
     current_end_date: str,
     theme_mode: str = "light",
+    locale: str = "zh-CN",
 ) -> tuple[str, str, str, str, str]:
-    mood_panel = submit_mood_checkin(user_id, access_key, checkin_date, mood, intensity, note)
+    _, auth_error = authorize_or_message(user_id, access_key, locale)
+    if auth_error:
+        return auth_error, current_end_date, "", "", auth_error
+    mood_panel = submit_mood_checkin(user_id, access_key, checkin_date, mood, intensity, note, locale)
     if not mood_panel.startswith("已保存 "):
         return mood_panel, current_end_date, "", "", mood_panel
     chart, summary, analysis = refresh_weekly_mood_dashboard(
-        user_id, access_key, checkin_date, theme_mode
+        user_id, access_key, checkin_date, theme_mode, locale
     )
     return mood_panel, checkin_date, chart, summary, analysis
 
@@ -237,20 +246,25 @@ def delete_mood_checkin_and_refresh_dashboard(
     checkin_date: str,
     current_end_date: str,
     theme_mode: str = "light",
+    locale: str = "zh-CN",
 ) -> tuple[str, str, str, str, str]:
-    mood_panel = delete_mood_checkin_from_gui(user_id, access_key, checkin_date)
+    _, auth_error = authorize_or_message(user_id, access_key, locale)
+    if auth_error:
+        return auth_error, current_end_date, "", "", auth_error
+    mood_panel = delete_mood_checkin_from_gui(user_id, access_key, checkin_date, locale)
     if mood_panel.startswith(("删除 Mood Check-in 失败", "请先", "访问密码")):
         return mood_panel, current_end_date, "", "", mood_panel
     chart, summary, analysis = refresh_weekly_mood_dashboard(
-        user_id, access_key, checkin_date, theme_mode
+        user_id, access_key, checkin_date, theme_mode, locale
     )
     return mood_panel, checkin_date, chart, summary, analysis
 
 
 def load_theme_and_weekly_chart(
-    user_id: str, access_key: str, end_date: str, theme_mode: str = "light"
+    user_id: str, access_key: str, end_date: str, theme_mode: str = "light",
+    locale: str = "zh-CN",
 ) -> tuple[str, str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return theme_mode, render_weekly_mood_chart([], theme_mode), auth_error
     chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
@@ -258,9 +272,10 @@ def load_theme_and_weekly_chart(
 
 
 def load_theme_and_weekly_dashboard(
-    user_id: str, access_key: str, end_date: str, theme_mode: str = "light"
+    user_id: str, access_key: str, end_date: str, theme_mode: str = "light",
+    locale: str = "zh-CN",
 ) -> tuple[str, str, str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return theme_mode, render_weekly_mood_chart([], theme_mode), auth_error, auth_error
     chart, summary = weekly_mood_view(user_id, end_date, theme_mode)

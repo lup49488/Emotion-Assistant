@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import os
 import secrets
 from datetime import datetime
 from pathlib import Path
@@ -12,6 +13,8 @@ from session_store import user_dir, user_file_lock, validate_user_id
 
 PBKDF2_ITERATIONS = 200_000
 MIN_PASSPHRASE_LENGTH = 8
+MIN_ADMIN_RECOVERY_KEY_LENGTH = 20
+ADMIN_RECOVERY_KEY_ENV = "CHATBOT_ADMIN_RECOVERY_KEY"
 
 
 class AccessKeyRecordError(ValueError):
@@ -20,6 +23,10 @@ class AccessKeyRecordError(ValueError):
 
 def _auth_path(user_id: str) -> Path:
     return user_dir(user_id) / "access_key.json"
+
+
+def _auth_audit_path(user_id: str) -> Path:
+    return user_dir(user_id) / "auth_audit.json"
 
 
 def _hash_passphrase(passphrase: str, salt: bytes) -> str:
@@ -44,6 +51,25 @@ def _read_record(user_id: str) -> dict[str, Any] | None:
 def _write_record(user_id: str, record: dict[str, Any]) -> None:
     _auth_path(user_id).write_text(
         json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+
+
+def _append_audit_event(user_id: str, action: str) -> None:
+    path = _auth_audit_path(user_id)
+    events: list[dict[str, str]] = []
+    if path.exists():
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(raw, list):
+                events = [item for item in raw if isinstance(item, dict)][-99:]
+        except (OSError, json.JSONDecodeError):
+            events = []
+    events.append({
+        "time": datetime.now().isoformat(),
+        "action": action,
+    })
+    path.write_text(
+        json.dumps(events, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
 
@@ -144,3 +170,43 @@ def change_access_key(
             _new_record(new_passphrase, previous_created_at=str(record.get("created_at") or "")),
         )
         return True, "访问密码已修改，请使用新密码继续访问。"
+
+
+def admin_recovery_enabled() -> bool:
+    recovery_key = os.getenv(ADMIN_RECOVERY_KEY_ENV, "")
+    return len(recovery_key) >= MIN_ADMIN_RECOVERY_KEY_LENGTH
+
+
+def admin_reset_access_key(
+    user_id: str,
+    admin_recovery_key: str,
+    new_passphrase: str,
+) -> tuple[bool, str]:
+    """使用仅由服务器环境变量提供的恢复密钥重置已有用户密码。"""
+    user_id = validate_user_id((user_id or "").strip())
+    submitted_key = admin_recovery_key or ""
+    new_passphrase = (new_passphrase or "").strip()
+    expected_key = os.getenv(ADMIN_RECOVERY_KEY_ENV, "")
+
+    if len(expected_key) < MIN_ADMIN_RECOVERY_KEY_LENGTH:
+        return False, "管理员恢复模式未启用，请先在服务器环境变量中配置恢复密钥。"
+    if not hmac.compare_digest(submitted_key, expected_key):
+        return False, "管理员恢复密钥不正确。"
+    length_error = _validate_passphrase_length(new_passphrase)
+    if length_error:
+        return False, length_error
+
+    with user_file_lock(user_id):
+        try:
+            record = _read_record(user_id)
+        except AccessKeyRecordError as exc:
+            return False, str(exc)
+        if record is None:
+            return False, "该用户尚未设置访问密码，不能执行管理员恢复。"
+
+        _write_record(
+            user_id,
+            _new_record(new_passphrase, previous_created_at=str(record.get("created_at") or "")),
+        )
+        _append_audit_event(user_id, "admin_password_reset")
+        return True, "管理员恢复成功，访问密码已重置。"

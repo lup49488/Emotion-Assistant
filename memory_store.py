@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ logger = logging.getLogger(__name__)
 LONG_MEMORY_SUMMARIZE_THRESHOLD = 30
 LONG_MEMORY_KEEP_RECENT = 10
 INTEREST_MERGE_THRESHOLD = 0.80
+MEMORY_EVENT_LIMIT = 100
 
 _faiss_module: Any | None = None
 
@@ -252,27 +254,55 @@ def is_memory_query(text: str) -> bool:
     ))
 
 
+_CLAUSE_BOUNDARY_RE = re.compile(r"[，,。；;！？!?\n]")
+_CHINESE_QUERY_MARKERS = ("什么", "哪些", "谁", "哪里", "怎么", "如何", "为何", "为什么", "多少", "是否")
+_ENGLISH_QUERY_RE = re.compile(r"\b(what|who|where|when|why|how|whether)\b", re.IGNORECASE)
+
+
+def _clause_containing(text: str, position: int) -> tuple[str, str]:
+    """Return the clause around a matched fact and the punctuation that ends it."""
+    start = 0
+    for match in _CLAUSE_BOUNDARY_RE.finditer(text):
+        if match.start() < position:
+            start = match.end()
+            continue
+        return text[start:match.start()].strip(), match.group(0)
+    return text[start:].strip(), ""
+
+
+def _is_question_fact(clause: str, remainder: str, terminator: str) -> bool:
+    remainder = remainder.strip(" ：:，,。.!！?？")
+    if not remainder:
+        return True
+    if terminator in {"?", "？"} or remainder.endswith(("吗", "呢", "么")):
+        return True
+    if any(marker in remainder for marker in _CHINESE_QUERY_MARKERS):
+        return True
+    return bool(_ENGLISH_QUERY_RE.search(remainder) and clause.rstrip().endswith(("?", "？")))
+
+
 def extract_long_term_interest(text: str) -> dict[str, Any] | None:
     normalized = (text or "").strip()
     lowered = normalized.lower()
-    if is_memory_query(normalized):
-        return None
     for pattern in INTEREST_PATTERNS:
         position = lowered.find(pattern.lower())
         if position < 0:
             continue
-        remainder = normalized[position + len(pattern):].strip(" ：:，,。.!！")
-        if remainder:
-            return {"text": normalized, "time": datetime.now().isoformat()}
+        clause, terminator = _clause_containing(normalized, position)
+        clause_position = clause.lower().find(pattern.lower())
+        if clause_position < 0:
+            continue
+        remainder = clause[clause_position + len(pattern):]
+        if not _is_question_fact(clause, remainder, terminator):
+            return {"text": clause, "time": datetime.now().isoformat()}
     return None
 
 
 def extract_personal_profile(text: str) -> dict[str, Any] | None:
     """Extract explicit, declarative identity facts as durable profile memory."""
     normalized = (text or "").strip()
-    if is_memory_query(normalized):
-        return None
-    lowered = normalized.lower()
+    clause, terminator = _clause_containing(normalized, 0)
+    lowered = clause.lower()
     chinese_prefixes = {
         "我是": "identity", "我叫": "name", "我的名字是": "name", "我来自": "origin", "我今年": "age",
     }
@@ -280,12 +310,16 @@ def extract_personal_profile(text: str) -> dict[str, Any] | None:
         "i am ": "identity", "i'm ": "identity", "my name is ": "name",
         "i am from ": "origin", "i live in ": "location",
     }
-    for prefix, key in chinese_prefixes.items():
-        if normalized.startswith(prefix) and normalized[len(prefix):].strip():
-            return {"text": normalized, "time": datetime.now().isoformat(), "kind": "profile", "key": key}
-    for prefix, key in english_prefixes.items():
-        if lowered.startswith(prefix) and lowered[len(prefix):].strip():
-            return {"text": normalized, "time": datetime.now().isoformat(), "kind": "profile", "key": key}
+    for prefix, key in sorted(chinese_prefixes.items(), key=lambda item: len(item[0]), reverse=True):
+        if clause.startswith(prefix):
+            remainder = clause[len(prefix):]
+            if not _is_question_fact(clause, remainder, terminator):
+                return {"text": clause, "time": datetime.now().isoformat(), "kind": "profile", "key": key}
+    for prefix, key in sorted(english_prefixes.items(), key=lambda item: len(item[0]), reverse=True):
+        if lowered.startswith(prefix):
+            remainder = clause[len(prefix):]
+            if not _is_question_fact(clause, remainder, terminator):
+                return {"text": clause, "time": datetime.now().isoformat(), "kind": "profile", "key": key}
     return None
 
 
@@ -391,47 +425,163 @@ def update_mid_term(state: Any, emo_label: str, emo_score: float) -> None:
     state.emotion_memory = state.emotion_memory[-MID_TERM_LIMIT:]
 
 
-def update_long_term(state: Any, info: dict[str, Any]) -> None:
+def update_long_term(state: Any, info: dict[str, Any]) -> bool:
     if not any(m.get("text") == info.get("text") for m in state.long_memory):
         state.long_memory.append(info)
+        return True
+    return False
 
 
-def update_stable_profile(state: Any, info: dict[str, Any]) -> None:
+def update_stable_profile(state: Any, info: dict[str, Any]) -> str:
     """Save a durable personal fact, replacing an older value in the same profile field."""
     text = str(info.get("text", "")).strip()
     if not text:
-        return
+        return "skipped"
     now = datetime.now().isoformat()
     item = {**info, "text": text, "kind": "profile", "updated_at": now}
     key = str(item.get("key", "")).strip()
     for index, existing in enumerate(state.stable_profile):
         if (key and existing.get("key") == key) or existing.get("text") == text:
             item["created_at"] = existing.get("created_at") or now
+            if existing.get("text") == item.get("text"):
+                return "unchanged"
             state.stable_profile[index] = item
-            return
+            return "updated"
     item["created_at"] = now
     state.stable_profile.append(item)
+    return "added"
+
+
+def record_memory_event(
+    state: Any,
+    *,
+    section: str,
+    action: str,
+    text: str,
+    reason: str,
+    score: float | None = None,
+) -> dict[str, Any]:
+    event = {
+        "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        "time": datetime.now().isoformat(timespec="seconds"),
+        "section": section,
+        "action": action,
+        "text": (text or "").strip(),
+        "reason": reason,
+    }
+    if score is not None:
+        event["score"] = round(float(score), 3)
+    state.memory_events.append(event)
+    state.memory_events = state.memory_events[-MEMORY_EVENT_LIMIT:]
+    return event
+
+
+def latest_memory_receipt(state: Any) -> str:
+    if not state.memory_events:
+        return "记忆回执：本轮没有记忆判断记录。"
+    event = state.memory_events[-1]
+    action_labels = {
+        "added": "已新增",
+        "updated": "已更新",
+        "merged": "已合并",
+        "unchanged": "未重复写入",
+        "skipped": "未写入",
+    }
+    section_labels = {
+        "stable": "稳定资料",
+        "interest": "兴趣记忆",
+        "long": "长期记忆",
+        "emotion": "情绪记忆",
+        "none": "记忆",
+    }
+    action = action_labels.get(str(event.get("action")), str(event.get("action", "已处理")))
+    section = section_labels.get(str(event.get("section")), str(event.get("section", "记忆")))
+    text = str(event.get("text", "")).strip()
+    reason = str(event.get("reason", "")).strip()
+    content = f"“{text}”" if text else "本轮内容"
+    return f"记忆回执：{section}{action} {content}。原因：{reason}"
 
 
 def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: float) -> str:
     score = score_memory(user_text, emo_label, emo_score)
     profile = extract_personal_profile(user_text)
     if profile is not None:
-        update_stable_profile(state, profile)
+        action = update_stable_profile(state, profile)
+        record_memory_event(
+            state,
+            section="stable",
+            action=action,
+            text=profile["text"],
+            reason=(
+                "从混合陈述与提问中提取到明确的身份或个人背景"
+                if profile["text"] != user_text.strip()
+                else "识别到明确的身份或个人背景陈述"
+            ),
+            score=score,
+        )
         return "stable"
     interest = extract_long_term_interest(user_text)
-    if interest and not memory_exists(interest["text"], state):
+    if interest is not None:
+        if memory_exists(interest["text"], state):
+            record_memory_event(
+                state,
+                section="interest",
+                action="unchanged",
+                text=interest["text"],
+                reason="相同或高度相似的兴趣已经存在",
+                score=score,
+            )
+            return "discard"
         outcome = save_interest(interest, state)
         if outcome == "added":
             update_long_term(state, {**interest, "kind": "interest"})
+        record_memory_event(
+            state,
+            section="interest",
+            action=outcome,
+            text=interest["text"],
+            reason=(
+                "从混合陈述与提问中提取到明确的长期偏好或兴趣"
+                if interest["text"] != user_text.strip()
+                else "识别到明确的长期偏好或兴趣陈述"
+            ),
+            score=score,
+        )
+        return "long"
     if score >= SCORE_LONG_TERM_THRESHOLD:
-        if interest is None:
-            update_long_term(state, {
-                "text": user_text, "emotion": emo_label,
-                "score": float(emo_score), "time": datetime.now().isoformat(),
-            })
+        added = update_long_term(state, {
+            "text": user_text, "emotion": emo_label,
+            "score": float(emo_score), "time": datetime.now().isoformat(),
+        })
+        record_memory_event(
+            state,
+            section="long",
+            action="added" if added else "unchanged",
+            text=user_text,
+            reason=f"记忆评分 {score:.2f} 达到长期记忆阈值 {SCORE_LONG_TERM_THRESHOLD:.2f}",
+            score=score,
+        )
         return "long"
     if score >= SCORE_MID_TERM_THRESHOLD:
         update_mid_term(state, emo_label, emo_score)
+        record_memory_event(
+            state,
+            section="emotion",
+            action="added",
+            text=user_text,
+            reason=f"记忆评分 {score:.2f} 达到情绪记忆阈值 {SCORE_MID_TERM_THRESHOLD:.2f}",
+            score=score,
+        )
         return "mid"
+    reason = "这是回忆查询，不作为新的个人事实保存" if is_memory_query(user_text) else (
+        f"记忆评分 {score:.2f} 未达到写入阈值 {SCORE_MID_TERM_THRESHOLD:.2f}"
+    )
+    record_memory_event(
+        state,
+        section="none",
+        action="skipped",
+        text=user_text,
+        reason=reason,
+        score=score,
+    )
     return "discard"

@@ -70,8 +70,15 @@ class ModelRuntimeConfig:
     def resolved_model(self) -> str:
         if self.model and self.model.strip():
             return self.model.strip()
-        if self.normalized_provider() == "local_hf":
+        provider = self.normalized_provider()
+        if provider == "local_hf":
             return CHAT_MODEL_NAME
+        if provider == "deepseek":
+            return os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+        if provider == "openai":
+            return os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+        if provider == "openrouter":
+            return os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
         return DEFAULT_API_MODEL
 
     def resolved_base_url(self) -> str | None:

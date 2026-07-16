@@ -7,6 +7,8 @@ import gui_memory
 import session_store
 import chatbot
 import Web_GUI
+from gui_i18n import EN_TRANSLATIONS, localize_status_text
+from gui_auth import authorize_or_message
 from session_store import SessionState
 
 
@@ -41,6 +43,24 @@ def test_format_memory_snapshot_includes_all_sections():
     assert "likes coding" in text
     assert "is a student" in text
     assert "likes NLP" in text
+
+
+def test_format_memory_event_log_explains_action_and_reason():
+    state = SessionState(user_id="alice")
+    state.memory_events.append({
+        "time": "2026-07-15T10:00:00",
+        "section": "stable",
+        "action": "added",
+        "text": "我是学生",
+        "reason": "识别到明确身份",
+        "score": 1.5,
+    })
+
+    text = Web_GUI.format_memory_event_log("alice", state)
+
+    assert "稳定资料 | 新增" in text
+    assert "我是学生" in text
+    assert "识别到明确身份" in text
 
 
 def test_clear_memory_section_clears_selected_interest_memory():
@@ -262,6 +282,139 @@ def test_change_access_key_from_gui_updates_password(tmp_path, monkeypatch):
     assert "还没有 Mood Check-in 记录" in Web_GUI.refresh_mood_panel("alice", "new-secret!")
 
 
+def test_admin_recover_access_key_from_gui_updates_password(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    recovery_key = "server-recovery-key-12345"
+    monkeypatch.setenv("CHATBOT_ADMIN_RECOVERY_KEY", recovery_key)
+    Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+
+    message, _, _, login_status = Web_GUI.admin_recover_access_key_and_status(
+        "alice", recovery_key, "new-secret!"
+    )
+
+    assert "恢复成功" in message
+    assert login_status == "已验证：alice"
+    assert "不正确" in Web_GUI.refresh_mood_panel("alice", "alice-secret")
+    assert "还没有 Mood Check-in 记录" in Web_GUI.refresh_mood_panel("alice", "new-secret!")
+
+
+def test_english_gui_translations_cover_primary_navigation():
+    assert EN_TRANSLATIONS["情绪感知对话助手"] == "Emotion-Aware Chat Assistant"
+    assert EN_TRANSLATIONS["用户访问"] == "User access"
+    assert EN_TRANSLATIONS["管理员恢复"] == "Administrator recovery"
+    assert EN_TRANSLATIONS["知识库 / RAG"] == "Knowledge base / RAG"
+
+
+def test_auth_required_message_switches_between_english_and_chinese():
+    english = localize_status_text(Web_GUI.AUTH_REQUIRED_MESSAGE, "en")
+    chinese = localize_status_text(english, "zh-CN")
+
+    assert english.startswith("Enter a User ID and access password")
+    assert chinese == Web_GUI.AUTH_REQUIRED_MESSAGE
+
+
+def test_runtime_status_uses_current_gui_locale():
+    english = Web_GUI.refresh_status("local_hf", "demo-model", "", "", "en")
+    chinese = Web_GUI.refresh_status("local_hf", "demo-model", "", "", "zh-CN")
+
+    assert "Background warm-up:" in english
+    assert "Connection test:" in english
+    assert "Conversation status:" in english
+    assert "后台预热：" in chinese
+
+
+def test_existing_status_values_are_relocalized_after_language_switch():
+    english, = Web_GUI.relocalize_status_values("未验证", "en")
+    chinese, = Web_GUI.relocalize_status_values(english, "zh-CN")
+
+    assert english == "Not verified"
+    assert chinese == "未验证"
+
+
+def test_chat_auth_prompt_uses_session_locale():
+    response = Web_GUI.respond(
+        "hello",
+        [],
+        "",
+        "",
+        False,
+        False,
+        True,
+        "local_hf",
+        "demo-model",
+        "",
+        "",
+        0.8,
+        0.9,
+        64,
+        "en",
+    )
+
+    assert next(response).startswith("Enter a User ID and access password")
+
+
+def test_locale_sync_callback_persists_browser_locale():
+    *localized, locale = Web_GUI.relocalize_status_values_and_locale("未验证", "en")
+
+    assert localized == ["Not verified"]
+    assert locale == "en"
+
+
+def test_interface_mode_visibility_hides_all_advanced_sections_by_default():
+    updates = Web_GUI.interface_mode_visibility("simple")
+
+    assert len(updates) == 8
+    assert all(update["visible"] is False for update in updates[:7])
+    assert updates[7]["selected"] == "chat"
+
+
+def test_interface_mode_visibility_shows_all_advanced_sections():
+    updates = Web_GUI.interface_mode_visibility("advanced")
+
+    assert len(updates) == 8
+    assert all(update["visible"] is True for update in updates[:7])
+    assert "selected" not in updates[7]
+
+
+def test_mood_panel_auth_prompt_uses_english_locale():
+    result = Web_GUI.refresh_mood_panel("", "", "en")
+
+    assert result.startswith("Enter a User ID and access password")
+
+
+def test_mood_panel_wrong_passphrase_is_english_under_english_locale(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.refresh_mood_panel("alice", "alice-secret", "zh-CN")
+
+    result = Web_GUI.refresh_mood_panel("alice", "wrong-pass!", "en")
+
+    assert "incorrect" in result
+    assert "不正确" not in result
+
+
+def test_memory_editor_auth_prompt_uses_english_locale():
+    editor_text, message = Web_GUI.load_memory_editor("", "", "history", "en")
+
+    assert editor_text == ""
+    assert message.startswith("Enter a User ID and access password")
+
+
+def test_weekly_dashboard_auth_prompt_uses_english_locale():
+    theme, chart, summary, analysis = Web_GUI.load_theme_and_weekly_dashboard(
+        "", "", "2026-07-15", "light", "en"
+    )
+
+    assert theme == "light"
+    assert summary.startswith("Enter a User ID and access password")
+    assert analysis.startswith("Enter a User ID and access password")
+
+
+def test_mood_panel_auth_prompt_stays_chinese_by_default():
+    result = Web_GUI.refresh_mood_panel("", "")
+
+    assert result.startswith("请输入 User ID 和访问密码")
+
+
 def test_login_status_reports_verified_user(tmp_path, monkeypatch):
     monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
     Web_GUI.save_access_key_from_gui("alice", "alice-secret")
@@ -269,6 +422,13 @@ def test_login_status_reports_verified_user(tmp_path, monkeypatch):
     result = Web_GUI.login_status_text("alice", "alice-secret")
 
     assert result == "已验证：alice"
+
+
+def test_blank_user_id_does_not_fall_back_to_local():
+    user_id, message = authorize_or_message("", "some-password")
+
+    assert user_id is None
+    assert "请输入 User ID" in message
 
 
 def test_export_user_data_from_gui_requires_access_key(tmp_path, monkeypatch):

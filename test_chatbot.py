@@ -23,6 +23,7 @@ from unittest.mock import patch
 
 import conftest  # noqa: F401  (确保 stub 在 chatbot 导入前注册)
 import chatbot
+import memory_store
 from prompt_builder import build_messages
 
 
@@ -406,6 +407,9 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
         self.assertEqual(outcome, "stable")
         self.assertEqual(state.stable_profile[0]["text"], "我是学生")
         self.assertEqual(state.stable_profile[0]["kind"], "profile")
+        self.assertEqual(state.memory_events[-1]["section"], "stable")
+        self.assertEqual(state.memory_events[-1]["action"], "added")
+        self.assertIn("身份", state.memory_events[-1]["reason"])
 
     def test_identity_question_is_not_saved_as_profile(self):
         state = chatbot.SessionState()
@@ -414,6 +418,56 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
 
         self.assertEqual(outcome, "discard")
         self.assertEqual(state.stable_profile, [])
+        self.assertEqual(state.memory_events[-1]["action"], "skipped")
+        self.assertIn("回忆查询", state.memory_events[-1]["reason"])
+
+    def test_identity_fact_before_question_is_saved_as_profile(self):
+        state = chatbot.SessionState()
+        text = "我是一名学生，请问您觉得我应该如何为未来做准备？"
+
+        outcome = chatbot.smart_memory_filter(state, text, "neutral", 0.0)
+
+        self.assertEqual(outcome, "stable")
+        self.assertEqual(state.stable_profile[0]["text"], "我是一名学生")
+        self.assertEqual(state.memory_events[-1]["text"], "我是一名学生")
+        self.assertIn("混合陈述与提问", state.memory_events[-1]["reason"])
+
+    def test_profile_query_with_declarative_prefix_is_still_rejected(self):
+        state = chatbot.SessionState()
+
+        outcome = chatbot.smart_memory_filter(state, "我来自哪里？", "neutral", 0.0)
+
+        self.assertEqual(outcome, "discard")
+        self.assertEqual(state.stable_profile, [])
+
+    def test_interest_fact_before_question_is_saved_without_question(self):
+        state = chatbot.SessionState()
+        text = "我喜欢编程，请问我应该学习哪些方向？"
+
+        with patch.object(memory_store, "memory_exists", return_value=False), \
+             patch.object(memory_store, "save_interest", return_value="added"):
+            outcome = chatbot.smart_memory_filter(state, text, "neutral", 0.0)
+
+        self.assertEqual(outcome, "long")
+        self.assertEqual(state.long_memory[0]["text"], "我喜欢编程")
+        self.assertEqual(state.memory_events[-1]["text"], "我喜欢编程")
+
+    def test_english_profile_fact_before_question_is_saved(self):
+        profile = memory_store.extract_personal_profile(
+            "I am a student, how should I prepare for my future?"
+        )
+
+        self.assertIsNotNone(profile)
+        self.assertEqual(profile["text"], "I am a student")
+
+    def test_latest_memory_receipt_describes_write_decision(self):
+        state = chatbot.SessionState()
+        chatbot.smart_memory_filter(state, "我是学生", "neutral", 0.0)
+
+        receipt = chatbot.latest_memory_receipt(state)
+
+        self.assertIn("稳定资料已新增", receipt)
+        self.assertIn("我是学生", receipt)
 
     def test_extract_long_term_interest_english_pattern(self):
         result = chatbot.extract_long_term_interest("I love hiking on weekends")

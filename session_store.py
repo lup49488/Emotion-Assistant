@@ -51,6 +51,7 @@ def user_paths(user_id: str) -> dict[str, Path]:
         "interest_memory": d / "interest_memory.json",
         "long_memory": d / "long_memory.json",
         "stable_profile": d / "stable_profile.json",
+        "memory_events": d / "memory_events.json",
         "mood_checkins": d / "mood_checkins.json",
         "vector_index": d / "memory.index",
         "lock": d / ".lock",
@@ -114,6 +115,7 @@ class SessionState:
     emotion_memory: list[dict[str, Any]] = field(default_factory=list)
     long_memory: list[dict[str, Any]] = field(default_factory=list)
     stable_profile: list[dict[str, Any]] = field(default_factory=list)
+    memory_events: list[dict[str, Any]] = field(default_factory=list)
     interest_store: InterestMemoryStore = field(default_factory=InterestMemoryStore)
     vector_index: VectorIndexManager | None = None
     preferences: dict[str, str | None] = field(
@@ -141,6 +143,10 @@ def load_state(user_id: str) -> SessionState:
             item for item in load_json(paths["stable_profile"])
             if isinstance(item, dict) and str(item.get("text", "")).strip()
         ]
+        state.memory_events = [
+            item for item in load_json(paths["memory_events"])
+            if isinstance(item, dict)
+        ][-100:]
         # Move profiles created before the dedicated stable-profile store existed.
         legacy_profiles = [
             item for item in raw_long_memory
@@ -161,6 +167,7 @@ def load_state(user_id: str) -> SessionState:
         state.interest_store.load(load_json(paths["interest_memory"]))
         save_json(paths["long_memory"], state.long_memory)
         save_json(paths["stable_profile"], state.stable_profile)
+        save_json(paths["memory_events"], state.memory_events)
     return state
 
 
@@ -171,6 +178,7 @@ def persist_state(state: SessionState) -> None:
         save_json(paths["emotion_memory"], state.emotion_memory)
         save_json(paths["long_memory"], state.long_memory)
         save_json(paths["stable_profile"], state.stable_profile)
+        save_json(paths["memory_events"], state.memory_events[-100:])
         save_json(paths["interest_memory"], state.interest_store.items)
 
 

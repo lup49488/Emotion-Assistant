@@ -110,3 +110,86 @@ def test_build_messages_includes_knowledge_context():
 
     assert "知识库参考资料" in messages[0]["content"]
     assert "项目支持 RAG 知识库" in messages[0]["content"]
+
+
+def test_diagnose_search_filters_threshold_duplicates_and_preserves_diversity():
+    chunks = [
+        {"source": "a.txt", "text": "重复内容", "chunk_index": 0},
+        {"source": "a.txt", "text": "重复内容", "chunk_index": 1},
+        {"source": "a.txt", "text": "来源 A 的补充", "chunk_index": 2},
+        {"source": "b.txt", "text": "来源 B 的内容", "chunk_index": 0},
+        {"source": "c.txt", "text": "低相关内容", "chunk_index": 0},
+    ]
+    candidates = []
+    for score, index in [(0.95, 0), (0.94, 1), (0.90, 2), (0.89, 3), (0.10, 4)]:
+        item = dict(chunks[index])
+        item.update({"score": score, "_index": index})
+        candidates.append(item)
+
+    with patch.object(knowledge_store, "load_chunks", return_value=chunks), \
+         patch.object(knowledge_store, "_search_candidates", return_value=candidates):
+        diagnostic = knowledge_store.diagnose_knowledge_search(
+            "测试",
+            top_k=3,
+            threshold=0.3,
+            max_per_source=1,
+        )
+
+    assert [item["source"] for item in diagnostic["results"]] == ["a.txt", "b.txt", "a.txt"]
+    assert [item["text"] for item in diagnostic["results"]].count("重复内容") == 1
+    decisions = [item["decision"] for item in diagnostic["candidates"]]
+    assert "内容重复" in decisions
+    assert "低于阈值 0.30" in decisions
+
+
+def test_build_context_enforces_character_budget_and_shows_scores():
+    results = [
+        {"source": "a.txt", "text": "甲" * 300, "score": 0.8},
+        {"source": "b.txt", "text": "乙" * 300, "score": 0.7},
+    ]
+    with patch.object(knowledge_store, "retrieve_knowledge", return_value=results):
+        context = knowledge_store.build_knowledge_context("问题", max_context_chars=200)
+
+    assert len(context) <= 200
+    assert "相关度 0.800" in context
+
+
+def test_quality_report_detects_duplicate_short_and_stale_index():
+    chunks = [
+        {"source": "a.txt", "text": "短"},
+        {"source": "a.txt", "text": "短"},
+    ]
+    fake_index = type("FakeIndex", (), {"ntotal": 1})()
+    with tempfile.TemporaryDirectory() as tmp:
+        index_path = Path(tmp) / "knowledge.index"
+        index_path.write_bytes(b"index")
+        with patch.object(knowledge_store, "load_chunks", return_value=chunks), \
+             patch.object(knowledge_store, "list_documents", return_value=["a.txt"]), \
+             patch.object(knowledge_store, "KNOWLEDGE_INDEX_PATH", index_path), \
+             patch.object(knowledge_store, "require_faiss") as require_faiss:
+            require_faiss.return_value.read_index.return_value = fake_index
+            report = knowledge_store.assess_knowledge_quality()
+
+    assert report["level"] == "需关注"
+    assert report["duplicate_chunks"] == 1
+    assert report["short_chunks"] == 2
+    assert not report["index_consistent"]
+
+
+def test_read_index_rebuilds_when_vector_count_is_stale():
+    chunks = [{"source": "a.txt", "text": "有效内容"}]
+    stale_index = type("FakeIndex", (), {"ntotal": 0, "d": 3})()
+    healthy_index = type("FakeIndex", (), {"ntotal": 1, "d": 3})()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        index_path = Path(tmp) / "knowledge.index"
+        index_path.write_bytes(b"index")
+        with patch.object(knowledge_store, "KNOWLEDGE_INDEX_PATH", index_path), \
+             patch.object(knowledge_store, "require_faiss") as require_faiss, \
+             patch.object(knowledge_store, "get_embedding_dimension", return_value=3), \
+             patch.object(knowledge_store, "_write_index") as write_index:
+            require_faiss.return_value.read_index.side_effect = [stale_index, healthy_index]
+            result = knowledge_store._read_index(chunks)
+
+    assert result is healthy_index
+    write_index.assert_called_once_with(chunks)

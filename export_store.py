@@ -18,7 +18,7 @@ def _safe_export_name(user_id: str) -> str:
 
 
 def build_user_export_payload(user_id: str) -> dict[str, Any]:
-    user_id = validate_user_id(user_id or "local")
+    user_id = validate_user_id(user_id)
     paths = user_paths(user_id)
     with user_file_lock(user_id):
         return {
@@ -33,13 +33,14 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
             "emotion_memory": load_json(paths["emotion_memory"]),
             "long_memory": load_json(paths["long_memory"]),
             "stable_profile": load_json(paths["stable_profile"]),
+            "memory_events": load_json(paths["memory_events"]),
             "interest_memory": load_json(paths["interest_memory"]),
             "mood_checkins": load_json(paths["mood_checkins"]),
         }
 
 
 def export_user_data(user_id: str) -> Path:
-    user_id = validate_user_id(user_id or "local")
+    user_id = validate_user_id(user_id)
     EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
     target = EXPORTS_DIR / _safe_export_name(user_id)
     payload = build_user_export_payload(user_id)

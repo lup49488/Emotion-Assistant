@@ -5,7 +5,8 @@ from typing import Any
 
 from chatbot import session_store
 from gui_auth import authorize_or_message
-from memory_store import update_stable_profile
+from memory_backup import create_memory_backup, load_memory_backup, restore_memory_payload
+from memory_store import record_memory_event, update_stable_profile
 
 
 MEMORY_SECTION_LABELS = {
@@ -74,8 +75,8 @@ def format_memory_snapshot(user_id: str, state: Any) -> str:
     return "\n".join(lines)
 
 
-def load_memory_panel(user_id: str, access_key: str) -> str:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+def load_memory_panel(user_id: str, access_key: str, locale: str = "zh-CN") -> str:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return auth_error
     try:
@@ -134,8 +135,10 @@ def _replace_memory_section(state: Any, section: str, items: list[dict[str, Any]
     raise ValueError(f"未知记忆区块：{section}")
 
 
-def load_memory_editor(user_id: str, access_key: str, section: str) -> tuple[str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+def load_memory_editor(
+    user_id: str, access_key: str, section: str, locale: str = "zh-CN"
+) -> tuple[str, str]:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return "", auth_error
     section = section or "history"
@@ -150,9 +153,9 @@ def load_memory_editor(user_id: str, access_key: str, section: str) -> tuple[str
 
 
 def save_memory_editor(
-    user_id: str, access_key: str, section: str, editor_text: str
+    user_id: str, access_key: str, section: str, editor_text: str, locale: str = "zh-CN"
 ) -> tuple[str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return editor_text, auth_error
     section = section or "history"
@@ -168,6 +171,13 @@ def save_memory_editor(
 
         with session_store.session(user_id) as state:
             _replace_memory_section(state, section, data)
+            record_memory_event(
+                state,
+                section=section,
+                action="updated",
+                text=f"手动保存 {len(data)} 条{MEMORY_SECTION_LABELS.get(section, section)}",
+                reason="用户在记忆管理面板中保存了编辑内容",
+            )
             snapshot = format_memory_snapshot(user_id, state)
         normalized = json.dumps(data, ensure_ascii=False, indent=2)
         label = MEMORY_SECTION_LABELS.get(section, section)
@@ -176,8 +186,10 @@ def save_memory_editor(
         return editor_text, f"保存记忆失败：{exc}"
 
 
-def clear_memory_section(user_id: str, access_key: str, section: str) -> str:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+def clear_memory_section(
+    user_id: str, access_key: str, section: str, locale: str = "zh-CN"
+) -> str:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return auth_error
     section = section or "history"
@@ -195,38 +207,44 @@ def clear_memory_section(user_id: str, access_key: str, section: str) -> str:
             if section in {"stable", "all"}:
                 state.stable_profile.clear()
         label = MEMORY_SECTION_LABELS.get(section, section)
-        return f"已清理 {user_id} 的{label}。\n\n{load_memory_panel(user_id, access_key)}"
+        return f"已清理 {user_id} 的{label}。\n\n{load_memory_panel(user_id, access_key, locale)}"
     except Exception as exc:
         return f"清理记忆失败：{exc}"
 
 
 def clear_memory_section_and_reload(
-    user_id: str, access_key: str, section: str
+    user_id: str, access_key: str, section: str, locale: str = "zh-CN"
 ) -> tuple[str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return "", auth_error
-    message = clear_memory_section(user_id, access_key, section)
-    editor_text, snapshot = load_memory_editor(user_id, access_key, section)
+    message = clear_memory_section(user_id, access_key, section, locale)
+    editor_text, snapshot = load_memory_editor(user_id, access_key, section, locale)
     return editor_text, f"{message}\n\n{snapshot}"
 
 
-def load_stable_profile_editor(user_id: str, access_key: str) -> tuple[str, str]:
-    return load_memory_editor(user_id, access_key, "stable")
+def load_stable_profile_editor(
+    user_id: str, access_key: str, locale: str = "zh-CN"
+) -> tuple[str, str]:
+    return load_memory_editor(user_id, access_key, "stable", locale)
 
 
 def save_stable_profile_editor(
-    user_id: str, access_key: str, editor_text: str
+    user_id: str, access_key: str, editor_text: str, locale: str = "zh-CN"
 ) -> tuple[str, str]:
-    return save_memory_editor(user_id, access_key, "stable", editor_text)
+    return save_memory_editor(user_id, access_key, "stable", editor_text, locale)
 
 
-def clear_stable_profile(user_id: str, access_key: str) -> tuple[str, str]:
-    return clear_memory_section_and_reload(user_id, access_key, "stable")
+def clear_stable_profile(
+    user_id: str, access_key: str, locale: str = "zh-CN"
+) -> tuple[str, str]:
+    return clear_memory_section_and_reload(user_id, access_key, "stable", locale)
 
 
-def add_stable_profile(user_id: str, access_key: str, text: str) -> tuple[str, str, str]:
-    user_id, auth_error = authorize_or_message(user_id, access_key)
+def add_stable_profile(
+    user_id: str, access_key: str, text: str, locale: str = "zh-CN"
+) -> tuple[str, str, str]:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return text, "", auth_error
     try:
@@ -234,9 +252,123 @@ def add_stable_profile(user_id: str, access_key: str, text: str) -> tuple[str, s
         if not profile_text:
             raise ValueError("请先输入要保存的稳定资料。")
         with session_store.session(user_id) as state:
-            update_stable_profile(state, {"text": profile_text, "source": "manual"})
+            action = update_stable_profile(state, {"text": profile_text, "source": "manual"})
+            record_memory_event(
+                state,
+                section="stable",
+                action=action,
+                text=profile_text,
+                reason="用户在稳定资料面板中手动保存",
+            )
             editor_text = json.dumps(state.stable_profile, ensure_ascii=False, indent=2)
             snapshot = format_memory_snapshot(user_id, state)
         return "", editor_text, f"已保存稳定资料。\n\n{snapshot}"
     except Exception as exc:
         return text, "", f"保存稳定资料失败：{exc}"
+
+
+def format_memory_event_log(user_id: str, state: Any, limit: int = 20) -> str:
+    events = list(getattr(state, "memory_events", []))
+    if not events:
+        return f"用户：{user_id}\n\n尚无记忆写入记录。"
+    labels = {
+        "stable": "稳定资料",
+        "interest": "兴趣记忆",
+        "long": "长期记忆",
+        "emotion": "情绪记忆",
+        "none": "未写入",
+    }
+    actions = {
+        "added": "新增",
+        "updated": "更新",
+        "merged": "合并",
+        "unchanged": "保持不变",
+        "skipped": "跳过",
+    }
+    recent = events[-max(1, int(limit)):]
+    lines = [f"用户：{user_id}", f"最近 {len(recent)} 条记忆判断：", ""]
+    for event in reversed(recent):
+        time_text = str(event.get("time", ""))[:19]
+        section = labels.get(str(event.get("section")), str(event.get("section", "记忆")))
+        action = actions.get(str(event.get("action")), str(event.get("action", "处理")))
+        text = str(event.get("text", "")).strip() or "（无文本）"
+        reason = str(event.get("reason", "")).strip() or "未记录原因"
+        score = event.get("score")
+        score_text = f" | 评分 {score}" if score is not None else ""
+        lines.append(f"{time_text} | {section} | {action}{score_text}")
+        lines.append(f"内容：{text}")
+        lines.append(f"原因：{reason}")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
+def load_memory_event_log(user_id: str, access_key: str, locale: str = "zh-CN") -> str:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
+    if auth_error:
+        return auth_error
+    try:
+        with session_store.session(user_id) as state:
+            return format_memory_event_log(user_id, state)
+    except Exception as exc:
+        return f"读取记忆写入记录失败：{exc}"
+
+
+def backup_memory_from_gui(
+    user_id: str, access_key: str, locale: str = "zh-CN"
+) -> tuple[str, str | None]:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
+    if auth_error:
+        return auth_error, None
+    try:
+        with session_store.session(user_id) as state:
+            path = create_memory_backup(user_id, state)
+        return f"已备份 {user_id} 的全部记忆。", str(path)
+    except Exception as exc:
+        return f"备份记忆失败：{exc}", None
+
+
+def _uploaded_backup_path(file_obj: Any) -> str:
+    if isinstance(file_obj, (str, bytes)):
+        return str(file_obj)
+    path = getattr(file_obj, "name", None) or getattr(file_obj, "path", None)
+    if path:
+        return str(path)
+    raise ValueError("请先选择记忆备份 JSON 文件。")
+
+
+def restore_memory_from_gui(
+    user_id: str,
+    access_key: str,
+    file_obj: Any,
+    mode: str,
+    locale: str = "zh-CN",
+) -> tuple[str, str | None, str, str]:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
+    if auth_error:
+        return auth_error, None, auth_error, auth_error
+    try:
+        payload = load_memory_backup(_uploaded_backup_path(file_obj))
+        with session_store.session(user_id) as state:
+            safety_backup = create_memory_backup(user_id, state, reason="pre_restore")
+            result = restore_memory_payload(state, payload, mode=mode or "merge")
+            record_memory_event(
+                state,
+                section="all",
+                action="updated",
+                text=f"从 {result['source_user_id']} 恢复全部记忆",
+                reason=f"用户使用 {result['mode']} 模式恢复记忆备份",
+            )
+            snapshot = format_memory_snapshot(user_id, state)
+            event_log = format_memory_event_log(user_id, state)
+        mode_label = "合并" if result["mode"] == "merge" else "覆盖"
+        counts = result["counts"]
+        status = (
+            f"记忆恢复完成：{mode_label}模式，来源用户 {result['source_user_id']}。\n"
+            f"短期 {counts['history']}，情绪 {counts['emotion_memory']}，长期 {counts['long_memory']}，"
+            f"稳定资料 {counts['stable_profile']}，兴趣 {counts['interest_memory']}。\n"
+            "恢复前的记忆已自动备份。"
+        )
+        return status, str(safety_backup), snapshot, event_log
+    except Exception as exc:
+        message = f"恢复记忆失败：{exc}"
+        return message, None, message, message

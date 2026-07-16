@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -12,10 +14,14 @@ import numpy as np
 from config import (
     KNOWLEDGE_CHUNK_OVERLAP,
     KNOWLEDGE_CHUNK_SIZE,
+    KNOWLEDGE_CANDIDATE_MULTIPLIER,
     KNOWLEDGE_CHUNKS_PATH,
     KNOWLEDGE_DIR,
     KNOWLEDGE_DOCS_DIR,
     KNOWLEDGE_INDEX_PATH,
+    KNOWLEDGE_MAX_CONTEXT_CHARS,
+    KNOWLEDGE_MAX_PER_SOURCE,
+    KNOWLEDGE_MIN_CHUNK_CHARS,
     KNOWLEDGE_RETRIEVAL_THRESHOLD,
     KNOWLEDGE_TOP_K,
 )
@@ -276,7 +282,119 @@ def _read_index(chunks: list[dict[str, Any]]) -> Any:
     faiss = require_faiss()
     if not KNOWLEDGE_INDEX_PATH.exists():
         _write_index(chunks)
-    return faiss.read_index(str(KNOWLEDGE_INDEX_PATH))
+    try:
+        index = faiss.read_index(str(KNOWLEDGE_INDEX_PATH))
+    except Exception:
+        _write_index(chunks)
+        index = faiss.read_index(str(KNOWLEDGE_INDEX_PATH))
+    if int(index.ntotal) != len(chunks) or int(index.d) != get_embedding_dimension():
+        _write_index(chunks)
+        index = faiss.read_index(str(KNOWLEDGE_INDEX_PATH))
+    return index
+
+
+def _normalized_chunk_key(text: str) -> str:
+    return re.sub(r"\s+", "", text).casefold()
+
+
+def _search_candidates(
+    query: str,
+    chunks: list[dict[str, Any]],
+    *,
+    top_k: int,
+    candidate_multiplier: int,
+) -> list[dict[str, Any]]:
+    index = _read_index(chunks)
+    candidate_count = min(len(chunks), max(top_k, top_k * max(1, int(candidate_multiplier))))
+    similarities, indices = index.search(encode_texts([query]), candidate_count)
+    candidates: list[dict[str, Any]] = []
+    for score, i in zip(similarities[0], indices[0]):
+        if i < 0 or i >= len(chunks):
+            continue
+        item = dict(chunks[int(i)])
+        item["score"] = float(score)
+        item["_index"] = int(i)
+        candidates.append(item)
+    return candidates
+
+
+def diagnose_knowledge_search(
+    query: str,
+    *,
+    top_k: int = KNOWLEDGE_TOP_K,
+    threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
+    max_per_source: int = KNOWLEDGE_MAX_PER_SOURCE,
+) -> dict[str, Any]:
+    chunks = load_chunks()
+    query = (query or "").strip()
+    if not query or not chunks:
+        return {"query": query, "results": [], "candidates": [], "reason": "查询或知识库为空"}
+
+    top_k = max(1, min(int(top_k), len(chunks)))
+    threshold = max(-1.0, min(float(threshold), 1.0))
+    max_per_source = max(1, int(max_per_source))
+    candidates = _search_candidates(
+        query,
+        chunks,
+        top_k=top_k,
+        candidate_multiplier=candidate_multiplier,
+    )
+
+    eligible: list[dict[str, Any]] = []
+    seen_texts: set[str] = set()
+    for item in candidates:
+        score = float(item["score"])
+        key = _normalized_chunk_key(str(item.get("text", "")))
+        if score < threshold:
+            item["accepted"] = False
+            item["decision"] = f"低于阈值 {threshold:.2f}"
+        elif not key:
+            item["accepted"] = False
+            item["decision"] = "空片段"
+        elif key in seen_texts:
+            item["accepted"] = False
+            item["decision"] = "内容重复"
+        else:
+            seen_texts.add(key)
+            eligible.append(item)
+
+    selected: list[dict[str, Any]] = []
+    deferred: list[dict[str, Any]] = []
+    source_counts: Counter[str] = Counter()
+    for item in eligible:
+        source = str(item.get("source", "unknown"))
+        if len(selected) >= top_k:
+            deferred.append(item)
+        elif source_counts[source] >= max_per_source:
+            deferred.append(item)
+        else:
+            selected.append(item)
+            source_counts[source] += 1
+
+    for item in deferred:
+        if len(selected) >= top_k:
+            break
+        selected.append(item)
+
+    selected_indices = {int(item["_index"]) for item in selected}
+    for item in eligible:
+        if int(item["_index"]) in selected_indices:
+            item["accepted"] = True
+            item["decision"] = "采用"
+        else:
+            item["accepted"] = False
+            item["decision"] = "超出 Top K"
+
+    public_results = [{key: value for key, value in item.items() if key != "_index"} for item in selected]
+    public_candidates = [{key: value for key, value in item.items() if key != "_index"} for item in candidates]
+    return {
+        "query": query,
+        "results": public_results,
+        "candidates": public_candidates,
+        "threshold": threshold,
+        "top_k": top_k,
+    }
 
 
 def retrieve_knowledge(
@@ -284,33 +402,100 @@ def retrieve_knowledge(
     *,
     top_k: int = KNOWLEDGE_TOP_K,
     threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
+    max_per_source: int = KNOWLEDGE_MAX_PER_SOURCE,
 ) -> list[dict[str, Any]]:
-    chunks = load_chunks()
-    if not query.strip() or not chunks:
-        return []
-    index = _read_index(chunks)
-    top_k = max(1, min(int(top_k), len(chunks)))
-    similarities, indices = index.search(encode_texts([query]), top_k)
-    results: list[dict[str, Any]] = []
-    for score, i in zip(similarities[0], indices[0]):
-        if i < 0 or i >= len(chunks) or float(score) < threshold:
-            continue
-        item = dict(chunks[int(i)])
-        item["score"] = float(score)
-        results.append(item)
-    return results
+    return diagnose_knowledge_search(
+        query,
+        top_k=top_k,
+        threshold=threshold,
+        candidate_multiplier=candidate_multiplier,
+        max_per_source=max_per_source,
+    )["results"]
 
 
-def build_knowledge_context(query: str, *, top_k: int = KNOWLEDGE_TOP_K) -> str:
-    results = retrieve_knowledge(query, top_k=top_k)
+def build_knowledge_context(
+    query: str,
+    *,
+    top_k: int = KNOWLEDGE_TOP_K,
+    threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
+) -> str:
+    results = retrieve_knowledge(query, top_k=top_k, threshold=threshold)
     if not results:
         return ""
-    lines = []
+    lines: list[str] = []
+    used_chars = 0
+    max_context_chars = max(200, int(max_context_chars))
     for index, item in enumerate(results, start=1):
         source = item.get("source", "unknown")
         text = str(item.get("text", "")).strip()
-        lines.append(f"[资料 {index} | {source}]\n{text}")
+        score = float(item.get("score", 0.0))
+        header = f"[资料 {index} | {source} | 相关度 {score:.3f}]\n"
+        remaining = max_context_chars - used_chars - len(header)
+        if remaining <= 0:
+            break
+        excerpt = text[:remaining]
+        if not excerpt:
+            break
+        block = header + excerpt
+        lines.append(block)
+        used_chars += len(block) + 2
     return "\n\n".join(lines)
+
+
+def assess_knowledge_quality() -> dict[str, Any]:
+    chunks = load_chunks()
+    documents = set(list_documents())
+    lengths = [len(str(item.get("text", "")).strip()) for item in chunks]
+    keys = [_normalized_chunk_key(str(item.get("text", ""))) for item in chunks]
+    duplicate_chunks = sum(count - 1 for count in Counter(key for key in keys if key).values() if count > 1)
+    short_chunks = sum(length < KNOWLEDGE_MIN_CHUNK_CHARS for length in lengths)
+    orphan_chunks = sum(str(item.get("source", "")) not in documents for item in chunks)
+
+    index_count: int | None = None
+    index_error = ""
+    if KNOWLEDGE_INDEX_PATH.exists():
+        try:
+            index_count = int(require_faiss().read_index(str(KNOWLEDGE_INDEX_PATH)).ntotal)
+        except Exception as exc:
+            index_error = str(exc)
+    index_consistent = index_count == len(chunks) if index_count is not None else not chunks
+
+    issues: list[str] = []
+    if not documents:
+        issues.append("知识库中还没有文档")
+    elif not chunks:
+        issues.append("文档未生成可检索片段，请检查文件内容或读取依赖")
+    if chunks and not index_consistent:
+        issues.append("向量索引与片段数量不一致，下一次检索会自动重建")
+    if index_error:
+        issues.append("向量索引无法读取，下一次检索会自动重建")
+    if short_chunks:
+        issues.append(f"有 {short_chunks} 个片段短于 {KNOWLEDGE_MIN_CHUNK_CHARS} 字符")
+    if duplicate_chunks:
+        issues.append(f"发现 {duplicate_chunks} 个完全重复片段，检索时会自动去重")
+    if orphan_chunks:
+        issues.append(f"有 {orphan_chunks} 个片段找不到来源文档")
+
+    if not documents:
+        level = "未就绪"
+    elif issues:
+        level = "需关注"
+    else:
+        level = "良好"
+    return {
+        "level": level,
+        "documents": len(documents),
+        "chunks": len(chunks),
+        "average_chunk_chars": round(sum(lengths) / len(lengths), 1) if lengths else 0.0,
+        "short_chunks": short_chunks,
+        "duplicate_chunks": duplicate_chunks,
+        "orphan_chunks": orphan_chunks,
+        "index_count": index_count,
+        "index_consistent": index_consistent,
+        "issues": issues,
+    }
 
 
 def knowledge_status() -> str:

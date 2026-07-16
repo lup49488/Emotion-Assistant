@@ -1,6 +1,69 @@
 from __future__ import annotations
 
-from knowledge_store import clear_documents, delete_document, list_document_details, knowledge_status
+from typing import Any
+
+from knowledge_store import (
+    assess_knowledge_quality,
+    clear_documents,
+    delete_document,
+    diagnose_knowledge_search,
+    list_document_details,
+    knowledge_status,
+)
+
+
+def format_knowledge_quality_report() -> str:
+    report = assess_knowledge_quality()
+    index_count = report["index_count"]
+    lines = [
+        f"质量等级：{report['level']}",
+        f"文档 / 片段：{report['documents']} / {report['chunks']}",
+        f"平均片段长度：{report['average_chunk_chars']} 字符",
+        f"短片段 / 重复片段 / 孤立片段：{report['short_chunks']} / {report['duplicate_chunks']} / {report['orphan_chunks']}",
+        f"索引向量数：{index_count if index_count is not None else '不可用'}",
+    ]
+    issues = report["issues"]
+    lines.append("检查结果：")
+    lines.extend(f"- {issue}" for issue in issues)
+    if not issues:
+        lines.append("- 未发现明显质量问题")
+    return "\n".join(lines)
+
+
+def format_knowledge_search_diagnostics(
+    query: str,
+    top_k: int,
+    threshold: float,
+    candidate_multiplier: int,
+) -> str:
+    query = (query or "").strip()
+    if not query:
+        return "请输入检索问题。"
+    diagnostic = diagnose_knowledge_search(
+        query,
+        top_k=int(top_k),
+        threshold=float(threshold),
+        candidate_multiplier=int(candidate_multiplier),
+    )
+    candidates = diagnostic["candidates"]
+    accepted = diagnostic["results"]
+    lines = [
+        f"候选 {len(candidates)} 条，采用 {len(accepted)} 条",
+        f"Top K={diagnostic.get('top_k', top_k)}，阈值={diagnostic.get('threshold', threshold):.2f}",
+    ]
+    if not candidates:
+        lines.append("没有可供检索的候选片段。")
+        return "\n".join(lines)
+    for index, item in enumerate(candidates, start=1):
+        marker = "采用" if item.get("accepted") else "淘汰"
+        text = " ".join(str(item.get("text", "")).split())
+        lines.extend([
+            "",
+            f"[{index}] {marker} | {item.get('source', 'unknown')} | 相关度 {float(item.get('score', 0)):.3f}",
+            f"原因：{item.get('decision', '未分类')}",
+            text[:280] + ("..." if len(text) > 280 else ""),
+        ])
+    return "\n".join(lines)
 
 
 def format_knowledge_document_list() -> str:

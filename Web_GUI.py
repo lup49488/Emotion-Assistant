@@ -17,14 +17,19 @@ from chatbot import (
     get_embedding_model,
     get_llm,
     handle_user_message_stream,
+    latest_memory_receipt,
     make_model_config,
+    session_store,
 )
 from config import (
     BASE_DIR,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
+    KNOWLEDGE_CANDIDATE_MULTIPLIER,
     KNOWLEDGE_ENABLED,
+    KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    KNOWLEDGE_TOP_K,
     LOCAL_MODEL_ATTN_IMPLEMENTATION,
     LOCAL_MODEL_COMPILE,
     LOCAL_MODEL_CPU_THREADS,
@@ -35,10 +40,13 @@ from config import (
 )
 from gui_auth import (
     AUTH_REQUIRED_MESSAGE,
+    admin_recover_access_key,
+    admin_recovery_status,
     authorize_or_message as _authorize_or_message,
     change_saved_access_key,
     save_or_verify_access_key,
 )
+from gui_i18n import GUI_I18N, localize_status_text, tr
 from gui_model_options import (
     DEFAULT_BASE_URLS,
     DEFAULT_MODELS,
@@ -53,11 +61,15 @@ from gui_memory import (
     clear_memory_section,
     clear_memory_section_and_reload,
     clear_stable_profile,
+    format_memory_event_log,
     format_memory_snapshot,
     add_stable_profile,
+    backup_memory_from_gui,
     load_memory_editor,
+    load_memory_event_log,
     load_memory_panel,
     load_stable_profile_editor,
+    restore_memory_from_gui,
     save_memory_editor,
     save_stable_profile_editor,
 )
@@ -65,6 +77,8 @@ from gui_knowledge import (
     clear_knowledge_documents,
     delete_knowledge_document,
     format_knowledge_document_list,
+    format_knowledge_quality_report,
+    format_knowledge_search_diagnostics,
     refresh_knowledge_document_panel,
 )
 from gui_mood import (
@@ -106,11 +120,25 @@ _last_connection_status = "尚未测试连接"
 
 LOCAL_DTYPE_CHOICES = ["auto", "bfloat16", "float16", "float32"]
 LOCAL_ATTENTION_CHOICES = [
-    ("自动 / 默认", ""),
+    (tr("自动 / 默认"), ""),
     ("PyTorch SDPA", "sdpa"),
     ("Flash Attention 2", "flash_attention_2"),
     ("Eager", "eager"),
 ]
+
+SYNC_LOCALE_JS = """
+(...args) => {
+    const locale = document.documentElement.lang || navigator.language || "zh-CN";
+    const tabLabels = locale.toLowerCase().startsWith("en")
+        ? {chat: "Chat", mood: "Mood", data: "My data", knowledge: "Knowledge", advanced: "Advanced settings"}
+        : {chat: "对话", mood: "心情", data: "个人数据", knowledge: "知识库", advanced: "高级设置"};
+    document.querySelectorAll('[role="tab"][data-tab-id]').forEach((tab) => {
+        const label = tabLabels[tab.dataset.tabId];
+        if (label && tab.textContent !== label) tab.textContent = label;
+    });
+    return [...args.slice(0, -1), locale];
+}
+"""
 
 
 def _now() -> str:
@@ -186,6 +214,7 @@ def respond(
     access_key: str,
     use_knowledge: bool,
     use_style: bool,
+    show_memory_receipt: bool,
     provider: str,
     model: str,
     base_url: str,
@@ -193,10 +222,11 @@ def respond(
     temperature: float,
     top_p: float,
     max_new_tokens: int,
+    locale: str = "zh-CN",
 ):
     user_id, auth_error = _authorize_or_message(user_id, access_key)
     if auth_error:
-        yield auth_error
+        yield localize_status_text(auth_error, locale)
         return
 
     config = make_model_config(
@@ -211,14 +241,14 @@ def respond(
     partial = ""
     logger.info(
         "开始对话请求：user=%s provider=%s model=%s",
-        user_id or "local",
+        user_id,
         config.normalized_provider(),
         config.resolved_model(),
     )
     set_chat_status(f"正在请求 {config.normalized_provider()} / {config.resolved_model()}")
     try:
         for chunk in handle_user_message_stream(
-            user_id or "local",
+            user_id,
             message,
             model_config=config,
             use_knowledge=use_knowledge,
@@ -226,25 +256,37 @@ def respond(
         ):
             partial += chunk
             yield partial
+        if show_memory_receipt:
+            with session_store.session(user_id) as state:
+                receipt = latest_memory_receipt(state)
+            yield f"{partial}\n\n---\n{receipt}"
         set_chat_status("回复完成")
     except Exception as exc:
         set_chat_status(f"请求失败：{exc}")
         yield f"请求失败：{exc}"
 
 
-def provider_changed(provider: str, api_key: str = ""):
+def provider_changed(provider: str, api_key: str = "", locale: str = "zh-CN"):
     choices = MODEL_CHOICES.get(provider, MODEL_CHOICES["custom"])
     default_model = DEFAULT_MODELS.get(provider, choices[0])
     default_base_url = DEFAULT_BASE_URLS.get(provider, "")
     return (
         gr.update(choices=choices, value=default_model),
         gr.update(value=default_base_url),
-        build_status_text(provider, default_model, default_base_url, api_key),
+        localize_status_text(
+            build_status_text(provider, default_model, default_base_url, api_key), locale
+        ),
     )
 
 
-def refresh_status(provider: str, model: str, base_url: str, api_key: str) -> str:
-    return build_status_text(provider, model, base_url, api_key)
+def refresh_status(
+    provider: str,
+    model: str,
+    base_url: str,
+    api_key: str,
+    locale: str = "zh-CN",
+) -> str:
+    return localize_status_text(build_status_text(provider, model, base_url, api_key), locale)
 
 
 def save_access_key_from_gui(user_id: str, access_key: str) -> str:
@@ -258,9 +300,14 @@ def login_status_text(user_id: str, access_key: str) -> str:
     return f"已验证：{user_id}"
 
 
-def save_access_key_and_status(user_id: str, access_key: str) -> tuple[str, str]:
+def save_access_key_and_status(
+    user_id: str, access_key: str, locale: str = "zh-CN"
+) -> tuple[str, str]:
     message = save_access_key_from_gui(user_id, access_key)
-    return message, login_status_text(user_id, access_key)
+    return (
+        localize_status_text(message, locale),
+        localize_status_text(login_status_text(user_id, access_key), locale),
+    )
 
 
 def change_access_key_from_gui(
@@ -278,6 +325,7 @@ def change_access_key_and_status(
     user_id: str,
     current_access_key: str,
     new_access_key: str,
+    locale: str = "zh-CN",
 ) -> tuple[str, Any, Any, str]:
     message, access_key_update, new_key_update = change_access_key_from_gui(
         user_id,
@@ -285,19 +333,75 @@ def change_access_key_and_status(
         new_access_key,
     )
     if message.startswith("访问密码已修改"):
-        return message, access_key_update, new_key_update, login_status_text(user_id, new_access_key)
-    return message, access_key_update, new_key_update, login_status_text(user_id, current_access_key)
+        return (
+            localize_status_text(message, locale),
+            access_key_update,
+            new_key_update,
+            localize_status_text(login_status_text(user_id, new_access_key), locale),
+        )
+    return (
+        localize_status_text(message, locale),
+        access_key_update,
+        new_key_update,
+        localize_status_text(login_status_text(user_id, current_access_key), locale),
+    )
 
 
-def export_user_data_from_gui(user_id: str, access_key: str) -> tuple[str, str | None]:
+def admin_recover_access_key_and_status(
+    user_id: str,
+    admin_recovery_key: str,
+    new_access_key: str,
+    locale: str = "zh-CN",
+) -> tuple[str, Any, Any, str]:
+    ok, message = admin_recover_access_key(user_id, admin_recovery_key, new_access_key)
+    if ok:
+        normalized_key = (new_access_key or "").strip()
+        return (
+            localize_status_text(message, locale),
+            gr.update(value=normalized_key),
+            gr.update(value=""),
+            localize_status_text(login_status_text(user_id, normalized_key), locale),
+        )
+    return localize_status_text(message, locale), gr.update(), gr.update(value=""), localize_status_text("未验证", locale)
+
+
+def export_user_data_from_gui(
+    user_id: str, access_key: str, locale: str = "zh-CN"
+) -> tuple[str, str | None]:
     user_id, auth_error = _authorize_or_message(user_id, access_key)
     if auth_error:
-        return auth_error, None
+        return localize_status_text(auth_error, locale), None
     try:
         path = export_user_data(user_id)
-        return f"已导出 {user_id} 的用户数据：{path}", str(path)
+        return localize_status_text(f"已导出 {user_id} 的用户数据：{path}", locale), str(path)
     except Exception as exc:
-        return f"导出用户数据失败：{exc}", None
+        return localize_status_text(f"导出用户数据失败：{exc}", locale), None
+
+
+def relocalize_status_values(*values: Any) -> tuple[str, ...]:
+    if not values:
+        return ()
+    *status_values, locale = values
+    return tuple(localize_status_text(str(value or ""), str(locale)) for value in status_values)
+
+
+def relocalize_status_values_and_locale(*values: Any) -> tuple[str, ...]:
+    if not values:
+        return ()
+    *status_values, locale = values
+    localized = relocalize_status_values(*status_values, locale)
+    return (*localized, str(locale or "zh-CN"))
+
+
+def sync_locale_value(locale: str) -> str:
+    return str(locale or "zh-CN")
+
+
+def interface_mode_visibility(mode: str) -> tuple[Any, ...]:
+    visible = str(mode or "simple") == "advanced"
+    visibility_updates = tuple(gr.update(visible=visible) for _ in range(7))
+    tabs_update = gr.update() if visible else gr.update(selected="chat")
+    return (*visibility_updates, tabs_update)
 
 
 def _env_quote(value: str) -> str:
@@ -413,6 +517,7 @@ def save_model_config_and_refresh(
     temperature: float,
     top_p: float,
     max_new_tokens: int,
+    locale: str = "zh-CN",
 ) -> tuple[str, str]:
     result = save_model_config_to_env(
         provider,
@@ -423,7 +528,10 @@ def save_model_config_and_refresh(
         top_p,
         max_new_tokens,
     )
-    return result, build_status_text(provider, model, base_url, api_key)
+    return (
+        localize_status_text(result, locale),
+        localize_status_text(build_status_text(provider, model, base_url, api_key), locale),
+    )
 
 
 def _normalize_local_dtype(dtype: str) -> str:
@@ -489,6 +597,7 @@ def save_local_runtime_config_and_refresh(
     low_cpu_mem_usage: bool,
     compile_model: bool,
     cpu_threads: int | float,
+    locale: str = "zh-CN",
 ) -> tuple[str, str]:
     try:
         message = save_local_runtime_config_to_env(
@@ -499,19 +608,51 @@ def save_local_runtime_config_and_refresh(
             cpu_threads,
         )
     except Exception as exc:
-        return f"保存失败：{exc}", build_local_runtime_config_text(
+        return (
+            localize_status_text(f"保存失败：{exc}", locale),
+            localize_status_text(
+                build_local_runtime_config_text(
+                    dtype,
+                    attention_implementation,
+                    low_cpu_mem_usage,
+                    compile_model,
+                    cpu_threads,
+                ),
+                locale,
+            ),
+        )
+    return (
+        localize_status_text(message, locale),
+        localize_status_text(
+            build_local_runtime_config_text(
+                dtype,
+                attention_implementation,
+                low_cpu_mem_usage,
+                compile_model,
+                cpu_threads,
+            ),
+            locale,
+        ),
+    )
+
+
+def build_local_runtime_config_text_localized(
+    dtype: str,
+    attention_implementation: str,
+    low_cpu_mem_usage: bool,
+    compile_model: bool,
+    cpu_threads: int | float,
+    locale: str = "zh-CN",
+) -> str:
+    return localize_status_text(
+        build_local_runtime_config_text(
             dtype,
             attention_implementation,
             low_cpu_mem_usage,
             compile_model,
             cpu_threads,
-        )
-    return message, build_local_runtime_config_text(
-        dtype,
-        attention_implementation,
-        low_cpu_mem_usage,
-        compile_model,
-        cpu_threads,
+        ),
+        locale,
     )
 
 
@@ -649,6 +790,7 @@ def test_model_connection_and_refresh(
     temperature: float,
     top_p: float,
     max_new_tokens: int,
+    locale: str = "zh-CN",
 ) -> tuple[str, str, str]:
     started_at = time.perf_counter()
     result = test_model_connection(
@@ -667,7 +809,11 @@ def test_model_connection_and_refresh(
         base_url,
         time.perf_counter() - started_at,
     )
-    return result, detail, build_status_text(provider, model, base_url, api_key)
+    return (
+        localize_status_text(result, locale),
+        localize_status_text(detail, locale),
+        localize_status_text(build_status_text(provider, model, base_url, api_key), locale),
+    )
 
 
 def _uploaded_file_path(file_obj: Any) -> str:
@@ -725,12 +871,13 @@ def rebuild_knowledge_panel() -> str:
     return "\n".join(lines)
 
 
-def preview_knowledge_search(query: str) -> str:
-    query = (query or "").strip()
-    if not query:
-        return "请输入检索问题。"
-    context = build_knowledge_context(query)
-    return context or "没有检索到高相关资料。"
+def preview_knowledge_search(
+    query: str,
+    top_k: int = KNOWLEDGE_TOP_K,
+    threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
+) -> str:
+    return format_knowledge_search_diagnostics(query, top_k, threshold, candidate_multiplier)
 
 
 def refresh_knowledge_documents_from_gui() -> tuple[Any, str]:
@@ -846,7 +993,8 @@ initial_model_choices = MODEL_CHOICES.get(initial_provider, MODEL_CHOICES["local
 initial_model = DEFAULT_MODELS.get(initial_provider, initial_model_choices[0])
 initial_base_url = DEFAULT_BASE_URLS.get(initial_provider, "")
 
-with gr.Blocks(title="情绪感知对话助手") as demo:
+with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
+    locale_probe_input = gr.Textbox(value="zh-CN", visible=False, render=False)
     provider_input = gr.Dropdown(
         label="Provider",
         choices=PROVIDER_CHOICES,
@@ -863,37 +1011,53 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
     base_url_input = gr.Textbox(
         label="API Base URL",
         value=initial_base_url,
-        placeholder="本地模型可留空；OpenAI 兼容接口可填写服务地址",
+        placeholder=tr("本地模型可留空；OpenAI 兼容接口可填写服务地址"),
         render=False,
     )
     api_key_input = gr.Textbox(
         label="API Key",
         value="",
         type="password",
-        placeholder="可留空并改用 .env，例如 DEEPSEEK_API_KEY",
+        placeholder=tr("可留空并改用 .env，例如 DEEPSEEK_API_KEY"),
         render=False,
     )
     user_id_input = gr.Textbox(
         label="User ID",
-        value=os.getenv("CHATBOT_USER_ID", "local"),
-        placeholder="输入用户名",
+        value=os.getenv("CHATBOT_USER_ID", "").strip(),
+        placeholder=tr("首次使用请设置用户名"),
         render=False,
     )
     access_key_input = gr.Textbox(
-        label="访问密码",
+        label=tr("访问密码"),
         value="",
         type="password",
-        placeholder="首次使用该用户名请设置密码；之后需输入同样的密码才能访问其数据",
+        placeholder=tr("首次使用该用户名请设置密码；之后需输入同样的密码才能访问其数据"),
+        render=False,
+    )
+    save_access_key_button = gr.Button(tr("保存/验证密码"), render=False)
+    login_status_box = gr.Textbox(
+        label=tr("登录状态"), value=tr("未验证"), lines=2, interactive=False, render=False
+    )
+    access_key_status = gr.Textbox(
+        label=tr("访问密码状态"),
+        value=tr("尚未验证访问密码。"),
+        lines=3,
+        interactive=False,
         render=False,
     )
     use_knowledge_input = gr.Checkbox(
-        label="启用知识库",
+        label=tr("启用知识库"),
         value=KNOWLEDGE_ENABLED,
         render=False,
     )
     use_style_input = gr.Checkbox(
-        label="启用风格参考",
+        label=tr("启用风格参考"),
         value=STYLE_ENABLED,
+        render=False,
+    )
+    show_memory_receipt_input = gr.Checkbox(
+        label=tr("显示记忆回执"),
+        value=True,
         render=False,
     )
     temperature_input = gr.Slider(
@@ -919,30 +1083,30 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         render=False,
     )
     local_dtype_input = gr.Dropdown(
-        label="模型精度",
+        label=tr("模型精度"),
         choices=LOCAL_DTYPE_CHOICES,
         value=LOCAL_MODEL_DTYPE if LOCAL_MODEL_DTYPE in LOCAL_DTYPE_CHOICES else "auto",
         render=False,
     )
     local_attention_input = gr.Dropdown(
-        label="注意力实现",
+        label=tr("注意力实现"),
         choices=LOCAL_ATTENTION_CHOICES,
         value=LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
         allow_custom_value=True,
         render=False,
     )
     local_low_cpu_mem_input = gr.Checkbox(
-        label="低内存加载",
+        label=tr("低内存加载"),
         value=LOCAL_MODEL_LOW_CPU_MEM_USAGE,
         render=False,
     )
     local_compile_input = gr.Checkbox(
-        label="启用 torch.compile",
+        label=tr("启用 torch.compile"),
         value=LOCAL_MODEL_COMPILE,
         render=False,
     )
     local_cpu_threads_input = gr.Number(
-        label="CPU 线程数（0 为默认）",
+        label=tr("CPU 线程数（0 为默认）"),
         value=LOCAL_MODEL_CPU_THREADS,
         minimum=0,
         maximum=512,
@@ -950,318 +1114,377 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
         render=False,
     )
 
-    theme_mode_input = gr.Radio(
-        label="页面主题",
-        choices=[("浅色", "light"), ("深色", "dark")],
-        value="light",
-        elem_id="theme-mode",
-    )
+    with gr.Row():
+        interface_mode_input = gr.Radio(
+            label=tr("界面模式"),
+            choices=[(tr("简洁模式"), "simple"), (tr("高级模式"), "advanced")],
+            value="simple",
+        )
+        theme_mode_input = gr.Radio(
+            label=tr("页面主题"),
+            choices=[(tr("浅色"), "light"), (tr("深色"), "dark")],
+            value="light",
+            elem_id="theme-mode",
+        )
 
-    gr.ChatInterface(
-        fn=respond,
-        title="情绪感知对话助手",
-        additional_inputs=[
-            user_id_input,
-            access_key_input,
-            use_knowledge_input,
-            use_style_input,
-            provider_input,
-            model_input,
-            base_url_input,
-            api_key_input,
-            temperature_input,
-            top_p_input,
-            max_new_tokens_input,
+    with gr.Tabs(selected="chat") as main_tabs:
+        with gr.Tab(tr("tab_chat"), id="chat"):
+            with gr.Accordion(tr("常用设置"), open=True):
+                with gr.Row():
+                    user_id_input.render()
+                    access_key_input.render()
+                save_access_key_button.render()
+                with gr.Row():
+                    login_status_box.render()
+                    access_key_status.render()
+                with gr.Row():
+                    provider_input.render()
+                    model_input.render()
+                with gr.Row():
+                    use_knowledge_input.render()
+                    use_style_input.render()
+                    show_memory_receipt_input.render()
+            with gr.Column(visible=False) as advanced_chat_settings:
+                with gr.Accordion(tr("生成参数"), open=False):
+                    base_url_input.render()
+                    api_key_input.render()
+                    with gr.Row():
+                        temperature_input.render()
+                        top_p_input.render()
+                        max_new_tokens_input.render()
+            locale_probe_input.render()
+            gr.ChatInterface(
+                fn=respond,
+                title=tr("情绪感知对话助手"),
+                additional_inputs=[
+                    user_id_input,
+                    access_key_input,
+                    use_knowledge_input,
+                    use_style_input,
+                    show_memory_receipt_input,
+                    provider_input,
+                    model_input,
+                    base_url_input,
+                    api_key_input,
+                    temperature_input,
+                    top_p_input,
+                    max_new_tokens_input,
+                    locale_probe_input,
+                ],
+            )
+
+        with gr.Tab(tr("tab_mood"), id="mood"):
+            with gr.Accordion("Mood Check-in", open=True):
+                with gr.Row():
+                    mood_date_input = gr.Textbox(label=tr("日期"), value=date.today().isoformat(), placeholder="YYYY-MM-DD")
+                    mood_choice_input = gr.Dropdown(
+                        label=tr("今天的心情"),
+                        choices=[(tr(mood), mood) for mood in MOOD_CHOICES],
+                        value="一般",
+                        allow_custom_value=True,
+                    )
+                    mood_intensity_input = gr.Slider(label=tr("强度"), minimum=1, maximum=5, value=3, step=1)
+                mood_note_input = gr.Textbox(
+                    label=tr("备注"),
+                    placeholder=tr("可以写下触发原因、身体状态、需要被记住的背景。"),
+                    lines=3,
+                )
+                with gr.Row():
+                    save_mood_button = gr.Button(tr("保存 Mood"))
+                    refresh_mood_button = gr.Button(tr("刷新 Mood"))
+                    delete_mood_button = gr.Button(tr("删除当天记录"))
+                mood_box = gr.Textbox(
+                    label=tr("最近 Mood Check-ins"),
+                    value=tr("点击“刷新 Mood”查看当前用户的记录。"),
+                    lines=10,
+                    interactive=False,
+                )
+            with gr.Accordion("Weekly Mood Chart", open=True):
+                weekly_mood_end_date_input = gr.Textbox(
+                    label=tr("结束日期"), value=date.today().isoformat(), placeholder="YYYY-MM-DD"
+                )
+                refresh_weekly_mood_button = gr.Button(tr("刷新周情绪图"))
+                weekly_mood_chart = gr.HTML(value=_render_weekly_mood_chart([], "light"))
+                weekly_mood_summary = gr.Textbox(
+                    label=tr("一周摘要"), value=tr(AUTH_REQUIRED_MESSAGE), lines=6, interactive=False
+                )
+                weekly_mood_analysis = gr.Textbox(
+                    label=tr("情绪波动分析"), value=tr(AUTH_REQUIRED_MESSAGE), lines=8, interactive=False
+                )
+
+        with gr.Tab(tr("tab_data"), id="data"):
+            with gr.Accordion(tr("用户访问"), open=True):
+                new_access_key_input = gr.Textbox(
+                    label=tr("新访问密码"),
+                    value="",
+                    type="password",
+                    placeholder=tr("修改密码时填写，至少 8 位，可包含特殊符号"),
+                )
+                with gr.Row():
+                    change_access_key_button = gr.Button(tr("修改密码"))
+                    export_user_data_button = gr.Button(tr("导出用户数据"))
+                export_user_data_status = gr.Textbox(
+                    label=tr("数据导出状态"), value=tr("尚未导出。"), lines=3, interactive=False
+                )
+                export_user_data_file = gr.File(label=tr("导出的用户数据"), interactive=False)
+                with gr.Column(visible=False) as admin_recovery_group:
+                    with gr.Accordion(tr("管理员恢复"), open=False):
+                        admin_recovery_key_input = gr.Textbox(
+                            label=tr("管理员恢复密钥"), value="", type="password",
+                            placeholder=tr("仅从服务器环境变量读取的恢复密钥"),
+                        )
+                        admin_new_access_key_input = gr.Textbox(
+                            label=tr("恢复后的新密码"), value="", type="password",
+                            placeholder=tr("修改密码时填写，至少 8 位，可包含特殊符号"),
+                        )
+                        admin_recovery_button = gr.Button(tr("重置访问密码"), variant="stop")
+                        admin_recovery_status_box = gr.Textbox(
+                            label=tr("管理员恢复状态"), value=tr(admin_recovery_status()), lines=3, interactive=False
+                        )
+
+            with gr.Accordion(tr("稳定资料"), open=False):
+                stable_profile_input = gr.Textbox(
+                    label=tr("新增稳定资料"),
+                    placeholder=tr("例如：我是学生；我喜欢被简洁地称呼；我来自北京"),
+                    lines=2,
+                )
+                with gr.Row():
+                    add_stable_profile_button = gr.Button(tr("添加资料"))
+                    load_stable_profile_button = gr.Button(tr("查看资料"))
+                stable_profile_box = gr.Textbox(
+                    label=tr("稳定资料状态"),
+                    value=tr("点击“查看资料”加载当前用户的稳定资料。"),
+                    lines=10,
+                    interactive=False,
+                )
+                with gr.Column(visible=False) as stable_advanced_controls:
+                    stable_profile_editor = gr.Textbox(
+                        label=tr("稳定资料 JSON 编辑区"), value="[]", lines=10, interactive=True
+                    )
+                    with gr.Row():
+                        save_stable_profile_button = gr.Button(tr("保存编辑"))
+                        clear_stable_profile_button = gr.Button(tr("清空稳定资料"), variant="stop")
+
+            with gr.Accordion(tr("记忆管理"), open=False):
+                memory_section = gr.Radio(
+                    label=tr("清理范围"),
+                    choices=[
+                        (tr("短期对话"), "history"), (tr("情绪记忆"), "emotion"),
+                        (tr("长期记忆"), "long"), (tr("兴趣记忆"), "interest"),
+                        (tr("稳定资料"), "stable"), (tr("全部记忆"), "all"),
+                    ],
+                    value="history",
+                )
+                load_memory_button = gr.Button(tr("查看记忆"))
+                memory_box = gr.Textbox(
+                    label=tr("当前用户记忆"),
+                    value=tr("点击“查看记忆”加载当前用户的记忆。"),
+                    lines=18,
+                    interactive=False,
+                )
+                with gr.Column(visible=False) as memory_advanced_controls:
+                    with gr.Row():
+                        save_memory_button = gr.Button(tr("保存修改"))
+                        clear_memory_button = gr.Button(tr("清理所选记忆"))
+                        refresh_memory_events_button = gr.Button(tr("查看写入记录"))
+                    memory_editor = gr.Textbox(label=tr("记忆 JSON 编辑区"), value="[]", lines=14, interactive=True)
+                    memory_event_box = gr.Textbox(
+                        label=tr("记忆写入记录"),
+                        value=tr("点击“查看写入记录”加载最近的记忆判断。"),
+                        lines=14,
+                        interactive=False,
+                    )
+                    with gr.Accordion(tr("记忆备份与恢复"), open=False):
+                        with gr.Row():
+                            backup_memory_button = gr.Button(tr("备份全部记忆"))
+                            restore_memory_mode = gr.Radio(
+                                choices=[(tr("合并并去重"), "merge"), (tr("覆盖当前记忆"), "replace")],
+                                value="merge", label=tr("恢复模式"),
+                            )
+                        restore_memory_file = gr.File(
+                            label=tr("选择记忆备份 JSON"), file_types=[".json"], type="filepath"
+                        )
+                        restore_memory_button = gr.Button(tr("恢复记忆"), variant="primary")
+                        memory_backup_status = gr.Textbox(
+                            label=tr("备份 / 恢复状态"), value=tr("尚未执行备份或恢复。"), lines=4, interactive=False
+                        )
+                        memory_backup_file = gr.File(label=tr("生成的备份文件"), interactive=False)
+                        memory_safety_backup_file = gr.File(label=tr("恢复前安全备份"), interactive=False)
+
+        with gr.Tab(tr("tab_knowledge"), id="knowledge"):
+            with gr.Accordion(tr("知识库 / RAG"), open=True):
+                knowledge_files = gr.File(
+                    label=tr("导入资料"), file_count="multiple",
+                    file_types=[".txt", ".md", ".markdown", ".csv", ".json", ".pdf", ".docx"],
+                )
+                with gr.Row():
+                    import_knowledge_button = gr.Button(tr("导入并重建索引"))
+                    refresh_knowledge_button = gr.Button(tr("查看知识库状态"))
+                knowledge_query = gr.Textbox(
+                    label=tr("检索预览问题"),
+                    placeholder=tr("输入一个问题，查看会被检索进 Prompt 的资料片段"),
+                )
+                knowledge_box = gr.Textbox(
+                    label=tr("知识库状态 / 检索结果"), value=knowledge_status, lines=16, interactive=False
+                )
+                with gr.Column(visible=False) as knowledge_advanced_controls:
+                    with gr.Row():
+                        knowledge_top_k = gr.Slider(1, 10, value=KNOWLEDGE_TOP_K, step=1, label=tr("返回片段数"))
+                        knowledge_threshold = gr.Slider(
+                            0, 1, value=KNOWLEDGE_RETRIEVAL_THRESHOLD, step=0.05, label=tr("相关度阈值")
+                        )
+                        knowledge_candidate_multiplier = gr.Slider(
+                            1, 8, value=KNOWLEDGE_CANDIDATE_MULTIPLIER, step=1, label=tr("候选池倍数")
+                        )
+                    with gr.Row():
+                        rebuild_knowledge_button = gr.Button(tr("重建索引"))
+                        preview_knowledge_button = gr.Button(tr("检索质量诊断"))
+                        inspect_knowledge_quality_button = gr.Button(tr("检查知识库质量"))
+                    with gr.Accordion(tr("RAG 文档管理"), open=False):
+                        knowledge_document_selector = gr.Dropdown(
+                            label=tr("已入库文档"), choices=refresh_knowledge_document_panel()[0],
+                            value=None, interactive=True,
+                        )
+                        with gr.Row():
+                            refresh_knowledge_documents_button = gr.Button(tr("刷新文档列表"))
+                            delete_knowledge_document_button = gr.Button(tr("删除所选文档"), variant="stop")
+                            clear_knowledge_documents_button = gr.Button(tr("清空全部文档"), variant="stop")
+                        knowledge_document_box = gr.Textbox(
+                            label=tr("文档清单"), value=format_knowledge_document_list, lines=10, interactive=False
+                        )
+
+            with gr.Accordion(tr("风格库 / Style RAG"), open=False):
+                style_files = gr.File(
+                    label=tr("导入风格样例"), file_count="multiple",
+                    file_types=[".txt", ".md", ".markdown", ".csv", ".json", ".jsonl"],
+                )
+                with gr.Row():
+                    import_style_button = gr.Button(tr("导入并重建风格索引"))
+                    refresh_style_button = gr.Button(tr("查看风格库状态"))
+                style_query = gr.Textbox(
+                    label=tr("风格检索预览"),
+                    placeholder=tr("输入当前问题或场景，查看会被参考的回复风格样例"),
+                )
+                preview_style_button = gr.Button(tr("风格检索预览"))
+                style_box = gr.Textbox(
+                    label=tr("风格库状态 / 检索结果"), value=style_status, lines=16, interactive=False
+                )
+                with gr.Column(visible=False) as style_advanced_controls:
+                    rebuild_style_button = gr.Button(tr("重建风格索引"))
+
+        with gr.Tab(tr("tab_advanced"), id="advanced", visible=False) as advanced_tab:
+            with gr.Accordion(tr("运行状态"), open=True):
+                status_box = gr.Textbox(
+                    label=tr("状态"),
+                    value=build_status_text(initial_provider, initial_model, initial_base_url),
+                    lines=9,
+                    interactive=False,
+                )
+                with gr.Row():
+                    refresh_button = gr.Button(tr("刷新状态"))
+                    connection_button = gr.Button(tr("测试连接"))
+                    save_model_config_button = gr.Button(tr("保存模型配置"))
+                connection_result = gr.Textbox(label=tr("连接测试摘要"), interactive=False)
+                connection_detail_result = gr.Textbox(
+                    label=tr("连接测试详情"), value=tr("尚未测试连接。"), lines=9, interactive=False
+                )
+                save_model_config_result = gr.Textbox(label=tr("模型配置保存结果"), interactive=False)
+                status_timer = gr.Timer(value=2.0)
+            with gr.Accordion(tr("本地模型运行配置"), open=False):
+                with gr.Row():
+                    local_dtype_input.render()
+                    local_attention_input.render()
+                with gr.Row():
+                    local_low_cpu_mem_input.render()
+                    local_compile_input.render()
+                    local_cpu_threads_input.render()
+                with gr.Row():
+                    save_local_runtime_button = gr.Button(tr("保存本地运行配置"))
+                    refresh_local_runtime_button = gr.Button(tr("查看当前配置"))
+                local_runtime_status = gr.Textbox(
+                    label=tr("本地模型配置状态"),
+                    value=lambda: build_local_runtime_config_text(
+                        LOCAL_MODEL_DTYPE, LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
+                        LOCAL_MODEL_LOW_CPU_MEM_USAGE, LOCAL_MODEL_COMPILE, LOCAL_MODEL_CPU_THREADS,
+                    ),
+                    lines=8,
+                    interactive=False,
+                )
+                local_runtime_save_result = gr.Textbox(
+                    label=tr("保存结果"), value=tr("尚未保存本地运行配置。"), lines=3, interactive=False
+                )
+            with gr.Accordion(tr("日志面板"), open=False):
+                log_box = gr.Textbox(label=tr("最近日志"), value=get_log_text, lines=14, interactive=False)
+                with gr.Row():
+                    refresh_logs_button = gr.Button(tr("刷新日志"))
+                    clear_logs_button = gr.Button(tr("清空日志"))
+                log_timer = gr.Timer(value=3.0)
+
+    locale_status_timer = gr.Timer(value=0.75)
+
+    interface_mode_input.change(
+        fn=interface_mode_visibility,
+        inputs=interface_mode_input,
+        outputs=[
+            advanced_chat_settings,
+            memory_advanced_controls,
+            stable_advanced_controls,
+            knowledge_advanced_controls,
+            style_advanced_controls,
+            admin_recovery_group,
+            advanced_tab,
+            main_tabs,
         ],
-        additional_inputs_accordion="模型设置",
+        show_progress="hidden",
     )
-
-    with gr.Accordion("用户访问", open=False):
-        new_access_key_input = gr.Textbox(
-            label="新访问密码",
-            value="",
-            type="password",
-            placeholder="修改密码时填写，至少 8 位，可包含特殊符号",
-        )
-        with gr.Row():
-            save_access_key_button = gr.Button("保存/验证密码")
-            change_access_key_button = gr.Button("修改密码")
-            export_user_data_button = gr.Button("导出用户数据")
-        login_status_box = gr.Textbox(
-            label="登录状态",
-            value="未验证",
-            lines=2,
-            interactive=False,
-        )
-        access_key_status = gr.Textbox(
-            label="访问密码状态",
-            value="尚未验证访问密码。",
-            lines=3,
-            interactive=False,
-        )
-        export_user_data_status = gr.Textbox(
-            label="数据导出状态",
-            value="尚未导出。",
-            lines=3,
-            interactive=False,
-        )
-        export_user_data_file = gr.File(
-            label="导出的用户数据",
-            interactive=False,
-        )
-
-    with gr.Accordion("运行状态", open=False):
-        status_box = gr.Textbox(
-            label="状态",
-            value=build_status_text(initial_provider, initial_model, initial_base_url),
-            lines=9,
-            interactive=False,
-        )
-        with gr.Row():
-            refresh_button = gr.Button("刷新状态")
-            connection_button = gr.Button("测试连接")
-            save_model_config_button = gr.Button("保存模型配置")
-        connection_result = gr.Textbox(label="连接测试摘要", interactive=False)
-        connection_detail_result = gr.Textbox(
-            label="连接测试详情",
-            value="尚未测试连接。",
-            lines=9,
-            interactive=False,
-        )
-        save_model_config_result = gr.Textbox(label="模型配置保存结果", interactive=False)
-        status_timer = gr.Timer(value=2.0)
-
-    with gr.Accordion("本地模型运行配置", open=False):
-        with gr.Row():
-            local_dtype_input.render()
-            local_attention_input.render()
-        with gr.Row():
-            local_low_cpu_mem_input.render()
-            local_compile_input.render()
-            local_cpu_threads_input.render()
-        with gr.Row():
-            save_local_runtime_button = gr.Button("保存本地运行配置")
-            refresh_local_runtime_button = gr.Button("查看当前配置")
-        local_runtime_status = gr.Textbox(
-            label="本地模型配置状态",
-            value=lambda: build_local_runtime_config_text(
-                LOCAL_MODEL_DTYPE,
-                LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
-                LOCAL_MODEL_LOW_CPU_MEM_USAGE,
-                LOCAL_MODEL_COMPILE,
-                LOCAL_MODEL_CPU_THREADS,
-            ),
-            lines=8,
-            interactive=False,
-        )
-        local_runtime_save_result = gr.Textbox(
-            label="保存结果",
-            value="尚未保存本地运行配置。",
-            lines=3,
-            interactive=False,
-        )
-
-    with gr.Accordion("日志面板", open=False):
-        log_box = gr.Textbox(
-            label="最近日志",
-            value=get_log_text,
-            lines=14,
-            interactive=False,
-        )
-        with gr.Row():
-            refresh_logs_button = gr.Button("刷新日志")
-            clear_logs_button = gr.Button("清空日志")
-        log_timer = gr.Timer(value=3.0)
-
-    with gr.Accordion("Mood Check-in", open=False):
-        with gr.Row():
-            mood_date_input = gr.Textbox(
-                label="日期",
-                value=date.today().isoformat(),
-                placeholder="YYYY-MM-DD",
-            )
-            mood_choice_input = gr.Dropdown(
-                label="今天的心情",
-                choices=MOOD_CHOICES,
-                value="一般",
-                allow_custom_value=True,
-            )
-            mood_intensity_input = gr.Slider(
-                label="强度",
-                minimum=1,
-                maximum=5,
-                value=3,
-                step=1,
-            )
-        mood_note_input = gr.Textbox(
-            label="备注",
-            placeholder="可以写下触发原因、身体状态、需要被记住的背景。",
-            lines=3,
-        )
-        with gr.Row():
-            save_mood_button = gr.Button("保存 Mood")
-            refresh_mood_button = gr.Button("刷新 Mood")
-            delete_mood_button = gr.Button("删除当天记录")
-        mood_box = gr.Textbox(
-            label="最近 Mood Check-ins",
-            value="点击“刷新 Mood”查看当前用户的记录。",
-            lines=10,
-            interactive=False,
-        )
-
-    with gr.Accordion("Weekly Mood Chart", open=False):
-        weekly_mood_end_date_input = gr.Textbox(
-            label="结束日期",
-            value=date.today().isoformat(),
-            placeholder="YYYY-MM-DD",
-        )
-        refresh_weekly_mood_button = gr.Button("刷新周情绪图")
-        weekly_mood_chart = gr.HTML(
-            value=_render_weekly_mood_chart([], "light")
-        )
-        weekly_mood_summary = gr.Textbox(
-            label="一周摘要",
-            value=AUTH_REQUIRED_MESSAGE,
-            lines=6,
-            interactive=False,
-        )
-        weekly_mood_analysis = gr.Textbox(
-            label="情绪波动分析",
-            value=AUTH_REQUIRED_MESSAGE,
-            lines=8,
-            interactive=False,
-        )
-
-
-    with gr.Accordion("记忆管理", open=False):
-        memory_section = gr.Radio(
-            label="清理范围",
-            choices=[
-                ("短期对话", "history"),
-                ("情绪记忆", "emotion"),
-                ("长期记忆", "long"),
-                ("兴趣记忆", "interest"),
-                ("稳定资料", "stable"),
-                ("全部记忆", "all"),
-            ],
-            value="history",
-        )
-        with gr.Row():
-            load_memory_button = gr.Button("查看记忆")
-            save_memory_button = gr.Button("保存修改")
-            clear_memory_button = gr.Button("清理所选记忆")
-        memory_editor = gr.Textbox(
-            label="记忆 JSON 编辑区",
-            value="[]",
-            lines=14,
-            interactive=True,
-        )
-        memory_box = gr.Textbox(
-            label="当前用户记忆",
-            value="点击“查看记忆”加载当前用户的记忆。",
-            lines=18,
-            interactive=False,
-        )
-
-    with gr.Accordion("稳定资料", open=False):
-        stable_profile_input = gr.Textbox(
-            label="新增稳定资料",
-            placeholder="例如：我是学生；我喜欢被简洁地称呼；我来自北京",
-            lines=2,
-        )
-        with gr.Row():
-            add_stable_profile_button = gr.Button("添加资料")
-            load_stable_profile_button = gr.Button("查看资料")
-            save_stable_profile_button = gr.Button("保存编辑")
-            clear_stable_profile_button = gr.Button("清空稳定资料", variant="stop")
-        stable_profile_editor = gr.Textbox(
-            label="稳定资料 JSON 编辑区",
-            value="[]",
-            lines=10,
-            interactive=True,
-        )
-        stable_profile_box = gr.Textbox(
-            label="稳定资料状态",
-            value="点击“查看资料”加载当前用户的稳定资料。",
-            lines=10,
-            interactive=False,
-        )
-
-    with gr.Accordion("知识库 / RAG", open=False):
-        knowledge_files = gr.File(
-            label="导入资料",
-            file_count="multiple",
-            file_types=[".txt", ".md", ".markdown", ".csv", ".json", ".pdf", ".docx"],
-        )
-        with gr.Row():
-            import_knowledge_button = gr.Button("导入并重建索引")
-            rebuild_knowledge_button = gr.Button("重建索引")
-            refresh_knowledge_button = gr.Button("查看知识库状态")
-        knowledge_query = gr.Textbox(
-            label="检索预览问题",
-            placeholder="输入一个问题，查看会被检索进 Prompt 的资料片段",
-        )
-        preview_knowledge_button = gr.Button("检索预览")
-        knowledge_box = gr.Textbox(
-            label="知识库状态 / 检索结果",
-            value=knowledge_status,
-            lines=16,
-            interactive=False,
-        )
-        with gr.Accordion("RAG 文档管理", open=False):
-            knowledge_document_selector = gr.Dropdown(
-                label="已入库文档",
-                choices=refresh_knowledge_document_panel()[0],
-                value=None,
-                interactive=True,
-            )
-            with gr.Row():
-                refresh_knowledge_documents_button = gr.Button("刷新文档列表")
-                delete_knowledge_document_button = gr.Button("删除所选文档", variant="stop")
-                clear_knowledge_documents_button = gr.Button("清空全部文档", variant="stop")
-            knowledge_document_box = gr.Textbox(
-                label="文档清单",
-                value=format_knowledge_document_list,
-                lines=10,
-                interactive=False,
-            )
-
-    with gr.Accordion("风格库 / Style RAG", open=False):
-        style_files = gr.File(
-            label="导入风格样例",
-            file_count="multiple",
-            file_types=[".txt", ".md", ".markdown", ".csv", ".json", ".jsonl"],
-        )
-        with gr.Row():
-            import_style_button = gr.Button("导入并重建风格索引")
-            rebuild_style_button = gr.Button("重建风格索引")
-            refresh_style_button = gr.Button("查看风格库状态")
-        style_query = gr.Textbox(
-            label="风格检索预览",
-            placeholder="输入当前问题或场景，查看会被参考的回复风格样例",
-        )
-        preview_style_button = gr.Button("风格检索预览")
-        style_box = gr.Textbox(
-            label="风格库状态 / 检索结果",
-            value=style_status,
-            lines=16,
-            interactive=False,
-        )
-
     provider_input.change(
         fn=provider_changed,
-        inputs=[provider_input, api_key_input],
+        inputs=[provider_input, api_key_input, locale_probe_input],
         outputs=[model_input, base_url_input, status_box],
+        js=SYNC_LOCALE_JS,
     )
     refresh_button.click(
         fn=refresh_status,
-        inputs=[provider_input, model_input, base_url_input, api_key_input],
+        inputs=[provider_input, model_input, base_url_input, api_key_input, locale_probe_input],
         outputs=status_box,
+        js=SYNC_LOCALE_JS,
     )
     status_timer.tick(
         fn=refresh_status,
-        inputs=[provider_input, model_input, base_url_input, api_key_input],
+        inputs=[provider_input, model_input, base_url_input, api_key_input, locale_probe_input],
         outputs=status_box,
+        js=SYNC_LOCALE_JS,
+    )
+    locale_status_timer.tick(
+        fn=relocalize_status_values_and_locale,
+        inputs=[
+            status_box,
+            connection_result,
+            connection_detail_result,
+            save_model_config_result,
+            local_runtime_status,
+            local_runtime_save_result,
+            login_status_box,
+            access_key_status,
+            export_user_data_status,
+            admin_recovery_status_box,
+            locale_probe_input,
+        ],
+        outputs=[
+            status_box,
+            connection_result,
+            connection_detail_result,
+            save_model_config_result,
+            local_runtime_status,
+            local_runtime_save_result,
+            login_status_box,
+            access_key_status,
+            export_user_data_status,
+            admin_recovery_status_box,
+            locale_probe_input,
+        ],
+        js=SYNC_LOCALE_JS,
+        show_progress="hidden",
     )
     connection_button.click(
         fn=test_model_connection_and_refresh,
@@ -1273,8 +1496,10 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             temperature_input,
             top_p_input,
             max_new_tokens_input,
+            locale_probe_input,
         ],
         outputs=[connection_result, connection_detail_result, status_box],
+        js=SYNC_LOCALE_JS,
     )
     save_model_config_button.click(
         fn=save_model_config_and_refresh,
@@ -1286,8 +1511,10 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             temperature_input,
             top_p_input,
             max_new_tokens_input,
+            locale_probe_input,
         ],
         outputs=[save_model_config_result, status_box],
+        js=SYNC_LOCALE_JS,
     )
     save_local_runtime_button.click(
         fn=save_local_runtime_config_and_refresh,
@@ -1297,34 +1524,52 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             local_low_cpu_mem_input,
             local_compile_input,
             local_cpu_threads_input,
+            locale_probe_input,
         ],
         outputs=[local_runtime_save_result, local_runtime_status],
+        js=SYNC_LOCALE_JS,
     )
     refresh_local_runtime_button.click(
-        fn=build_local_runtime_config_text,
+        fn=build_local_runtime_config_text_localized,
         inputs=[
             local_dtype_input,
             local_attention_input,
             local_low_cpu_mem_input,
             local_compile_input,
             local_cpu_threads_input,
+            locale_probe_input,
         ],
         outputs=local_runtime_status,
+        js=SYNC_LOCALE_JS,
     )
     save_access_key_button.click(
         fn=save_access_key_and_status,
-        inputs=[user_id_input, access_key_input],
+        inputs=[user_id_input, access_key_input, locale_probe_input],
         outputs=[access_key_status, login_status_box],
+        js=SYNC_LOCALE_JS,
     )
     change_access_key_button.click(
         fn=change_access_key_and_status,
-        inputs=[user_id_input, access_key_input, new_access_key_input],
+        inputs=[user_id_input, access_key_input, new_access_key_input, locale_probe_input],
         outputs=[access_key_status, access_key_input, new_access_key_input, login_status_box],
+        js=SYNC_LOCALE_JS,
+    )
+    admin_recovery_button.click(
+        fn=admin_recover_access_key_and_status,
+        inputs=[user_id_input, admin_recovery_key_input, admin_new_access_key_input, locale_probe_input],
+        outputs=[
+            admin_recovery_status_box,
+            access_key_input,
+            admin_recovery_key_input,
+            login_status_box,
+        ],
+        js=SYNC_LOCALE_JS,
     )
     export_user_data_button.click(
         fn=export_user_data_from_gui,
-        inputs=[user_id_input, access_key_input],
+        inputs=[user_id_input, access_key_input, locale_probe_input],
         outputs=[export_user_data_status, export_user_data_file],
+        js=SYNC_LOCALE_JS,
     )
     refresh_logs_button.click(
         fn=get_log_text,
@@ -1349,6 +1594,7 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             mood_note_input,
             weekly_mood_end_date_input,
             theme_mode_input,
+            locale_probe_input,
         ],
         outputs=[
             mood_box,
@@ -1360,7 +1606,7 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
     )
     refresh_mood_button.click(
         fn=refresh_mood_panel,
-        inputs=[user_id_input, access_key_input],
+        inputs=[user_id_input, access_key_input, locale_probe_input],
         outputs=mood_box,
     )
     delete_mood_button.click(
@@ -1371,6 +1617,7 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
             mood_date_input,
             weekly_mood_end_date_input,
             theme_mode_input,
+            locale_probe_input,
         ],
         outputs=[
             mood_box,
@@ -1382,56 +1629,102 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
     )
     refresh_weekly_mood_button.click(
         fn=refresh_weekly_mood_dashboard,
-        inputs=[user_id_input, access_key_input, weekly_mood_end_date_input, theme_mode_input],
+        inputs=[
+            user_id_input,
+            access_key_input,
+            weekly_mood_end_date_input,
+            theme_mode_input,
+            locale_probe_input,
+        ],
         outputs=[weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
     )
     theme_mode_input.change(
         fn=refresh_weekly_mood_dashboard,
-        inputs=[user_id_input, access_key_input, weekly_mood_end_date_input, theme_mode_input],
+        inputs=[
+            user_id_input,
+            access_key_input,
+            weekly_mood_end_date_input,
+            theme_mode_input,
+            locale_probe_input,
+        ],
         outputs=[weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
         js=REFRESH_CHART_THEME_JS,
         show_progress="hidden",
     )
     demo.load(
+        fn=sync_locale_value,
+        inputs=locale_probe_input,
+        outputs=locale_probe_input,
+        js=SYNC_LOCALE_JS,
+        show_progress="hidden",
+    )
+    demo.load(
         fn=load_theme_and_weekly_dashboard,
-        inputs=[user_id_input, access_key_input, weekly_mood_end_date_input, theme_mode_input],
+        inputs=[
+            user_id_input,
+            access_key_input,
+            weekly_mood_end_date_input,
+            theme_mode_input,
+            locale_probe_input,
+        ],
         outputs=[theme_mode_input, weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
         js=LOAD_THEME_JS,
         show_progress="hidden",
     )
     load_memory_button.click(
         fn=load_memory_editor,
-        inputs=[user_id_input, access_key_input, memory_section],
+        inputs=[user_id_input, access_key_input, memory_section, locale_probe_input],
         outputs=[memory_editor, memory_box],
     )
     save_memory_button.click(
         fn=save_memory_editor,
-        inputs=[user_id_input, access_key_input, memory_section, memory_editor],
+        inputs=[user_id_input, access_key_input, memory_section, memory_editor, locale_probe_input],
         outputs=[memory_editor, memory_box],
     )
     clear_memory_button.click(
         fn=clear_memory_section_and_reload,
-        inputs=[user_id_input, access_key_input, memory_section],
+        inputs=[user_id_input, access_key_input, memory_section, locale_probe_input],
         outputs=[memory_editor, memory_box],
+    )
+    refresh_memory_events_button.click(
+        fn=load_memory_event_log,
+        inputs=[user_id_input, access_key_input, locale_probe_input],
+        outputs=memory_event_box,
+    )
+    backup_memory_button.click(
+        fn=backup_memory_from_gui,
+        inputs=[user_id_input, access_key_input, locale_probe_input],
+        outputs=[memory_backup_status, memory_backup_file],
+    )
+    restore_memory_button.click(
+        fn=restore_memory_from_gui,
+        inputs=[
+            user_id_input,
+            access_key_input,
+            restore_memory_file,
+            restore_memory_mode,
+            locale_probe_input,
+        ],
+        outputs=[memory_backup_status, memory_safety_backup_file, memory_box, memory_event_box],
     )
     add_stable_profile_button.click(
         fn=add_stable_profile,
-        inputs=[user_id_input, access_key_input, stable_profile_input],
+        inputs=[user_id_input, access_key_input, stable_profile_input, locale_probe_input],
         outputs=[stable_profile_input, stable_profile_editor, stable_profile_box],
     )
     load_stable_profile_button.click(
         fn=load_stable_profile_editor,
-        inputs=[user_id_input, access_key_input],
+        inputs=[user_id_input, access_key_input, locale_probe_input],
         outputs=[stable_profile_editor, stable_profile_box],
     )
     save_stable_profile_button.click(
         fn=save_stable_profile_editor,
-        inputs=[user_id_input, access_key_input, stable_profile_editor],
+        inputs=[user_id_input, access_key_input, stable_profile_editor, locale_probe_input],
         outputs=[stable_profile_editor, stable_profile_box],
     )
     clear_stable_profile_button.click(
         fn=clear_stable_profile,
-        inputs=[user_id_input, access_key_input],
+        inputs=[user_id_input, access_key_input, locale_probe_input],
         outputs=[stable_profile_editor, stable_profile_box],
     )
     import_knowledge_button.click(
@@ -1449,7 +1742,11 @@ with gr.Blocks(title="情绪感知对话助手") as demo:
     )
     preview_knowledge_button.click(
         fn=preview_knowledge_search,
-        inputs=knowledge_query,
+        inputs=[knowledge_query, knowledge_top_k, knowledge_threshold, knowledge_candidate_multiplier],
+        outputs=knowledge_box,
+    )
+    inspect_knowledge_quality_button.click(
+        fn=format_knowledge_quality_report,
         outputs=knowledge_box,
     )
     refresh_knowledge_documents_button.click(
@@ -1492,4 +1789,6 @@ if __name__ == "__main__":
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
         share=os.getenv("GRADIO_SHARE", "false").lower() == "true",
         css=THEME_CSS,
+        i18n=GUI_I18N,
+        footer_links=["settings"],
     )

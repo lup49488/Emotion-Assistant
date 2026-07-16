@@ -12,24 +12,26 @@ THEME_CSS = """
 """
 
 REFRESH_CHART_THEME_JS = """
-(userId, accessKey, endDate, theme) => {
+(userId, accessKey, endDate, theme, locale) => {
     const dark = theme === "dark";
     document.documentElement.classList.toggle("dark", dark);
     document.body.classList.toggle("dark", dark);
     document.documentElement.style.colorScheme = dark ? "dark" : "light";
     localStorage.setItem("chatbot-theme", theme);
-    return [userId, accessKey, endDate, theme];
+    const detected = document.documentElement.lang || navigator.language || "zh-CN";
+    return [userId, accessKey, endDate, theme, detected];
 }
 """
 
 LOAD_THEME_JS = """
-(userId, accessKey, endDate, theme) => {
+(userId, accessKey, endDate, theme, locale) => {
     const saved = localStorage.getItem("chatbot-theme");
     const selected = saved === "dark" ? "dark" : "light";
     const dark = selected === "dark";
     document.documentElement.classList.toggle("dark", dark);
     document.body.classList.toggle("dark", dark);
     document.documentElement.style.colorScheme = dark ? "dark" : "light";
-    return [userId, accessKey, endDate, selected];
+    const detected = document.documentElement.lang || navigator.language || "zh-CN";
+    return [userId, accessKey, endDate, selected, detected];
 }
 """
