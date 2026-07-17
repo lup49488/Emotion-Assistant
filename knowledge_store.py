@@ -28,9 +28,20 @@ from config import (
 from json_utils import load_json, save_json
 from llm_providers import encode_texts, get_embedding_dimension
 from memory_store import require_faiss
+from sqlite_store import (
+    connection as sqlite_connection,
+    list_rag_chunks,
+    list_rag_documents,
+    mark_rag_migration_completed,
+    rag_migration_completed,
+    replace_rag_chunks,
+    replace_rag_documents,
+    sqlite_enabled,
+)
 
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".pdf", ".docx"}
+RAG_COLLECTION = "knowledge"
 
 
 @dataclass
@@ -147,7 +158,50 @@ def split_text(text: str, *, chunk_size: int = KNOWLEDGE_CHUNK_SIZE, overlap: in
     return chunks
 
 
+def _filesystem_document_details() -> list[dict[str, Any]]:
+    ensure_knowledge_dirs()
+    details: list[dict[str, Any]] = []
+    for path in sorted(KNOWLEDGE_DOCS_DIR.iterdir()):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        details.append({
+            "name": path.name,
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+            "created_at": "",
+        })
+    return details
+
+
+def _sync_sqlite_metadata(conn: Any, chunks: list[dict[str, Any]]) -> None:
+    replace_rag_chunks(conn, RAG_COLLECTION, chunks)
+    replace_rag_documents(conn, RAG_COLLECTION, _filesystem_document_details())
+    mark_rag_migration_completed(conn, RAG_COLLECTION)
+
+
+def _migrate_legacy_metadata_unlocked(conn: Any) -> int:
+    if rag_migration_completed(conn, RAG_COLLECTION):
+        return 0
+    chunks = load_json(KNOWLEDGE_CHUNKS_PATH)
+    clean_chunks = chunks if isinstance(chunks, list) else []
+    _sync_sqlite_metadata(conn, clean_chunks)
+    return len(clean_chunks)
+
+
+def migrate_legacy_knowledge_metadata() -> int:
+    """Import the legacy chunk JSON and document metadata into SQLite once."""
+    if not sqlite_enabled():
+        return 0
+    with sqlite_connection() as conn:
+        return _migrate_legacy_metadata_unlocked(conn)
+
+
 def load_chunks() -> list[dict[str, Any]]:
+    if sqlite_enabled():
+        with sqlite_connection() as conn:
+            _migrate_legacy_metadata_unlocked(conn)
+            return list_rag_chunks(conn, RAG_COLLECTION)
     chunks = load_json(KNOWLEDGE_CHUNKS_PATH)
     return chunks if isinstance(chunks, list) else []
 
@@ -155,6 +209,9 @@ def load_chunks() -> list[dict[str, Any]]:
 def save_chunks(chunks: list[dict[str, Any]]) -> None:
     ensure_knowledge_dirs()
     save_json(KNOWLEDGE_CHUNKS_PATH, chunks)
+    if sqlite_enabled():
+        with sqlite_connection() as conn:
+            _sync_sqlite_metadata(conn, chunks)
 
 
 def list_documents() -> list[str]:
@@ -164,6 +221,18 @@ def list_documents() -> list[str]:
 
 def list_document_details() -> list[dict[str, Any]]:
     """Return stored-document metadata for management views without reading file contents."""
+    if sqlite_enabled():
+        load_chunks()
+        with sqlite_connection() as conn:
+            documents = list_rag_documents(conn, RAG_COLLECTION)
+            chunks_by_source = Counter(
+                str(chunk.get("source", "")) for chunk in list_rag_chunks(conn, RAG_COLLECTION)
+            )
+        return [
+            {**item, "chunks": chunks_by_source.get(str(item["name"]), 0)}
+            for item in documents
+        ]
+
     chunks_by_source: dict[str, int] = {}
     for chunk in load_chunks():
         source = str(chunk.get("source", "")).strip()

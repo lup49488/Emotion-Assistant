@@ -13,6 +13,15 @@ numpy 等重依赖替换为轻量 stub，注入到 sys.modules。
 import sys
 import types
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolate_storage_backend(monkeypatch):
+    """Keep legacy tests independent from a developer's local SQLite settings."""
+    monkeypatch.setenv("STORAGE_BACKEND", "json")
+    monkeypatch.delenv("SQLITE_DATABASE_PATH", raising=False)
+
 
 def _install_stub(name: str, **attrs):
     """如果模块未安装，则注册一个同名 stub 到 sys.modules。"""

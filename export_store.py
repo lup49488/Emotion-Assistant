@@ -6,8 +6,8 @@ from pathlib import Path
 from typing import Any
 
 from config import BASE_DIR
-from json_utils import load_json
-from session_store import user_file_lock, user_paths, validate_user_id
+from mood_store import load_mood_checkins
+from session_store import load_state, validate_user_id
 
 EXPORTS_DIR = BASE_DIR / "exports"
 
@@ -19,24 +19,24 @@ def _safe_export_name(user_id: str) -> str:
 
 def build_user_export_payload(user_id: str) -> dict[str, Any]:
     user_id = validate_user_id(user_id)
-    paths = user_paths(user_id)
-    with user_file_lock(user_id):
-        return {
-            "schema_version": 2,
-            "exported_at": datetime.now().isoformat(timespec="seconds"),
-            "user_id": user_id,
-            "notes": [
-                "此导出包含当前用户的对话、记忆和 Mood 数据。",
-                "不会导出访问密码、密码哈希、API Key 或本地 .env 配置。",
-            ],
-            "history": load_json(paths["history"]),
-            "emotion_memory": load_json(paths["emotion_memory"]),
-            "long_memory": load_json(paths["long_memory"]),
-            "stable_profile": load_json(paths["stable_profile"]),
-            "memory_events": load_json(paths["memory_events"]),
-            "interest_memory": load_json(paths["interest_memory"]),
-            "mood_checkins": load_json(paths["mood_checkins"]),
-        }
+    state = load_state(user_id)
+    mood_checkins = load_mood_checkins(user_id)
+    return {
+        "schema_version": 2,
+        "exported_at": datetime.now().isoformat(timespec="seconds"),
+        "user_id": user_id,
+        "notes": [
+            "此导出包含当前用户的对话、记忆和 Mood 数据。",
+            "不会导出访问密码、密码哈希、API Key 或本地 .env 配置。",
+        ],
+        "history": list(state.history),
+        "emotion_memory": list(state.emotion_memory),
+        "long_memory": list(state.long_memory),
+        "stable_profile": list(state.stable_profile),
+        "memory_events": list(state.memory_events),
+        "interest_memory": list(state.interest_store.items),
+        "mood_checkins": mood_checkins,
+    }
 
 
 def export_user_data(user_id: str) -> Path:

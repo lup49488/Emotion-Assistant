@@ -5,6 +5,15 @@ from typing import Any
 
 from json_utils import load_json, save_json
 from session_store import user_file_lock, user_paths, validate_user_id
+from sqlite_store import (
+    connection as sqlite_connection,
+    delete_mood_checkin as delete_sqlite_mood_checkin,
+    legacy_import_completed,
+    list_mood_checkins as list_sqlite_mood_checkins,
+    mark_legacy_import_completed,
+    sqlite_enabled,
+    upsert_mood_checkin,
+)
 
 
 MOOD_CHOICES = [
@@ -79,8 +88,40 @@ def _load_records_unlocked(user_id: str) -> list[dict[str, Any]]:
     return sorted(clean_records, key=lambda item: item["date"])
 
 
+def _migrate_legacy_moods_unlocked(conn: Any, user_id: str) -> int:
+    if legacy_import_completed(conn, user_id, "mood_json"):
+        return 0
+    if list_sqlite_mood_checkins(conn, user_id):
+        mark_legacy_import_completed(conn, user_id, "mood_json")
+        return 0
+    records = _load_records_unlocked(user_id)
+    for record in records:
+        upsert_mood_checkin(conn, user_id, record)
+    mark_legacy_import_completed(conn, user_id, "mood_json")
+    return len(records)
+
+
+def migrate_legacy_mood_checkins(user_id: str) -> int:
+    """Import one user's legacy Mood JSON exactly once when SQLite is enabled."""
+    user_id = validate_user_id(user_id or "local")
+    if not sqlite_enabled():
+        return 0
+    with user_file_lock(user_id):
+        with sqlite_connection() as conn:
+            return _migrate_legacy_moods_unlocked(conn, user_id)
+
+
+def _load_sqlite_records(user_id: str) -> list[dict[str, Any]]:
+    with user_file_lock(user_id):
+        with sqlite_connection() as conn:
+            _migrate_legacy_moods_unlocked(conn, user_id)
+            return list_sqlite_mood_checkins(conn, user_id)
+
+
 def load_mood_checkins(user_id: str) -> list[dict[str, Any]]:
     user_id = validate_user_id(user_id or "local")
+    if sqlite_enabled():
+        return _load_sqlite_records(user_id)
     with user_file_lock(user_id):
         return _load_records_unlocked(user_id)
 
@@ -97,6 +138,25 @@ def add_mood_checkin(
     normalized_mood = _normalize_mood(mood)
     normalized_intensity = _normalize_intensity(intensity)
     now = datetime.now().isoformat(timespec="seconds")
+
+    if sqlite_enabled():
+        with user_file_lock(user_id):
+            with sqlite_connection() as conn:
+                _migrate_legacy_moods_unlocked(conn, user_id)
+                existing = next(
+                    (item for item in list_sqlite_mood_checkins(conn, user_id) if item["date"] == normalized_date),
+                    None,
+                )
+                record = {
+                    "date": normalized_date,
+                    "mood": normalized_mood,
+                    "intensity": normalized_intensity,
+                    "note": _clean_note(note),
+                    "source": str((existing or {}).get("source") or "checkin"),
+                    "created_at": str(existing.get("created_at") if existing else now),
+                    "updated_at": now,
+                }
+                return upsert_mood_checkin(conn, user_id, record)
 
     with user_file_lock(user_id):
         records = _load_records_unlocked(user_id)
@@ -128,6 +188,11 @@ def add_mood_checkin(
 def delete_mood_checkin(user_id: str, checkin_date: str) -> bool:
     user_id = validate_user_id(user_id or "local")
     normalized_date = _normalize_date(checkin_date)
+    if sqlite_enabled():
+        with user_file_lock(user_id):
+            with sqlite_connection() as conn:
+                _migrate_legacy_moods_unlocked(conn, user_id)
+                return delete_sqlite_mood_checkin(conn, user_id, normalized_date)
     with user_file_lock(user_id):
         records = _load_records_unlocked(user_id)
         kept = [item for item in records if item["date"] != normalized_date]

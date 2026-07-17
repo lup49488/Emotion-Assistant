@@ -19,12 +19,29 @@ from memory_store import (
     clean_long_term,
     compact_long_memory,
 )
+from sqlite_store import (
+    connection as sqlite_connection,
+    has_session_items,
+    legacy_import_completed,
+    list_session_items,
+    mark_legacy_import_completed,
+    replace_session_items,
+    sqlite_enabled,
+)
 
 
 logger = logging.getLogger(__name__)
 _IS_WINDOWS = sys.platform.startswith("win")
 _LOCK_RETRY_INTERVAL = 0.05
 _LOCK_TIMEOUT = 30.0
+SESSION_SECTIONS = (
+    "history",
+    "emotion_memory",
+    "long_memory",
+    "stable_profile",
+    "interest_memory",
+    "memory_events",
+)
 
 
 def validate_user_id(user_id: str) -> str:
@@ -131,55 +148,119 @@ class SessionState:
         self.last_accessed = datetime.now()
 
 
-def load_state(user_id: str) -> SessionState:
-    validate_user_id(user_id)
+def _legacy_sections(user_id: str) -> dict[str, list[dict[str, Any]]]:
     paths = user_paths(user_id)
+    return {section: load_json(paths[section]) for section in SESSION_SECTIONS}
+
+
+def _hydrate_state(state: SessionState, sections: dict[str, list[dict[str, Any]]]) -> None:
+    state.history = list(sections["history"])
+    state.emotion_memory = list(sections["emotion_memory"])
+    raw_long_memory = list(sections["long_memory"])
+    state.stable_profile = [
+        item for item in sections["stable_profile"]
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    ]
+    state.memory_events = [item for item in sections["memory_events"] if isinstance(item, dict)][-100:]
+
+    # Move profiles created before the dedicated stable-profile store existed.
+    legacy_profiles = [
+        item for item in raw_long_memory
+        if isinstance(item, dict) and item.get("kind") == "profile" and str(item.get("text", "")).strip()
+    ]
+    known_texts = {str(item["text"]).strip() for item in state.stable_profile}
+    for item in legacy_profiles:
+        text = str(item["text"]).strip()
+        if text not in known_texts:
+            state.stable_profile.append(dict(item))
+            known_texts.add(text)
+    raw_long_memory = [
+        item for item in raw_long_memory
+        if not (isinstance(item, dict) and item.get("kind") == "profile")
+    ]
+    state.long_memory = compact_long_memory(clean_long_term(raw_long_memory))
+    state.interest_store.load(list(sections["interest_memory"]))
+
+
+def _state_sections(state: SessionState) -> dict[str, list[dict[str, Any]]]:
+    return {
+        "history": list(state.history),
+        "emotion_memory": list(state.emotion_memory),
+        "long_memory": list(state.long_memory),
+        "stable_profile": list(state.stable_profile),
+        "interest_memory": list(state.interest_store.items),
+        "memory_events": list(state.memory_events[-100:]),
+    }
+
+
+def _migrate_legacy_session_unlocked(conn: Any, user_id: str) -> int:
+    if legacy_import_completed(conn, user_id, "session_json"):
+        return 0
+    if has_session_items(conn, user_id):
+        mark_legacy_import_completed(conn, user_id, "session_json")
+        return 0
+    sections = _legacy_sections(user_id)
+    for section, items in sections.items():
+        replace_session_items(conn, user_id, section, items)
+    mark_legacy_import_completed(conn, user_id, "session_json")
+    return sum(len(items) for items in sections.values())
+
+
+def migrate_legacy_session_state(user_id: str) -> int:
+    """Import one user's JSON session and memory state exactly once into SQLite."""
+    user_id = validate_user_id(user_id)
+    if not sqlite_enabled():
+        return 0
+    with user_file_lock(user_id):
+        with sqlite_connection() as conn:
+            return _migrate_legacy_session_unlocked(conn, user_id)
+
+
+def _load_json_state(user_id: str) -> SessionState:
     with user_file_lock(user_id):
         state = SessionState(user_id=user_id)
-        state.history = load_json(paths["history"])
-        state.emotion_memory = load_json(paths["emotion_memory"])
-        raw_long_memory = load_json(paths["long_memory"])
-        state.stable_profile = [
-            item for item in load_json(paths["stable_profile"])
-            if isinstance(item, dict) and str(item.get("text", "")).strip()
-        ]
-        state.memory_events = [
-            item for item in load_json(paths["memory_events"])
-            if isinstance(item, dict)
-        ][-100:]
-        # Move profiles created before the dedicated stable-profile store existed.
-        legacy_profiles = [
-            item for item in raw_long_memory
-            if isinstance(item, dict) and item.get("kind") == "profile" and str(item.get("text", "")).strip()
-        ]
-        known_texts = {str(item["text"]).strip() for item in state.stable_profile}
-        for item in legacy_profiles:
-            text = str(item["text"]).strip()
-            if text not in known_texts:
-                state.stable_profile.append(dict(item))
-                known_texts.add(text)
-        raw_long_memory = [
-            item for item in raw_long_memory
-            if not (isinstance(item, dict) and item.get("kind") == "profile")
-        ]
-        raw_long_memory = clean_long_term(raw_long_memory)
-        state.long_memory = compact_long_memory(raw_long_memory)
-        state.interest_store.load(load_json(paths["interest_memory"]))
+        _hydrate_state(state, _legacy_sections(user_id))
+        paths = user_paths(user_id)
         save_json(paths["long_memory"], state.long_memory)
         save_json(paths["stable_profile"], state.stable_profile)
         save_json(paths["memory_events"], state.memory_events)
     return state
 
 
+def _load_sqlite_state(user_id: str) -> SessionState:
+    with user_file_lock(user_id):
+        with sqlite_connection() as conn:
+            _migrate_legacy_session_unlocked(conn, user_id)
+            state = SessionState(user_id=user_id)
+            sections = {
+                section: list_session_items(conn, user_id, section)
+                for section in SESSION_SECTIONS
+            }
+            _hydrate_state(state, sections)
+            for section, items in _state_sections(state).items():
+                replace_session_items(conn, user_id, section, items)
+    return state
+
+
+def load_state(user_id: str) -> SessionState:
+    user_id = validate_user_id(user_id)
+    return _load_sqlite_state(user_id) if sqlite_enabled() else _load_json_state(user_id)
+
+
 def persist_state(state: SessionState) -> None:
-    paths = user_paths(state.user_id)
-    with user_file_lock(state.user_id):
-        save_json(paths["history"], state.history)
-        save_json(paths["emotion_memory"], state.emotion_memory)
-        save_json(paths["long_memory"], state.long_memory)
-        save_json(paths["stable_profile"], state.stable_profile)
-        save_json(paths["memory_events"], state.memory_events[-100:])
-        save_json(paths["interest_memory"], state.interest_store.items)
+    user_id = validate_user_id(state.user_id)
+    if sqlite_enabled():
+        with user_file_lock(user_id):
+            with sqlite_connection() as conn:
+                _migrate_legacy_session_unlocked(conn, user_id)
+                for section, items in _state_sections(state).items():
+                    replace_session_items(conn, user_id, section, items)
+        return
+
+    paths = user_paths(user_id)
+    with user_file_lock(user_id):
+        for section, items in _state_sections(state).items():
+            save_json(paths[section], items)
 
 
 class SessionStore:

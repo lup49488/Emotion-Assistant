@@ -5,6 +5,7 @@ from html import escape
 from typing import Any
 
 from gui_auth import AUTH_REQUIRED_MESSAGE, authorize_or_message
+from gui_i18n import localize_status_text
 from mood_store import (
     add_mood_checkin,
     delete_mood_checkin,
@@ -22,9 +23,9 @@ def refresh_mood_panel(user_id: str, access_key: str, locale: str = "zh-CN") -> 
     if auth_error:
         return auth_error
     try:
-        return format_mood_checkins(user_id)
+        return localize_status_text(format_mood_checkins(user_id), locale)
     except Exception as exc:
-        return f"读取 Mood Check-in 失败：{exc}"
+        return localize_status_text(f"读取 Mood Check-in 失败：{exc}", locale)
 
 
 def submit_mood_checkin(
@@ -48,10 +49,13 @@ def submit_mood_checkin(
             checkin_date=checkin_date,
         )
         logger.info("Mood check-in saved for user=%s date=%s", user_id, record["date"])
-        return f"已保存 {record['date']} 的 Mood Check-in。\n\n{format_mood_checkins(user_id)}"
+        return localize_status_text(
+            f"已保存 {record['date']} 的 Mood Check-in。\n\n{format_mood_checkins(user_id)}",
+            locale,
+        )
     except Exception as exc:
         logger.warning("Failed to save mood check-in for user=%s: %s", user_id, exc)
-        return f"保存 Mood Check-in 失败：{exc}"
+        return localize_status_text(f"保存 Mood Check-in 失败：{exc}", locale)
 
 
 def delete_mood_checkin_from_gui(
@@ -65,10 +69,10 @@ def delete_mood_checkin_from_gui(
         prefix = f"已删除 {checkin_date} 的 Mood Check-in。" if deleted else f"没有找到 {checkin_date} 的记录。"
         if deleted:
             logger.info("Mood check-in deleted for user=%s date=%s", user_id, checkin_date)
-        return f"{prefix}\n\n{format_mood_checkins(user_id)}"
+        return localize_status_text(f"{prefix}\n\n{format_mood_checkins(user_id)}", locale)
     except Exception as exc:
         logger.warning("Failed to delete mood check-in for user=%s: %s", user_id, exc)
-        return f"删除 Mood Check-in 失败：{exc}"
+        return localize_status_text(f"删除 Mood Check-in 失败：{exc}", locale)
 
 
 def render_weekly_mood_chart(
@@ -198,7 +202,8 @@ def refresh_weekly_mood_chart(
     user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return "", auth_error
-    return weekly_mood_view(user_id, end_date, theme_mode)
+    chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
+    return localize_status_text(chart, locale), localize_status_text(summary, locale)
 
 
 def refresh_weekly_mood_dashboard(
@@ -214,7 +219,11 @@ def refresh_weekly_mood_dashboard(
     except Exception as exc:
         logger.warning("Failed to analyze weekly mood for user=%s: %s", user_id, exc)
         analysis = f"情绪波动分析失败：{exc}"
-    return chart, summary, analysis
+    return (
+        localize_status_text(chart, locale),
+        localize_status_text(summary, locale),
+        localize_status_text(analysis, locale),
+    )
 
 
 def submit_mood_checkin_and_refresh_dashboard(
@@ -231,8 +240,9 @@ def submit_mood_checkin_and_refresh_dashboard(
     _, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return auth_error, current_end_date, "", "", auth_error
-    mood_panel = submit_mood_checkin(user_id, access_key, checkin_date, mood, intensity, note, locale)
-    if not mood_panel.startswith("已保存 "):
+    raw_mood_panel = submit_mood_checkin(user_id, access_key, checkin_date, mood, intensity, note)
+    mood_panel = localize_status_text(raw_mood_panel, locale)
+    if not raw_mood_panel.startswith("已保存 "):
         return mood_panel, current_end_date, "", "", mood_panel
     chart, summary, analysis = refresh_weekly_mood_dashboard(
         user_id, access_key, checkin_date, theme_mode, locale
@@ -251,8 +261,9 @@ def delete_mood_checkin_and_refresh_dashboard(
     _, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
         return auth_error, current_end_date, "", "", auth_error
-    mood_panel = delete_mood_checkin_from_gui(user_id, access_key, checkin_date, locale)
-    if mood_panel.startswith(("删除 Mood Check-in 失败", "请先", "访问密码")):
+    raw_mood_panel = delete_mood_checkin_from_gui(user_id, access_key, checkin_date)
+    mood_panel = localize_status_text(raw_mood_panel, locale)
+    if raw_mood_panel.startswith(("删除 Mood Check-in 失败", "请先", "访问密码")):
         return mood_panel, current_end_date, "", "", mood_panel
     chart, summary, analysis = refresh_weekly_mood_dashboard(
         user_id, access_key, checkin_date, theme_mode, locale
@@ -266,9 +277,10 @@ def load_theme_and_weekly_chart(
 ) -> tuple[str, str, str]:
     user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
-        return theme_mode, render_weekly_mood_chart([], theme_mode), auth_error
+        empty_chart = localize_status_text(render_weekly_mood_chart([], theme_mode), locale)
+        return theme_mode, empty_chart, auth_error
     chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
-    return theme_mode, chart, summary
+    return theme_mode, localize_status_text(chart, locale), localize_status_text(summary, locale)
 
 
 def load_theme_and_weekly_dashboard(
@@ -277,9 +289,15 @@ def load_theme_and_weekly_dashboard(
 ) -> tuple[str, str, str, str]:
     user_id, auth_error = authorize_or_message(user_id, access_key, locale)
     if auth_error:
-        return theme_mode, render_weekly_mood_chart([], theme_mode), auth_error, auth_error
+        empty_chart = localize_status_text(render_weekly_mood_chart([], theme_mode), locale)
+        return theme_mode, empty_chart, auth_error, auth_error
     chart, summary = weekly_mood_view(user_id, end_date, theme_mode)
-    return theme_mode, chart, summary, format_weekly_mood_analysis(user_id, end_date=end_date)
+    return (
+        theme_mode,
+        localize_status_text(chart, locale),
+        localize_status_text(summary, locale),
+        localize_status_text(format_weekly_mood_analysis(user_id, end_date=end_date), locale),
+    )
 
 
 # Backward-compatible name used by existing tests and Web_GUI imports.

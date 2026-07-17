@@ -22,9 +22,19 @@ from config import (
 from json_utils import load_json, save_json
 from llm_providers import encode_texts, get_embedding_dimension
 from memory_store import require_faiss
+from sqlite_store import (
+    connection as sqlite_connection,
+    list_rag_chunks,
+    mark_rag_migration_completed,
+    rag_migration_completed,
+    replace_rag_chunks,
+    replace_rag_documents,
+    sqlite_enabled,
+)
 
 
 SUPPORTED_STYLE_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".jsonl"}
+RAG_COLLECTION = "style"
 
 
 @dataclass
@@ -138,7 +148,50 @@ def split_style_text(
     return chunks
 
 
+def _filesystem_document_details() -> list[dict[str, Any]]:
+    ensure_style_dirs()
+    details: list[dict[str, Any]] = []
+    for path in sorted(STYLE_DOCS_DIR.iterdir()):
+        if not path.is_file():
+            continue
+        stat = path.stat()
+        details.append({
+            "name": path.name,
+            "size_bytes": stat.st_size,
+            "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(timespec="seconds"),
+            "created_at": "",
+        })
+    return details
+
+
+def _sync_sqlite_metadata(conn: Any, chunks: list[dict[str, Any]]) -> None:
+    replace_rag_chunks(conn, RAG_COLLECTION, chunks)
+    replace_rag_documents(conn, RAG_COLLECTION, _filesystem_document_details())
+    mark_rag_migration_completed(conn, RAG_COLLECTION)
+
+
+def _migrate_legacy_metadata_unlocked(conn: Any) -> int:
+    if rag_migration_completed(conn, RAG_COLLECTION):
+        return 0
+    chunks = load_json(STYLE_CHUNKS_PATH)
+    clean_chunks = chunks if isinstance(chunks, list) else []
+    _sync_sqlite_metadata(conn, clean_chunks)
+    return len(clean_chunks)
+
+
+def migrate_legacy_style_metadata() -> int:
+    """Import legacy style chunk JSON and document metadata into SQLite once."""
+    if not sqlite_enabled():
+        return 0
+    with sqlite_connection() as conn:
+        return _migrate_legacy_metadata_unlocked(conn)
+
+
 def load_chunks() -> list[dict[str, Any]]:
+    if sqlite_enabled():
+        with sqlite_connection() as conn:
+            _migrate_legacy_metadata_unlocked(conn)
+            return list_rag_chunks(conn, RAG_COLLECTION)
     chunks = load_json(STYLE_CHUNKS_PATH)
     return chunks if isinstance(chunks, list) else []
 
@@ -146,6 +199,9 @@ def load_chunks() -> list[dict[str, Any]]:
 def save_chunks(chunks: list[dict[str, Any]]) -> None:
     ensure_style_dirs()
     save_json(STYLE_CHUNKS_PATH, chunks)
+    if sqlite_enabled():
+        with sqlite_connection() as conn:
+            _sync_sqlite_metadata(conn, chunks)
 
 
 def list_documents() -> list[str]:

@@ -11,6 +11,9 @@ __pycache__/
 # User data / runtime state
 users/
 exports/
+data/*.db
+data/*.db-shm
+data/*.db-wal
 knowledge_base/
 style_base/
 *.index

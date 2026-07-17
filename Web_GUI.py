@@ -6,9 +6,11 @@ import threading
 import time
 from datetime import date, datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import gradio as gr
+import gui_runtime_settings as runtime_settings
 
 from app_logging import clear_logs, get_log_text, setup_gui_logging
 import goemotions_local as goemotions
@@ -55,6 +57,11 @@ from gui_model_options import (
     PROVIDER_CHOICES,
 )
 from gui_theme import LOAD_THEME_JS, REFRESH_CHART_THEME_JS, THEME_CSS
+from gui_event_bindings import bind_gui_events
+from gui_onboarding import build_onboarding, dismiss_onboarding, onboarding_visibility_after_login
+from gui_tabs_advanced import build_advanced_tab
+from gui_tabs_data import build_data_tab
+from gui_tabs_knowledge import build_knowledge_tab
 from export_store import export_user_data
 from gui_memory import (
     MEMORY_SECTION_LABELS,
@@ -99,7 +106,7 @@ from knowledge_store import (
     knowledge_status,
     rebuild_knowledge_index,
 )
-from llm_providers import ModelRuntimeConfig, require_openai_client
+from llm_providers import require_openai_client
 from mood_store import MOOD_CHOICES
 from style_store import (
     build_style_context,
@@ -118,7 +125,7 @@ _warmup_status = "未启动"
 _last_chat_status = "尚未开始对话"
 _last_connection_status = "尚未测试连接"
 
-LOCAL_DTYPE_CHOICES = ["auto", "bfloat16", "float16", "float32"]
+LOCAL_DTYPE_CHOICES = runtime_settings.LOCAL_DTYPE_CHOICES
 LOCAL_ATTENTION_CHOICES = [
     (tr("自动 / 默认"), ""),
     ("PyTorch SDPA", "sdpa"),
@@ -302,11 +309,12 @@ def login_status_text(user_id: str, access_key: str) -> str:
 
 def save_access_key_and_status(
     user_id: str, access_key: str, locale: str = "zh-CN"
-) -> tuple[str, str]:
+) -> tuple[str, str, Any]:
     message = save_access_key_from_gui(user_id, access_key)
     return (
         localize_status_text(message, locale),
         localize_status_text(login_status_text(user_id, access_key), locale),
+        onboarding_visibility_after_login(user_id, access_key),
     )
 
 
@@ -404,59 +412,10 @@ def interface_mode_visibility(mode: str) -> tuple[Any, ...]:
     return (*visibility_updates, tabs_update)
 
 
-def _env_quote(value: str) -> str:
-    if value == "":
-        return ""
-    if any(char.isspace() or char in '#"\\' for char in value):
-        escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-        return f'"{escaped}"'
-    return value
-
-
-def _read_env_lines(path: Path) -> list[str]:
-    if not path.exists():
-        return []
-    return path.read_text(encoding="utf-8").splitlines()
-
-
-def _upsert_env_values(path: Path, updates: dict[str, str]) -> None:
-    lines = _read_env_lines(path)
-    remaining = dict(updates)
-    new_lines: list[str] = []
-
-    for line in lines:
-        stripped = line.strip()
-        prefix = ""
-        candidate = stripped
-        if candidate.startswith("export "):
-            prefix = "export "
-            candidate = candidate[7:].lstrip()
-        if not candidate or candidate.startswith("#") or "=" not in candidate:
-            new_lines.append(line)
-            continue
-
-        key = candidate.split("=", 1)[0].strip()
-        if key in remaining:
-            new_lines.append(f"{prefix}{key}={_env_quote(remaining.pop(key))}")
-        else:
-            new_lines.append(line)
-
-    if remaining and new_lines and new_lines[-1].strip():
-        new_lines.append("")
-    for key, value in remaining.items():
-        new_lines.append(f"{key}={_env_quote(value)}")
-
-    path.write_text("\n".join(new_lines).rstrip() + "\n", encoding="utf-8")
-
-
-def _provider_key_name(provider: str) -> str:
-    if provider == "deepseek":
-        return "DEEPSEEK_API_KEY"
-    if provider == "openai":
-        return "OPENAI_API_KEY"
-    if provider == "openrouter":
-        return "OPENROUTER_API_KEY"
-    return "LLM_API_KEY"
+_env_quote = runtime_settings.env_quote
+_read_env_lines = runtime_settings.read_env_lines
+_upsert_env_values = runtime_settings.upsert_env_values
+_provider_key_name = runtime_settings.provider_key_name
 
 
 def save_model_config_to_env(
@@ -468,45 +427,10 @@ def save_model_config_to_env(
     top_p: float,
     max_new_tokens: int,
 ) -> str:
-    provider = (provider or "local_hf").strip()
-    model = (model or "").strip()
-    base_url = (base_url or "").strip()
-
-    updates = {
-        "LLM_PROVIDER": provider,
-        "LLM_TEMPERATURE": str(float(temperature)),
-        "LLM_TOP_P": str(float(top_p)),
-        "LLM_MAX_NEW_TOKENS": str(int(max_new_tokens)),
-    }
-
-    if provider == "local_hf":
-        updates["CHAT_MODEL_NAME"] = model
-    else:
-        updates["LLM_API_MODEL"] = model
-        if base_url:
-            updates["LLM_API_BASE_URL"] = base_url
-        if provider == "deepseek":
-            updates["DEEPSEEK_MODEL"] = model
-        elif provider == "openai":
-            updates["OPENAI_MODEL"] = model
-        elif provider == "openrouter":
-            updates["OPENROUTER_MODEL"] = model
-
-    key_saved = False
-    if api_key and api_key.strip():
-        updates[_provider_key_name(provider)] = api_key.strip()
-        key_saved = True
-
-    _upsert_env_values(LOCAL_ENV_PATH, updates)
-    os.environ.update(updates)
-    logger.info("模型配置已保存：provider=%s model=%s path=%s", provider, model, LOCAL_ENV_PATH.name)
-
-    message = f"已保存模型配置到 {LOCAL_ENV_PATH.name}。"
-    if key_saved:
-        message += " API Key 已写入本机 .env.local，请不要提交该文件。"
-    else:
-        message += " API Key 输入为空，未改动已有密钥。"
-    return message
+    return runtime_settings.save_model_config_to_env(
+        LOCAL_ENV_PATH, provider, model, base_url, api_key,
+        temperature, top_p, max_new_tokens,
+    )
 
 
 def save_model_config_and_refresh(
@@ -534,13 +458,7 @@ def save_model_config_and_refresh(
     )
 
 
-def _normalize_local_dtype(dtype: str) -> str:
-    normalized = (dtype or "auto").strip().lower()
-    aliases = {"bf16": "bfloat16", "fp16": "float16", "fp32": "float32"}
-    normalized = aliases.get(normalized, normalized)
-    if normalized not in LOCAL_DTYPE_CHOICES:
-        raise ValueError("模型精度仅支持 auto、bfloat16、float16 或 float32。")
-    return normalized
+_normalize_local_dtype = runtime_settings.normalize_local_dtype
 
 
 def build_local_runtime_config_text(
@@ -550,17 +468,9 @@ def build_local_runtime_config_text(
     compile_model: bool,
     cpu_threads: int | float,
 ) -> str:
-    attention = (attention_implementation or "").strip() or "自动 / 默认"
-    threads = int(cpu_threads or 0)
-    return "\n".join([
-        "本地 Hugging Face 模型运行配置",
-        f"模型精度：{_normalize_local_dtype(dtype)}",
-        f"注意力实现：{attention}",
-        f"低内存加载：{'开启' if low_cpu_mem_usage else '关闭'}",
-        f"torch.compile：{'开启' if compile_model else '关闭'}",
-        f"CPU 线程：{'使用 PyTorch 默认值' if threads == 0 else threads}",
-        "提示：配置保存后需重启应用，下一次加载本地模型时才会生效。",
-    ])
+    return runtime_settings.build_local_runtime_config_text(
+        dtype, attention_implementation, low_cpu_mem_usage, compile_model, cpu_threads
+    )
 
 
 def save_local_runtime_config_to_env(
@@ -570,25 +480,10 @@ def save_local_runtime_config_to_env(
     compile_model: bool,
     cpu_threads: int | float,
 ) -> str:
-    normalized_dtype = _normalize_local_dtype(dtype)
-    attention = (attention_implementation or "").strip()
-    if "\r" in attention or "\n" in attention:
-        raise ValueError("注意力实现不能包含换行符。")
-    threads = int(cpu_threads or 0)
-    if not 0 <= threads <= 512:
-        raise ValueError("CPU 线程数应在 0 到 512 之间。")
-
-    updates = {
-        "LOCAL_MODEL_DTYPE": normalized_dtype,
-        "LOCAL_MODEL_ATTN_IMPLEMENTATION": attention,
-        "LOCAL_MODEL_LOW_CPU_MEM_USAGE": str(bool(low_cpu_mem_usage)).lower(),
-        "LOCAL_MODEL_COMPILE": str(bool(compile_model)).lower(),
-        "LOCAL_MODEL_CPU_THREADS": str(threads),
-    }
-    _upsert_env_values(LOCAL_ENV_PATH, updates)
-    os.environ.update(updates)
-    logger.info("本地模型运行配置已保存：path=%s", LOCAL_ENV_PATH.name)
-    return f"已保存本地模型运行配置到 {LOCAL_ENV_PATH.name}。请重启应用后再加载本地模型。"
+    return runtime_settings.save_local_runtime_config_to_env(
+        LOCAL_ENV_PATH, dtype, attention_implementation,
+        low_cpu_mem_usage, compile_model, cpu_threads,
+    )
 
 
 def save_local_runtime_config_and_refresh(
@@ -656,67 +551,8 @@ def build_local_runtime_config_text_localized(
     )
 
 
-def _connection_result(level: str, message: str, detail: str = "") -> str:
-    parts = [f"[{level}] {message}"]
-    if detail:
-        parts.append(f"详情：{detail}")
-    return "\n".join(parts)
-
-
-def classify_connection_error(exc: Exception, provider: str) -> str:
-    text = str(exc)
-    type_name = type(exc).__name__.lower()
-    lowered = text.lower()
-    provider = (provider or "").lower()
-
-    if "api key" in lowered or "缺少" in text:
-        return _connection_result("配置错误", "缺少 API Key", text)
-    if "module" in lowered or "缺少依赖" in text or "modulenotfounderror" in type_name:
-        return _connection_result("依赖缺失", "缺少运行依赖", text)
-    if "401" in lowered or "unauthorized" in lowered or "authentication" in lowered:
-        return _connection_result("认证失败", "API Key 无效或无权限", text)
-    if "429" in lowered or "rate limit" in lowered or "quota" in lowered or "insufficient" in lowered:
-        return _connection_result("限流/额度", "请求频率或账户额度受限", text)
-    if any(word in lowered for word in ["timeout", "timed out", "connection", "network", "proxy", "dns", "ssl"]):
-        return _connection_result("网络错误", "无法稳定连接模型服务", text)
-    if provider == "local_hf":
-        return _connection_result("本地模型错误", "本地模型加载或推理失败", text)
-    return _connection_result("响应异常", "模型服务返回异常响应", text)
-
-
-def _test_local_connection(config: ModelRuntimeConfig) -> str:
-    tokenizer, model = get_llm()
-    model_name = getattr(getattr(model, "config", None), "name_or_path", None)
-    tokenizer_name = getattr(tokenizer, "name_or_path", None)
-    loaded_name = model_name or tokenizer_name or config.resolved_model()
-    return _connection_result("成功", f"本地模型加载成功：{loaded_name}")
-
-
-def _test_api_connection(config: ModelRuntimeConfig) -> str:
-    api_key = config.resolved_api_key()
-    if not api_key:
-        raise RuntimeError("当前 Provider 缺少 API Key，请在 GUI 输入或写入 .env.local")
-
-    OpenAI = require_openai_client()
-    client_kwargs: dict[str, Any] = {"api_key": api_key}
-    base_url = config.resolved_base_url()
-    if base_url:
-        client_kwargs["base_url"] = base_url
-
-    client = OpenAI(**client_kwargs)
-    response = client.chat.completions.create(
-        model=config.resolved_model(),
-        messages=[{"role": "user", "content": "ping"}],
-        max_tokens=1,
-        temperature=0,
-        stream=False,
-    )
-    if not response.choices:
-        raise RuntimeError("接口返回成功，但没有 choices 字段")
-    return _connection_result(
-        "成功",
-        f"API 连接成功：{config.normalized_provider()} / {config.resolved_model()}",
-    )
+_connection_result = runtime_settings.connection_result
+classify_connection_error = runtime_settings.classify_connection_error
 
 
 def test_model_connection(
@@ -728,27 +564,13 @@ def test_model_connection(
     top_p: float,
     max_new_tokens: int,
 ) -> str:
-    config = make_model_config(
-        provider=provider,
-        model=model,
-        api_key=api_key,
-        base_url=base_url,
-        temperature=temperature,
-        top_p=top_p,
-        max_new_tokens=max_new_tokens,
+    return runtime_settings.test_model_connection(
+        provider, model, base_url, api_key, temperature, top_p, max_new_tokens,
+        make_config=make_model_config,
+        get_llm_fn=get_llm,
+        require_openai_client_fn=require_openai_client,
+        status_callback=set_connection_status,
     )
-    set_connection_status(f"正在测试 {config.normalized_provider()} / {config.resolved_model()}")
-    try:
-        if config.normalized_provider() == "local_hf":
-            result = _test_local_connection(config)
-        else:
-            result = _test_api_connection(config)
-        set_connection_status(result)
-        return result
-    except Exception as exc:
-        result = classify_connection_error(exc, config.normalized_provider())
-        set_connection_status(result)
-        return result
 
 
 def build_connection_test_detail(
@@ -758,28 +580,9 @@ def build_connection_test_detail(
     base_url: str,
     elapsed_seconds: float,
 ) -> str:
-    level = result.split("]", 1)[0].lstrip("[") if result.startswith("[") else "未知"
-    suggestions = {
-        "成功": "连接可用，可以开始对话。",
-        "配置错误": "检查 Provider、模型名和 API Key 是否填写完整。",
-        "认证失败": "检查 API Key、账户权限和所选模型是否可用。",
-        "限流/额度": "稍后重试，或检查服务商账户余额与请求额度。",
-        "网络错误": "检查网络、代理设置、Base URL 和证书环境。",
-        "依赖缺失": "安装提示中提到的 Python 依赖后重启应用。",
-        "本地模型错误": "检查模型名称、显存/内存和本地运行配置。",
-        "响应异常": "检查服务商返回信息、模型名称和接口兼容性。",
-    }
-    endpoint = base_url.strip() or ("本地 Hugging Face" if provider == "local_hf" else "服务商默认地址")
-    return "\n".join([
-        f"测试状态：{level}",
-        f"Provider：{provider or '未选择'}",
-        f"模型：{model or '未选择'}",
-        f"目标：{endpoint}",
-        f"耗时：{elapsed_seconds:.2f} 秒",
-        f"建议：{suggestions.get(level, '请根据下方详情检查配置。')}",
-        "",
-        result,
-    ])
+    return runtime_settings.build_connection_test_detail(
+        result, provider, model, base_url, elapsed_seconds
+    )
 
 
 def test_model_connection_and_refresh(
@@ -1082,38 +885,6 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
         precision=0,
         render=False,
     )
-    local_dtype_input = gr.Dropdown(
-        label=tr("模型精度"),
-        choices=LOCAL_DTYPE_CHOICES,
-        value=LOCAL_MODEL_DTYPE if LOCAL_MODEL_DTYPE in LOCAL_DTYPE_CHOICES else "auto",
-        render=False,
-    )
-    local_attention_input = gr.Dropdown(
-        label=tr("注意力实现"),
-        choices=LOCAL_ATTENTION_CHOICES,
-        value=LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
-        allow_custom_value=True,
-        render=False,
-    )
-    local_low_cpu_mem_input = gr.Checkbox(
-        label=tr("低内存加载"),
-        value=LOCAL_MODEL_LOW_CPU_MEM_USAGE,
-        render=False,
-    )
-    local_compile_input = gr.Checkbox(
-        label=tr("启用 torch.compile"),
-        value=LOCAL_MODEL_COMPILE,
-        render=False,
-    )
-    local_cpu_threads_input = gr.Number(
-        label=tr("CPU 线程数（0 为默认）"),
-        value=LOCAL_MODEL_CPU_THREADS,
-        minimum=0,
-        maximum=512,
-        precision=0,
-        render=False,
-    )
-
     with gr.Row():
         interface_mode_input = gr.Radio(
             label=tr("界面模式"),
@@ -1129,6 +900,9 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
 
     with gr.Tabs(selected="chat") as main_tabs:
         with gr.Tab(tr("tab_chat"), id="chat"):
+            onboarding = build_onboarding(
+                tr, show_on_first_use=not bool(os.getenv("CHATBOT_USER_ID", "").strip())
+            )
             with gr.Accordion(tr("常用设置"), open=True):
                 with gr.Row():
                     user_id_input.render()
@@ -1212,575 +986,116 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
                     label=tr("情绪波动分析"), value=tr(AUTH_REQUIRED_MESSAGE), lines=8, interactive=False
                 )
 
-        with gr.Tab(tr("tab_data"), id="data"):
-            with gr.Accordion(tr("用户访问"), open=True):
-                new_access_key_input = gr.Textbox(
-                    label=tr("新访问密码"),
-                    value="",
-                    type="password",
-                    placeholder=tr("修改密码时填写，至少 8 位，可包含特殊符号"),
-                )
-                with gr.Row():
-                    change_access_key_button = gr.Button(tr("修改密码"))
-                    export_user_data_button = gr.Button(tr("导出用户数据"))
-                export_user_data_status = gr.Textbox(
-                    label=tr("数据导出状态"), value=tr("尚未导出。"), lines=3, interactive=False
-                )
-                export_user_data_file = gr.File(label=tr("导出的用户数据"), interactive=False)
-                with gr.Column(visible=False) as admin_recovery_group:
-                    with gr.Accordion(tr("管理员恢复"), open=False):
-                        admin_recovery_key_input = gr.Textbox(
-                            label=tr("管理员恢复密钥"), value="", type="password",
-                            placeholder=tr("仅从服务器环境变量读取的恢复密钥"),
-                        )
-                        admin_new_access_key_input = gr.Textbox(
-                            label=tr("恢复后的新密码"), value="", type="password",
-                            placeholder=tr("修改密码时填写，至少 8 位，可包含特殊符号"),
-                        )
-                        admin_recovery_button = gr.Button(tr("重置访问密码"), variant="stop")
-                        admin_recovery_status_box = gr.Textbox(
-                            label=tr("管理员恢复状态"), value=tr(admin_recovery_status()), lines=3, interactive=False
-                        )
+        data_tab = build_data_tab(tr, admin_recovery_status)
+        new_access_key_input = data_tab.new_access_key_input
+        change_access_key_button = data_tab.change_access_key_button
+        export_user_data_button = data_tab.export_user_data_button
+        export_user_data_status = data_tab.export_user_data_status
+        export_user_data_file = data_tab.export_user_data_file
+        admin_recovery_group = data_tab.admin_recovery_group
+        admin_recovery_key_input = data_tab.admin_recovery_key_input
+        admin_new_access_key_input = data_tab.admin_new_access_key_input
+        admin_recovery_button = data_tab.admin_recovery_button
+        admin_recovery_status_box = data_tab.admin_recovery_status_box
+        stable_profile_input = data_tab.stable_profile_input
+        add_stable_profile_button = data_tab.add_stable_profile_button
+        load_stable_profile_button = data_tab.load_stable_profile_button
+        stable_profile_box = data_tab.stable_profile_box
+        stable_advanced_controls = data_tab.stable_advanced_controls
+        stable_profile_editor = data_tab.stable_profile_editor
+        save_stable_profile_button = data_tab.save_stable_profile_button
+        clear_stable_profile_button = data_tab.clear_stable_profile_button
+        memory_section = data_tab.memory_section
+        load_memory_button = data_tab.load_memory_button
+        memory_box = data_tab.memory_box
+        memory_advanced_controls = data_tab.memory_advanced_controls
+        save_memory_button = data_tab.save_memory_button
+        clear_memory_button = data_tab.clear_memory_button
+        refresh_memory_events_button = data_tab.refresh_memory_events_button
+        memory_editor = data_tab.memory_editor
+        memory_event_box = data_tab.memory_event_box
+        backup_memory_button = data_tab.backup_memory_button
+        restore_memory_mode = data_tab.restore_memory_mode
+        restore_memory_file = data_tab.restore_memory_file
+        restore_memory_button = data_tab.restore_memory_button
+        memory_backup_status = data_tab.memory_backup_status
+        memory_backup_file = data_tab.memory_backup_file
+        memory_safety_backup_file = data_tab.memory_safety_backup_file
 
-            with gr.Accordion(tr("稳定资料"), open=False):
-                stable_profile_input = gr.Textbox(
-                    label=tr("新增稳定资料"),
-                    placeholder=tr("例如：我是学生；我喜欢被简洁地称呼；我来自北京"),
-                    lines=2,
-                )
-                with gr.Row():
-                    add_stable_profile_button = gr.Button(tr("添加资料"))
-                    load_stable_profile_button = gr.Button(tr("查看资料"))
-                stable_profile_box = gr.Textbox(
-                    label=tr("稳定资料状态"),
-                    value=tr("点击“查看资料”加载当前用户的稳定资料。"),
-                    lines=10,
-                    interactive=False,
-                )
-                with gr.Column(visible=False) as stable_advanced_controls:
-                    stable_profile_editor = gr.Textbox(
-                        label=tr("稳定资料 JSON 编辑区"), value="[]", lines=10, interactive=True
-                    )
-                    with gr.Row():
-                        save_stable_profile_button = gr.Button(tr("保存编辑"))
-                        clear_stable_profile_button = gr.Button(tr("清空稳定资料"), variant="stop")
-
-            with gr.Accordion(tr("记忆管理"), open=False):
-                memory_section = gr.Radio(
-                    label=tr("清理范围"),
-                    choices=[
-                        (tr("短期对话"), "history"), (tr("情绪记忆"), "emotion"),
-                        (tr("长期记忆"), "long"), (tr("兴趣记忆"), "interest"),
-                        (tr("稳定资料"), "stable"), (tr("全部记忆"), "all"),
-                    ],
-                    value="history",
-                )
-                load_memory_button = gr.Button(tr("查看记忆"))
-                memory_box = gr.Textbox(
-                    label=tr("当前用户记忆"),
-                    value=tr("点击“查看记忆”加载当前用户的记忆。"),
-                    lines=18,
-                    interactive=False,
-                )
-                with gr.Column(visible=False) as memory_advanced_controls:
-                    with gr.Row():
-                        save_memory_button = gr.Button(tr("保存修改"))
-                        clear_memory_button = gr.Button(tr("清理所选记忆"))
-                        refresh_memory_events_button = gr.Button(tr("查看写入记录"))
-                    memory_editor = gr.Textbox(label=tr("记忆 JSON 编辑区"), value="[]", lines=14, interactive=True)
-                    memory_event_box = gr.Textbox(
-                        label=tr("记忆写入记录"),
-                        value=tr("点击“查看写入记录”加载最近的记忆判断。"),
-                        lines=14,
-                        interactive=False,
-                    )
-                    with gr.Accordion(tr("记忆备份与恢复"), open=False):
-                        with gr.Row():
-                            backup_memory_button = gr.Button(tr("备份全部记忆"))
-                            restore_memory_mode = gr.Radio(
-                                choices=[(tr("合并并去重"), "merge"), (tr("覆盖当前记忆"), "replace")],
-                                value="merge", label=tr("恢复模式"),
-                            )
-                        restore_memory_file = gr.File(
-                            label=tr("选择记忆备份 JSON"), file_types=[".json"], type="filepath"
-                        )
-                        restore_memory_button = gr.Button(tr("恢复记忆"), variant="primary")
-                        memory_backup_status = gr.Textbox(
-                            label=tr("备份 / 恢复状态"), value=tr("尚未执行备份或恢复。"), lines=4, interactive=False
-                        )
-                        memory_backup_file = gr.File(label=tr("生成的备份文件"), interactive=False)
-                        memory_safety_backup_file = gr.File(label=tr("恢复前安全备份"), interactive=False)
-
-        with gr.Tab(tr("tab_knowledge"), id="knowledge"):
-            with gr.Accordion(tr("知识库 / RAG"), open=True):
-                knowledge_files = gr.File(
-                    label=tr("导入资料"), file_count="multiple",
-                    file_types=[".txt", ".md", ".markdown", ".csv", ".json", ".pdf", ".docx"],
-                )
-                with gr.Row():
-                    import_knowledge_button = gr.Button(tr("导入并重建索引"))
-                    refresh_knowledge_button = gr.Button(tr("查看知识库状态"))
-                knowledge_query = gr.Textbox(
-                    label=tr("检索预览问题"),
-                    placeholder=tr("输入一个问题，查看会被检索进 Prompt 的资料片段"),
-                )
-                knowledge_box = gr.Textbox(
-                    label=tr("知识库状态 / 检索结果"), value=knowledge_status, lines=16, interactive=False
-                )
-                with gr.Column(visible=False) as knowledge_advanced_controls:
-                    with gr.Row():
-                        knowledge_top_k = gr.Slider(1, 10, value=KNOWLEDGE_TOP_K, step=1, label=tr("返回片段数"))
-                        knowledge_threshold = gr.Slider(
-                            0, 1, value=KNOWLEDGE_RETRIEVAL_THRESHOLD, step=0.05, label=tr("相关度阈值")
-                        )
-                        knowledge_candidate_multiplier = gr.Slider(
-                            1, 8, value=KNOWLEDGE_CANDIDATE_MULTIPLIER, step=1, label=tr("候选池倍数")
-                        )
-                    with gr.Row():
-                        rebuild_knowledge_button = gr.Button(tr("重建索引"))
-                        preview_knowledge_button = gr.Button(tr("检索质量诊断"))
-                        inspect_knowledge_quality_button = gr.Button(tr("检查知识库质量"))
-                    with gr.Accordion(tr("RAG 文档管理"), open=False):
-                        knowledge_document_selector = gr.Dropdown(
-                            label=tr("已入库文档"), choices=refresh_knowledge_document_panel()[0],
-                            value=None, interactive=True,
-                        )
-                        with gr.Row():
-                            refresh_knowledge_documents_button = gr.Button(tr("刷新文档列表"))
-                            delete_knowledge_document_button = gr.Button(tr("删除所选文档"), variant="stop")
-                            clear_knowledge_documents_button = gr.Button(tr("清空全部文档"), variant="stop")
-                        knowledge_document_box = gr.Textbox(
-                            label=tr("文档清单"), value=format_knowledge_document_list, lines=10, interactive=False
-                        )
-
-            with gr.Accordion(tr("风格库 / Style RAG"), open=False):
-                style_files = gr.File(
-                    label=tr("导入风格样例"), file_count="multiple",
-                    file_types=[".txt", ".md", ".markdown", ".csv", ".json", ".jsonl"],
-                )
-                with gr.Row():
-                    import_style_button = gr.Button(tr("导入并重建风格索引"))
-                    refresh_style_button = gr.Button(tr("查看风格库状态"))
-                style_query = gr.Textbox(
-                    label=tr("风格检索预览"),
-                    placeholder=tr("输入当前问题或场景，查看会被参考的回复风格样例"),
-                )
-                preview_style_button = gr.Button(tr("风格检索预览"))
-                style_box = gr.Textbox(
-                    label=tr("风格库状态 / 检索结果"), value=style_status, lines=16, interactive=False
-                )
-                with gr.Column(visible=False) as style_advanced_controls:
-                    rebuild_style_button = gr.Button(tr("重建风格索引"))
-
-        with gr.Tab(tr("tab_advanced"), id="advanced", visible=False) as advanced_tab:
-            with gr.Accordion(tr("运行状态"), open=True):
-                status_box = gr.Textbox(
-                    label=tr("状态"),
-                    value=build_status_text(initial_provider, initial_model, initial_base_url),
-                    lines=9,
-                    interactive=False,
-                )
-                with gr.Row():
-                    refresh_button = gr.Button(tr("刷新状态"))
-                    connection_button = gr.Button(tr("测试连接"))
-                    save_model_config_button = gr.Button(tr("保存模型配置"))
-                connection_result = gr.Textbox(label=tr("连接测试摘要"), interactive=False)
-                connection_detail_result = gr.Textbox(
-                    label=tr("连接测试详情"), value=tr("尚未测试连接。"), lines=9, interactive=False
-                )
-                save_model_config_result = gr.Textbox(label=tr("模型配置保存结果"), interactive=False)
-                status_timer = gr.Timer(value=2.0)
-            with gr.Accordion(tr("本地模型运行配置"), open=False):
-                with gr.Row():
-                    local_dtype_input.render()
-                    local_attention_input.render()
-                with gr.Row():
-                    local_low_cpu_mem_input.render()
-                    local_compile_input.render()
-                    local_cpu_threads_input.render()
-                with gr.Row():
-                    save_local_runtime_button = gr.Button(tr("保存本地运行配置"))
-                    refresh_local_runtime_button = gr.Button(tr("查看当前配置"))
-                local_runtime_status = gr.Textbox(
-                    label=tr("本地模型配置状态"),
-                    value=lambda: build_local_runtime_config_text(
-                        LOCAL_MODEL_DTYPE, LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
-                        LOCAL_MODEL_LOW_CPU_MEM_USAGE, LOCAL_MODEL_COMPILE, LOCAL_MODEL_CPU_THREADS,
-                    ),
-                    lines=8,
-                    interactive=False,
-                )
-                local_runtime_save_result = gr.Textbox(
-                    label=tr("保存结果"), value=tr("尚未保存本地运行配置。"), lines=3, interactive=False
-                )
-            with gr.Accordion(tr("日志面板"), open=False):
-                log_box = gr.Textbox(label=tr("最近日志"), value=get_log_text, lines=14, interactive=False)
-                with gr.Row():
-                    refresh_logs_button = gr.Button(tr("刷新日志"))
-                    clear_logs_button = gr.Button(tr("清空日志"))
-                log_timer = gr.Timer(value=3.0)
+        knowledge_tab = build_knowledge_tab(
+            tr,
+            knowledge_top_k=KNOWLEDGE_TOP_K,
+            knowledge_threshold=KNOWLEDGE_RETRIEVAL_THRESHOLD,
+            knowledge_candidate_multiplier=KNOWLEDGE_CANDIDATE_MULTIPLIER,
+            knowledge_status=knowledge_status,
+            style_status=style_status,
+            refresh_document_panel=refresh_knowledge_document_panel,
+            format_document_list=format_knowledge_document_list,
+        )
+        advanced_tab = build_advanced_tab(
+            tr,
+            initial_provider=initial_provider,
+            initial_model=initial_model,
+            initial_base_url=initial_base_url,
+            local_dtype_choices=LOCAL_DTYPE_CHOICES,
+            local_attention_choices=LOCAL_ATTENTION_CHOICES,
+            local_dtype=LOCAL_MODEL_DTYPE,
+            local_attention=LOCAL_MODEL_ATTN_IMPLEMENTATION or "",
+            local_low_cpu_memory=LOCAL_MODEL_LOW_CPU_MEM_USAGE,
+            local_compile=LOCAL_MODEL_COMPILE,
+            local_cpu_threads=LOCAL_MODEL_CPU_THREADS,
+            build_status_text=build_status_text,
+            build_local_runtime_text=build_local_runtime_config_text,
+            get_log_text=get_log_text,
+        )
 
     locale_status_timer = gr.Timer(value=0.75)
-
-    interface_mode_input.change(
-        fn=interface_mode_visibility,
-        inputs=interface_mode_input,
-        outputs=[
-            advanced_chat_settings,
-            memory_advanced_controls,
-            stable_advanced_controls,
-            knowledge_advanced_controls,
-            style_advanced_controls,
-            admin_recovery_group,
-            advanced_tab,
-            main_tabs,
-        ],
-        show_progress="hidden",
+    ui = SimpleNamespace(
+        demo=demo,
+        main_tabs=main_tabs,
+        interface_mode_input=interface_mode_input,
+        theme_mode_input=theme_mode_input,
+        locale_probe_input=locale_probe_input,
+        locale_status_timer=locale_status_timer,
+        advanced_chat_settings=advanced_chat_settings,
+        provider_input=provider_input,
+        model_input=model_input,
+        base_url_input=base_url_input,
+        api_key_input=api_key_input,
+        user_id_input=user_id_input,
+        access_key_input=access_key_input,
+        save_access_key_button=save_access_key_button,
+        login_status_box=login_status_box,
+        access_key_status=access_key_status,
+        temperature_input=temperature_input,
+        top_p_input=top_p_input,
+        max_new_tokens_input=max_new_tokens_input,
+        mood_date_input=mood_date_input,
+        mood_choice_input=mood_choice_input,
+        mood_intensity_input=mood_intensity_input,
+        mood_note_input=mood_note_input,
+        save_mood_button=save_mood_button,
+        refresh_mood_button=refresh_mood_button,
+        delete_mood_button=delete_mood_button,
+        mood_box=mood_box,
+        weekly_mood_end_date_input=weekly_mood_end_date_input,
+        refresh_weekly_mood_button=refresh_weekly_mood_button,
+        weekly_mood_chart=weekly_mood_chart,
+        weekly_mood_summary=weekly_mood_summary,
+        weekly_mood_analysis=weekly_mood_analysis,
+        onboarding_guide=onboarding.guide,
+        onboarding_complete_button=onboarding.complete_button,
+        **data_tab.__dict__,
+        **knowledge_tab.__dict__,
+        **advanced_tab.__dict__,
     )
-    provider_input.change(
-        fn=provider_changed,
-        inputs=[provider_input, api_key_input, locale_probe_input],
-        outputs=[model_input, base_url_input, status_box],
-        js=SYNC_LOCALE_JS,
+    bind_gui_events(
+        ui,
+        globals(),
+        sync_locale_js=SYNC_LOCALE_JS,
+        refresh_chart_theme_js=REFRESH_CHART_THEME_JS,
+        load_theme_js=LOAD_THEME_JS,
     )
-    refresh_button.click(
-        fn=refresh_status,
-        inputs=[provider_input, model_input, base_url_input, api_key_input, locale_probe_input],
-        outputs=status_box,
-        js=SYNC_LOCALE_JS,
-    )
-    status_timer.tick(
-        fn=refresh_status,
-        inputs=[provider_input, model_input, base_url_input, api_key_input, locale_probe_input],
-        outputs=status_box,
-        js=SYNC_LOCALE_JS,
-    )
-    locale_status_timer.tick(
-        fn=relocalize_status_values_and_locale,
-        inputs=[
-            status_box,
-            connection_result,
-            connection_detail_result,
-            save_model_config_result,
-            local_runtime_status,
-            local_runtime_save_result,
-            login_status_box,
-            access_key_status,
-            export_user_data_status,
-            admin_recovery_status_box,
-            locale_probe_input,
-        ],
-        outputs=[
-            status_box,
-            connection_result,
-            connection_detail_result,
-            save_model_config_result,
-            local_runtime_status,
-            local_runtime_save_result,
-            login_status_box,
-            access_key_status,
-            export_user_data_status,
-            admin_recovery_status_box,
-            locale_probe_input,
-        ],
-        js=SYNC_LOCALE_JS,
-        show_progress="hidden",
-    )
-    connection_button.click(
-        fn=test_model_connection_and_refresh,
-        inputs=[
-            provider_input,
-            model_input,
-            base_url_input,
-            api_key_input,
-            temperature_input,
-            top_p_input,
-            max_new_tokens_input,
-            locale_probe_input,
-        ],
-        outputs=[connection_result, connection_detail_result, status_box],
-        js=SYNC_LOCALE_JS,
-    )
-    save_model_config_button.click(
-        fn=save_model_config_and_refresh,
-        inputs=[
-            provider_input,
-            model_input,
-            base_url_input,
-            api_key_input,
-            temperature_input,
-            top_p_input,
-            max_new_tokens_input,
-            locale_probe_input,
-        ],
-        outputs=[save_model_config_result, status_box],
-        js=SYNC_LOCALE_JS,
-    )
-    save_local_runtime_button.click(
-        fn=save_local_runtime_config_and_refresh,
-        inputs=[
-            local_dtype_input,
-            local_attention_input,
-            local_low_cpu_mem_input,
-            local_compile_input,
-            local_cpu_threads_input,
-            locale_probe_input,
-        ],
-        outputs=[local_runtime_save_result, local_runtime_status],
-        js=SYNC_LOCALE_JS,
-    )
-    refresh_local_runtime_button.click(
-        fn=build_local_runtime_config_text_localized,
-        inputs=[
-            local_dtype_input,
-            local_attention_input,
-            local_low_cpu_mem_input,
-            local_compile_input,
-            local_cpu_threads_input,
-            locale_probe_input,
-        ],
-        outputs=local_runtime_status,
-        js=SYNC_LOCALE_JS,
-    )
-    save_access_key_button.click(
-        fn=save_access_key_and_status,
-        inputs=[user_id_input, access_key_input, locale_probe_input],
-        outputs=[access_key_status, login_status_box],
-        js=SYNC_LOCALE_JS,
-    )
-    change_access_key_button.click(
-        fn=change_access_key_and_status,
-        inputs=[user_id_input, access_key_input, new_access_key_input, locale_probe_input],
-        outputs=[access_key_status, access_key_input, new_access_key_input, login_status_box],
-        js=SYNC_LOCALE_JS,
-    )
-    admin_recovery_button.click(
-        fn=admin_recover_access_key_and_status,
-        inputs=[user_id_input, admin_recovery_key_input, admin_new_access_key_input, locale_probe_input],
-        outputs=[
-            admin_recovery_status_box,
-            access_key_input,
-            admin_recovery_key_input,
-            login_status_box,
-        ],
-        js=SYNC_LOCALE_JS,
-    )
-    export_user_data_button.click(
-        fn=export_user_data_from_gui,
-        inputs=[user_id_input, access_key_input, locale_probe_input],
-        outputs=[export_user_data_status, export_user_data_file],
-        js=SYNC_LOCALE_JS,
-    )
-    refresh_logs_button.click(
-        fn=get_log_text,
-        outputs=log_box,
-    )
-    clear_logs_button.click(
-        fn=clear_logs,
-        outputs=log_box,
-    )
-    log_timer.tick(
-        fn=get_log_text,
-        outputs=log_box,
-    )
-    save_mood_button.click(
-        fn=submit_mood_checkin_and_refresh_dashboard,
-        inputs=[
-            user_id_input,
-            access_key_input,
-            mood_date_input,
-            mood_choice_input,
-            mood_intensity_input,
-            mood_note_input,
-            weekly_mood_end_date_input,
-            theme_mode_input,
-            locale_probe_input,
-        ],
-        outputs=[
-            mood_box,
-            weekly_mood_end_date_input,
-            weekly_mood_chart,
-            weekly_mood_summary,
-            weekly_mood_analysis,
-        ],
-    )
-    refresh_mood_button.click(
-        fn=refresh_mood_panel,
-        inputs=[user_id_input, access_key_input, locale_probe_input],
-        outputs=mood_box,
-    )
-    delete_mood_button.click(
-        fn=delete_mood_checkin_and_refresh_dashboard,
-        inputs=[
-            user_id_input,
-            access_key_input,
-            mood_date_input,
-            weekly_mood_end_date_input,
-            theme_mode_input,
-            locale_probe_input,
-        ],
-        outputs=[
-            mood_box,
-            weekly_mood_end_date_input,
-            weekly_mood_chart,
-            weekly_mood_summary,
-            weekly_mood_analysis,
-        ],
-    )
-    refresh_weekly_mood_button.click(
-        fn=refresh_weekly_mood_dashboard,
-        inputs=[
-            user_id_input,
-            access_key_input,
-            weekly_mood_end_date_input,
-            theme_mode_input,
-            locale_probe_input,
-        ],
-        outputs=[weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
-    )
-    theme_mode_input.change(
-        fn=refresh_weekly_mood_dashboard,
-        inputs=[
-            user_id_input,
-            access_key_input,
-            weekly_mood_end_date_input,
-            theme_mode_input,
-            locale_probe_input,
-        ],
-        outputs=[weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
-        js=REFRESH_CHART_THEME_JS,
-        show_progress="hidden",
-    )
-    demo.load(
-        fn=sync_locale_value,
-        inputs=locale_probe_input,
-        outputs=locale_probe_input,
-        js=SYNC_LOCALE_JS,
-        show_progress="hidden",
-    )
-    demo.load(
-        fn=load_theme_and_weekly_dashboard,
-        inputs=[
-            user_id_input,
-            access_key_input,
-            weekly_mood_end_date_input,
-            theme_mode_input,
-            locale_probe_input,
-        ],
-        outputs=[theme_mode_input, weekly_mood_chart, weekly_mood_summary, weekly_mood_analysis],
-        js=LOAD_THEME_JS,
-        show_progress="hidden",
-    )
-    load_memory_button.click(
-        fn=load_memory_editor,
-        inputs=[user_id_input, access_key_input, memory_section, locale_probe_input],
-        outputs=[memory_editor, memory_box],
-    )
-    save_memory_button.click(
-        fn=save_memory_editor,
-        inputs=[user_id_input, access_key_input, memory_section, memory_editor, locale_probe_input],
-        outputs=[memory_editor, memory_box],
-    )
-    clear_memory_button.click(
-        fn=clear_memory_section_and_reload,
-        inputs=[user_id_input, access_key_input, memory_section, locale_probe_input],
-        outputs=[memory_editor, memory_box],
-    )
-    refresh_memory_events_button.click(
-        fn=load_memory_event_log,
-        inputs=[user_id_input, access_key_input, locale_probe_input],
-        outputs=memory_event_box,
-    )
-    backup_memory_button.click(
-        fn=backup_memory_from_gui,
-        inputs=[user_id_input, access_key_input, locale_probe_input],
-        outputs=[memory_backup_status, memory_backup_file],
-    )
-    restore_memory_button.click(
-        fn=restore_memory_from_gui,
-        inputs=[
-            user_id_input,
-            access_key_input,
-            restore_memory_file,
-            restore_memory_mode,
-            locale_probe_input,
-        ],
-        outputs=[memory_backup_status, memory_safety_backup_file, memory_box, memory_event_box],
-    )
-    add_stable_profile_button.click(
-        fn=add_stable_profile,
-        inputs=[user_id_input, access_key_input, stable_profile_input, locale_probe_input],
-        outputs=[stable_profile_input, stable_profile_editor, stable_profile_box],
-    )
-    load_stable_profile_button.click(
-        fn=load_stable_profile_editor,
-        inputs=[user_id_input, access_key_input, locale_probe_input],
-        outputs=[stable_profile_editor, stable_profile_box],
-    )
-    save_stable_profile_button.click(
-        fn=save_stable_profile_editor,
-        inputs=[user_id_input, access_key_input, stable_profile_editor, locale_probe_input],
-        outputs=[stable_profile_editor, stable_profile_box],
-    )
-    clear_stable_profile_button.click(
-        fn=clear_stable_profile,
-        inputs=[user_id_input, access_key_input, locale_probe_input],
-        outputs=[stable_profile_editor, stable_profile_box],
-    )
-    import_knowledge_button.click(
-        fn=import_knowledge_files_and_refresh,
-        inputs=knowledge_files,
-        outputs=[knowledge_box, knowledge_document_selector, knowledge_document_box],
-    )
-    rebuild_knowledge_button.click(
-        fn=rebuild_knowledge_panel,
-        outputs=knowledge_box,
-    )
-    refresh_knowledge_button.click(
-        fn=knowledge_status,
-        outputs=knowledge_box,
-    )
-    preview_knowledge_button.click(
-        fn=preview_knowledge_search,
-        inputs=[knowledge_query, knowledge_top_k, knowledge_threshold, knowledge_candidate_multiplier],
-        outputs=knowledge_box,
-    )
-    inspect_knowledge_quality_button.click(
-        fn=format_knowledge_quality_report,
-        outputs=knowledge_box,
-    )
-    refresh_knowledge_documents_button.click(
-        fn=refresh_knowledge_documents_from_gui,
-        outputs=[knowledge_document_selector, knowledge_document_box],
-    )
-    delete_knowledge_document_button.click(
-        fn=delete_knowledge_document_from_gui,
-        inputs=knowledge_document_selector,
-        outputs=[knowledge_document_selector, knowledge_document_box, knowledge_box],
-    )
-    clear_knowledge_documents_button.click(
-        fn=clear_knowledge_documents_from_gui,
-        outputs=[knowledge_document_selector, knowledge_document_box, knowledge_box],
-    )
-    import_style_button.click(
-        fn=import_style_files,
-        inputs=style_files,
-        outputs=style_box,
-    )
-    rebuild_style_button.click(
-        fn=rebuild_style_panel,
-        outputs=style_box,
-    )
-    refresh_style_button.click(
-        fn=style_status,
-        outputs=style_box,
-    )
-    preview_style_button.click(
-        fn=preview_style_search,
-        inputs=style_query,
-        outputs=style_box,
-    )
-
 
 if __name__ == "__main__":
     start_background_warmup(initial_provider)

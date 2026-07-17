@@ -9,6 +9,7 @@ import chatbot
 import Web_GUI
 from gui_i18n import EN_TRANSLATIONS, localize_status_text
 from gui_auth import authorize_or_message
+from onboarding_store import onboarding_completed
 from session_store import SessionState
 
 
@@ -376,6 +377,37 @@ def test_interface_mode_visibility_shows_all_advanced_sections():
     assert "selected" not in updates[7]
 
 
+def test_dismiss_onboarding_hides_the_session_guide():
+    Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+
+    update = Web_GUI.dismiss_onboarding("alice", "alice-secret")
+
+    assert update["visible"] is False
+    assert onboarding_completed("alice") is True
+
+
+def test_saved_onboarding_preference_hides_guide_after_login():
+    Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+    Web_GUI.dismiss_onboarding("alice", "alice-secret")
+
+    update = Web_GUI.onboarding_visibility_after_login("alice", "alice-secret")
+
+    assert update["visible"] is False
+
+
+def test_onboarding_guide_strings_have_english_translations():
+    from gui_onboarding import (
+        ONBOARDING_COMPLETE_LABEL,
+        ONBOARDING_GUIDE_TEXT,
+        ONBOARDING_TITLE,
+    )
+
+    assert EN_TRANSLATIONS[ONBOARDING_TITLE] == "First-use guide"
+    assert ONBOARDING_GUIDE_TEXT in EN_TRANSLATIONS
+    assert EN_TRANSLATIONS[ONBOARDING_GUIDE_TEXT].startswith("1. Set a User ID")
+    assert ONBOARDING_COMPLETE_LABEL in EN_TRANSLATIONS
+
+
 def test_mood_panel_auth_prompt_uses_english_locale():
     result = Web_GUI.refresh_mood_panel("", "", "en")
 
@@ -413,6 +445,78 @@ def test_mood_panel_auth_prompt_stays_chinese_by_default():
     result = Web_GUI.refresh_mood_panel("", "")
 
     assert result.startswith("请输入 User ID 和访问密码")
+
+
+def test_mood_history_is_english_under_english_locale(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    result = Web_GUI.submit_mood_checkin(
+        "alice", "alice-secret", "2026-07-15", "开心", 4, "完成了目标", "en"
+    )
+
+    assert result.startswith("Saved 2026-07-15 mood check-in.")
+    assert "User: alice" in result
+    assert "Happy" in result
+    assert "intensity 4/5" in result
+    assert "已保存" not in result
+    assert "用户：" not in result
+
+
+def test_mood_history_stays_chinese_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    result = Web_GUI.submit_mood_checkin(
+        "alice", "alice-secret", "2026-07-15", "开心", 4, ""
+    )
+
+    assert result.startswith("已保存 2026-07-15 的 Mood Check-in。")
+    assert "用户：alice" in result
+
+
+def test_weekly_summary_and_analysis_are_english_under_english_locale(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.submit_mood_checkin("alice", "alice-secret", "2026-07-14", "平静", 2, "")
+    Web_GUI.submit_mood_checkin("alice", "alice-secret", "2026-07-15", "开心", 4, "")
+
+    chart, summary, analysis = Web_GUI.refresh_weekly_mood_dashboard(
+        "alice", "alice-secret", "2026-07-15", "light", "en"
+    )
+
+    assert "Average intensity:" in summary
+    assert "Trend:" in summary
+    assert "平均强度" not in summary
+    assert "Mood variation analysis" in analysis
+    assert "情绪波动" not in analysis
+    assert 'aria-label="Weekly Mood Chart"' in chart
+    assert ">Intensity</text>" in chart
+
+
+def test_weekly_dashboard_stays_chinese_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.submit_mood_checkin("alice", "alice-secret", "2026-07-15", "开心", 4, "")
+
+    chart, summary, analysis = Web_GUI.refresh_weekly_mood_dashboard(
+        "alice", "alice-secret", "2026-07-15", "light"
+    )
+
+    assert "平均强度" in summary
+    assert "情绪波动分析" in analysis
+    assert ">强度</text>" in chart
+
+
+def test_save_mood_dashboard_flow_is_english_under_english_locale(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    mood_panel, end_date, chart, summary, analysis = (
+        Web_GUI.submit_mood_checkin_and_refresh_dashboard(
+            "alice", "alice-secret", "2026-07-15", "疲惫", 3, "", "2026-07-15", "light", "en"
+        )
+    )
+
+    assert mood_panel.startswith("Saved 2026-07-15 mood check-in.")
+    assert end_date == "2026-07-15"
+    assert "Average intensity:" in summary
+    assert "Mood variation analysis" in analysis
 
 
 def test_login_status_reports_verified_user(tmp_path, monkeypatch):
