@@ -3,12 +3,15 @@ import threading
 import logging
 import time
 import torch
+import ctypes
+import re
 
 from dataclasses import dataclass
 from typing import Any, Generator
 import numpy as np
 
 from config import (
+    BASE_DIR,
     DEFAULT_LLM_PROVIDER,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
@@ -23,6 +26,12 @@ from config import (
     LOCAL_MODEL_CPU_THREADS,
     LOCAL_MODEL_DTYPE,
     LOCAL_MODEL_LOW_CPU_MEM_USAGE,
+    LOCAL_MODEL_MEMORY_CHECK,
+    LOCAL_MODEL_MEMORY_SAFETY_FACTOR,
+    LOCAL_MODEL_PARAMETER_COUNT_B,
+    LOCAL_MODEL_ALLOW_CPU_OFFLOAD,
+    LOCAL_MODEL_GPU_MAX_MEMORY_GB,
+    LOCAL_MODEL_CPU_MAX_MEMORY_GB,
 )
 
 logger = logging.getLogger(__name__)
@@ -52,6 +61,77 @@ def _resolve_torch_dtype() -> Any | None:
 def _configure_torch_runtime() -> None:
     if LOCAL_MODEL_CPU_THREADS > 0:
         torch.set_num_threads(LOCAL_MODEL_CPU_THREADS)
+
+
+def _available_system_memory_bytes() -> int | None:
+    """Return currently available RAM without requiring psutil."""
+    if os.name == "nt":
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+        status = MemoryStatus()
+        status.dwLength = ctypes.sizeof(status)
+        if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+            return int(status.ullAvailPhys)
+        return None
+    try:
+        return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _model_parameter_count_billions(model_name: str) -> float:
+    if LOCAL_MODEL_PARAMETER_COUNT_B > 0:
+        return float(LOCAL_MODEL_PARAMETER_COUNT_B)
+    match = re.search(r"(?:^|[-_/])(\d+(?:\.\d+)?)b(?:[-_/]|$)", model_name.lower())
+    return float(match.group(1)) if match else 3.0
+
+
+def _estimated_local_model_bytes(model_name: str, dtype: Any | None) -> int:
+    bytes_per_parameter = 2 if dtype in {torch.float16, torch.bfloat16} else 4
+    parameters = _model_parameter_count_billions(model_name) * 1_000_000_000
+    return int(parameters * bytes_per_parameter * max(1.0, LOCAL_MODEL_MEMORY_SAFETY_FACTOR))
+
+
+def _ensure_local_model_memory() -> None:
+    """Reject a likely OOM before Transformers starts allocating model weights."""
+    if not LOCAL_MODEL_MEMORY_CHECK:
+        return
+    dtype = _resolve_torch_dtype()
+    required = _estimated_local_model_bytes(CHAT_MODEL_NAME, dtype)
+    required_gib = required / (1024 ** 3)
+
+    if torch.cuda.is_available():
+        free_bytes, total_bytes = torch.cuda.mem_get_info()
+        if free_bytes >= required:
+            logger.info("Local model memory check passed: %.1f/%.1f GiB VRAM free.", free_bytes / (1024 ** 3), total_bytes / (1024 ** 3))
+            return
+        if not LOCAL_MODEL_ALLOW_CPU_OFFLOAD:
+            raise RuntimeError(
+                f"Local model loading cancelled: {CHAT_MODEL_NAME} needs about {required_gib:.1f} GiB free VRAM, "
+                f"but only {free_bytes / (1024 ** 3):.1f} GiB is available. Close GPU-heavy apps, use a smaller model, or enable CPU offload."
+            )
+        available_ram = _available_system_memory_bytes()
+        cpu_budget = int(LOCAL_MODEL_CPU_MAX_MEMORY_GB * (1024 ** 3))
+        if available_ram is None or available_ram >= cpu_budget:
+            logger.warning("VRAM is insufficient; loading with CPU offload. GPU free: %.1f GiB.", free_bytes / (1024 ** 3))
+            return
+        raise RuntimeError(
+            f"CPU offload was cancelled: it requires at least {LOCAL_MODEL_CPU_MAX_MEMORY_GB:.1f} GiB available RAM, "
+            f"but only {available_ram / (1024 ** 3):.1f} GiB is free."
+        )
+
+    available_ram = _available_system_memory_bytes()
+    if available_ram is not None and available_ram < required:
+        raise RuntimeError(
+            f"CPU model loading cancelled: {CHAT_MODEL_NAME} needs about {required_gib:.1f} GiB free RAM, "
+            f"but only {available_ram / (1024 ** 3):.1f} GiB is available."
+        )
 
 
 @dataclass
@@ -184,6 +264,7 @@ def get_llm() -> tuple[Any, Any]:
                 start = time.perf_counter()
                 _configure_torch_runtime()
                 logger.info("正在加载本地聊天模型：%s", CHAT_MODEL_NAME)
+                _ensure_local_model_memory()
                 AutoModelForCausalLM, AutoTokenizer, _ = require_transformers()
                 if _tokenizer is None:
                     _tokenizer = AutoTokenizer.from_pretrained(
@@ -202,6 +283,15 @@ def get_llm() -> tuple[Any, Any]:
                         kwargs["torch_dtype"] = dtype
                     if LOCAL_MODEL_ATTN_IMPLEMENTATION:
                         kwargs["attn_implementation"] = LOCAL_MODEL_ATTN_IMPLEMENTATION
+                    if LOCAL_MODEL_ALLOW_CPU_OFFLOAD:
+                        offload_folder = BASE_DIR / "data" / "model_offload"
+                        offload_folder.mkdir(parents=True, exist_ok=True)
+                        kwargs["max_memory"] = {
+                            0: f"{LOCAL_MODEL_GPU_MAX_MEMORY_GB:.1f}GiB",
+                            "cpu": f"{LOCAL_MODEL_CPU_MAX_MEMORY_GB:.1f}GiB",
+                        }
+                        kwargs["offload_folder"] = str(offload_folder)
+                        kwargs["offload_state_dict"] = True
                     _llm_model = AutoModelForCausalLM.from_pretrained(CHAT_MODEL_NAME, **kwargs)
                     _llm_model.eval()
                     if LOCAL_MODEL_COMPILE and hasattr(torch, "compile"):
@@ -246,9 +336,18 @@ def _stream_local_hf(
         use_cache=True,
     )
 
+    generation_errors: list[Exception] = []
+
+    def run_generation() -> None:
+        try:
+            _run_generate_locked(model, generate_kwargs)
+        except Exception as exc:
+            generation_errors.append(exc)
+            logger.exception("本地模型生成线程失败。")
+            streamer.end()
+
     generate_thread = threading.Thread(
-        target=_run_generate_locked,
-        args=(model, generate_kwargs),
+        target=run_generation,
         daemon=True,
     )
     generate_thread.start()
@@ -260,6 +359,8 @@ def _stream_local_hf(
     finally:
         generate_thread.join(timeout=60)
         logger.info("本地模型回复完成，用时 %.2fs", time.perf_counter() - start)
+    if generation_errors:
+        raise RuntimeError(f"本地模型生成失败：{generation_errors[0]}") from generation_errors[0]
 
 
 def _stream_openai_compatible(

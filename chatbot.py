@@ -181,6 +181,17 @@ def chat(
         return
 
     full_reply = "".join(collected_chunks).strip()
+    if not full_reply:
+        final_reply = "模型本次没有返回可显示的文本，请重试；若问题持续出现，请检查模型运行日志。"
+        logger.warning(
+            "模型流式响应为空。provider=%s model=%s",
+            config.provider,
+            config.model,
+        )
+        update_short_term(state, user_text, final_reply)
+        yield final_reply
+        return
+
     tool_result = try_tool_call(full_reply)
     final_reply = tool_result if tool_result is not None else full_reply
 

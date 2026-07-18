@@ -14,6 +14,8 @@ exports/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/model_offload/
+logs/
 knowledge_base/
 style_base/
 *.index

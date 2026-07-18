@@ -4,7 +4,6 @@ Run locally with: ``python api_server.py``.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import secrets
@@ -17,6 +16,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
 from chatbot import handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from gui_auth import authorize
@@ -140,16 +140,21 @@ def chat(request: ChatRequest, user_id: CurrentUser) -> dict[str, str]:
     return payload
 
 
+def _memory_receipt(user_id: str) -> str:
+    with session_store.session(user_id) as state:
+        return latest_memory_receipt(state)
+
+
 @app.post("/api/v1/chat/stream")
 async def chat_stream(request: ChatRequest, user_id: CurrentUser) -> StreamingResponse:
     async def event_source():
         try:
-            for chunk in _chat_chunks(user_id, request):
+            # The chat generator does blocking model inference; iterate it in a
+            # worker thread so the async event loop stays responsive.
+            async for chunk in iterate_in_threadpool(_chat_chunks(user_id, request)):
                 yield f"event: chunk\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
-                await asyncio.sleep(0)
             if request.show_memory_receipt:
-                with session_store.session(user_id) as state:
-                    receipt = latest_memory_receipt(state)
+                receipt = await run_in_threadpool(_memory_receipt, user_id)
                 yield f"event: receipt\ndata: {json.dumps({'text': receipt}, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
         except Exception as exc:
@@ -178,7 +183,7 @@ def create_mood_checkin(request: MoodCheckinRequest, user_id: CurrentUser) -> di
             checkin_date=request.checkin_date,
         )
     except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"record": record}
 
 

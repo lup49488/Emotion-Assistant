@@ -247,6 +247,7 @@ def respond(
         max_new_tokens=max_new_tokens,
     )
     partial = ""
+    yielded_response = False
     logger.info(
         "开始对话请求：user=%s provider=%s model=%s",
         user_id,
@@ -262,12 +263,19 @@ def respond(
             use_knowledge=use_knowledge,
             use_style=use_style,
         ):
-            partial += chunk
-            yield partial
+            if chunk:
+                partial += chunk
+                yielded_response = True
+                yield partial
         if show_memory_receipt:
             with session_store.session(user_id) as state:
                 receipt = latest_memory_receipt(state)
             yield f"{partial}\n\n---\n{receipt}"
+        elif not yielded_response:
+            fallback = "模型本次没有返回可显示的文本，请重试；若问题持续出现，请检查运行日志。"
+            logger.warning("GUI 收到空对话流。user=%s provider=%s", user_id, config.normalized_provider())
+            set_chat_status("模型未返回文本")
+            yield fallback
         set_chat_status("回复完成")
     except Exception as exc:
         set_chat_status(f"请求失败：{exc}")
@@ -767,9 +775,12 @@ def warmup_models(provider: str) -> None:
         set_warmup_status("正在预热记忆向量模型...")
         get_embedding_model()
 
-        if provider == "local_hf":
+        if provider == "local_hf" and os.getenv("GUI_PRELOAD_LOCAL_LLM", "false").lower() == "true":
             set_warmup_status("正在预热本地聊天模型...")
             get_llm()
+        elif provider == "local_hf":
+            set_warmup_status("基础模型预热完成，本地聊天模型将按需加载")
+            return
 
         set_warmup_status("预热完成")
     except Exception as exc:

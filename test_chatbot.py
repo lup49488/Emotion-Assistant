@@ -77,6 +77,20 @@ class TestSafeExtractJsonObject(unittest.TestCase):
         self.assertIsNone(chatbot.safe_extract_json_object(""))
 
 
+class TestChatStreamingFallback(unittest.TestCase):
+
+    def test_empty_model_stream_yields_a_fallback_message(self):
+        state = chatbot.SessionState()
+        with patch.object(chatbot, "safe_analyze", return_value=("neutral", 0.0)), \
+            patch.object(chatbot, "smart_memory_filter", return_value="discard"), \
+            patch.object(chatbot, "stream_model_response", return_value=iter(())):
+            chunks = list(chatbot.chat(state, "test message"))
+
+        self.assertEqual(len(chunks), 1)
+        self.assertIn("没有返回可显示的文本", chunks[0])
+        self.assertEqual(state.history[-1]["content"], chunks[0])
+
+
 # ═══════════════════════════════════════════════════════════
 # 2. score_memory / smart_memory_filter — 阈值边界
 # ═══════════════════════════════════════════════════════════
