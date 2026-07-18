@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timedelta
 from typing import Any
 
 from chatbot import session_store
+from config import LONG_TERM_EXPIRY_DAYS
 from gui_auth import authorize_or_message
 from memory_backup import create_memory_backup, load_memory_backup, restore_memory_payload
 from memory_store import record_memory_event, update_stable_profile
@@ -311,6 +313,117 @@ def load_memory_event_log(user_id: str, access_key: str, locale: str = "zh-CN") 
             return format_memory_event_log(user_id, state)
     except Exception as exc:
         return f"读取记忆写入记录失败：{exc}"
+
+
+def _normalized_memory_text(item: Any, field: str) -> str:
+    if not isinstance(item, dict):
+        return ""
+    return " ".join(str(item.get(field, "")).split()).casefold()
+
+
+def _is_stale_timestamp(value: Any) -> tuple[bool, bool]:
+    """Return (is_stale, is_invalid_or_missing) for a memory timestamp."""
+    text = str(value or "").strip()
+    if not text:
+        return False, True
+    try:
+        timestamp = datetime.fromisoformat(text.replace("Z", "+00:00")).replace(tzinfo=None)
+    except ValueError:
+        return False, True
+    return timestamp < datetime.now() - timedelta(days=LONG_TERM_EXPIRY_DAYS), False
+
+
+def build_memory_quality_report(user_id: str, state: Any, locale: str = "zh-CN") -> str:
+    """Summarize memory hygiene without changing the stored user data."""
+    sections = {
+        "短期对话": list(state.history),
+        "情绪记忆": list(state.emotion_memory),
+        "长期记忆": list(state.long_memory),
+        "兴趣记忆": list(state.interest_store.items),
+        "稳定资料": list(state.stable_profile),
+    }
+    is_english = (locale or "").lower().startswith("en")
+    issues: list[str] = []
+    empty_items = 0
+    invalid_time_items = 0
+    stale_long_items = 0
+
+    text_fields = {"情绪记忆": "label", "长期记忆": "text", "兴趣记忆": "text", "稳定资料": "text"}
+    timed_sections = {"情绪记忆", "长期记忆", "兴趣记忆"}
+    seen_texts: dict[str, str] = {}
+    duplicate_items = 0
+
+    for section, items in sections.items():
+        for item in items:
+            field = text_fields.get(section)
+            if field:
+                normalized = _normalized_memory_text(item, field)
+                if not normalized:
+                    empty_items += 1
+                    continue
+                if section != "情绪记忆":
+                    previous_section = seen_texts.get(normalized)
+                    if previous_section:
+                        duplicate_items += 1
+                    else:
+                        seen_texts[normalized] = section
+            if section in timed_sections:
+                stale, invalid = _is_stale_timestamp(item.get("time") if isinstance(item, dict) else None)
+                stale_long_items += int(section == "长期记忆" and stale)
+                invalid_time_items += int(invalid)
+
+    if empty_items:
+        issues.append(
+            f"{empty_items} 条持久记忆缺少有效内容" if not is_english
+            else f"{empty_items} persistent memory item(s) have no usable content"
+        )
+    if duplicate_items:
+        issues.append(
+            f"发现 {duplicate_items} 条重复的长期、兴趣或稳定资料" if not is_english
+            else f"Found {duplicate_items} duplicate long-term, interest, or profile item(s)"
+        )
+    if stale_long_items:
+        issues.append(
+            f"{stale_long_items} 条长期记忆超过 {LONG_TERM_EXPIRY_DAYS} 天" if not is_english
+            else f"{stale_long_items} long-term memory item(s) exceed {LONG_TERM_EXPIRY_DAYS} days"
+        )
+    if invalid_time_items:
+        issues.append(
+            f"{invalid_time_items} 条记忆缺少或使用了无法解析的时间" if not is_english
+            else f"{invalid_time_items} memory item(s) have missing or invalid timestamps"
+        )
+
+    score = max(0, 100 - min(40, empty_items * 10) - min(25, duplicate_items * 5)
+                - min(20, stale_long_items * 5) - min(15, invalid_time_items * 3))
+    if score >= 90:
+        level = "良好" if not is_english else "Good"
+    elif score >= 70:
+        level = "需要关注" if not is_english else "Needs attention"
+    else:
+        level = "建议整理" if not is_english else "Cleanup recommended"
+
+    counts = "，".join(f"{name} {len(items)} 条" for name, items in sections.items())
+    if is_english:
+        counts = ", ".join(f"{name}: {len(items)}" for name, items in sections.items())
+        lines = [f"Memory quality report for {user_id}", f"Score: {score}/100 ({level})", f"Counts: {counts}"]
+        lines.append("No issues found. Current memory structure looks healthy." if not issues else "Findings:")
+    else:
+        lines = [f"用户：{user_id}", f"记忆质量评分：{score}/100（{level}）", f"数量：{counts}"]
+        lines.append("未发现需要处理的问题，当前记忆结构良好。" if not issues else "发现的问题：")
+    if issues:
+        lines.extend(f"- {issue}" for issue in issues)
+    return "\n".join(lines)
+
+
+def assess_memory_quality(user_id: str, access_key: str, locale: str = "zh-CN") -> str:
+    user_id, auth_error = authorize_or_message(user_id, access_key, locale)
+    if auth_error:
+        return auth_error
+    try:
+        with session_store.session(user_id) as state:
+            return build_memory_quality_report(user_id, state, locale)
+    except Exception as exc:
+        return f"评估记忆质量失败：{exc}" if not (locale or "").lower().startswith("en") else f"Memory quality assessment failed: {exc}"
 
 
 def backup_memory_from_gui(

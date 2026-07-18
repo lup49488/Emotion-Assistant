@@ -71,6 +71,7 @@ from gui_memory import (
     format_memory_event_log,
     format_memory_snapshot,
     add_stable_profile,
+    assess_memory_quality,
     backup_memory_from_gui,
     load_memory_editor,
     load_memory_event_log,
@@ -1012,8 +1013,10 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
         save_memory_button = data_tab.save_memory_button
         clear_memory_button = data_tab.clear_memory_button
         refresh_memory_events_button = data_tab.refresh_memory_events_button
+        assess_memory_quality_button = data_tab.assess_memory_quality_button
         memory_editor = data_tab.memory_editor
         memory_event_box = data_tab.memory_event_box
+        memory_quality_box = data_tab.memory_quality_box
         backup_memory_button = data_tab.backup_memory_button
         restore_memory_mode = data_tab.restore_memory_mode
         restore_memory_file = data_tab.restore_memory_file

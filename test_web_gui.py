@@ -64,6 +64,23 @@ def test_format_memory_event_log_explains_action_and_reason():
     assert "识别到明确身份" in text
 
 
+def test_memory_quality_report_flags_duplicate_empty_stale_and_invalid_items():
+    state = SessionState(user_id="alice")
+    state.long_memory.extend([
+        {"text": "我是一名学生", "time": "2020-01-01T00:00:00"},
+        {"text": "", "time": "not-a-time"},
+    ])
+    state.interest_store.append({"text": "我是一名学生", "time": ""})
+
+    report = gui_memory.build_memory_quality_report("alice", state)
+
+    assert "记忆质量评分：" in report
+    assert "缺少有效内容" in report
+    assert "重复" in report
+    assert "超过" in report
+    assert "无法解析的时间" in report
+
+
 def test_clear_memory_section_clears_selected_interest_memory():
     state = SessionState(user_id="alice")
     state.history.append({"role": "user", "content": "keep me"})

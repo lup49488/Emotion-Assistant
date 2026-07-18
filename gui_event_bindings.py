@@ -216,6 +216,11 @@ def bind_gui_events(
         inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],
         outputs=ui.memory_event_box,
     )
+    ui.assess_memory_quality_button.click(
+        fn=callback("assess_memory_quality"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],
+        outputs=ui.memory_quality_box,
+    )
     ui.backup_memory_button.click(
         fn=callback("backup_memory_from_gui"),
         inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],

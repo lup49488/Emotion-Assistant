@@ -33,8 +33,10 @@ class DataTabComponents:
     save_memory_button: Any
     clear_memory_button: Any
     refresh_memory_events_button: Any
+    assess_memory_quality_button: Any
     memory_editor: Any
     memory_event_box: Any
+    memory_quality_box: Any
     backup_memory_button: Any
     restore_memory_mode: Any
     restore_memory_file: Any
@@ -120,10 +122,15 @@ def build_data_tab(
                     save_memory_button = gr.Button(tr("保存修改"))
                     clear_memory_button = gr.Button(tr("清理所选记忆"))
                     refresh_memory_events_button = gr.Button(tr("查看写入记录"))
+                    assess_memory_quality_button = gr.Button(tr("评估记忆质量"))
                 memory_editor = gr.Textbox(label=tr("记忆 JSON 编辑区"), value="[]", lines=14, interactive=True)
                 memory_event_box = gr.Textbox(
                     label=tr("记忆写入记录"), value=tr("点击“查看写入记录”加载最近的记忆判断。"),
                     lines=14, interactive=False,
+                )
+                memory_quality_box = gr.Textbox(
+                    label=tr("记忆质量报告"), value=tr("点击“评估记忆质量”查看当前用户记忆的健康状况。"),
+                    lines=10, interactive=False,
                 )
                 with gr.Accordion(tr("记忆备份与恢复"), open=False):
                     with gr.Row():
@@ -151,7 +158,8 @@ def build_data_tab(
         stable_profile_editor, save_stable_profile_button, clear_stable_profile_button,
         memory_section, load_memory_button, memory_box, memory_advanced_controls,
         save_memory_button, clear_memory_button, refresh_memory_events_button,
-        memory_editor, memory_event_box, backup_memory_button, restore_memory_mode,
+        assess_memory_quality_button, memory_editor, memory_event_box, memory_quality_box,
+        backup_memory_button, restore_memory_mode,
         restore_memory_file, restore_memory_button, memory_backup_status,
         memory_backup_file, memory_safety_backup_file,
     )
