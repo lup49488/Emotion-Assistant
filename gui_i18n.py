@@ -6,6 +6,15 @@ import gradio as gr
 
 
 EN_TRANSLATIONS = {
+    "会话": "Chats",
+    "历史会话": "Conversation history",
+    "会话列表": "Conversations",
+    "刷新": "Refresh",
+    "新建会话": "New conversation",
+    "加载会话": "Load conversation",
+    "删除当前会话": "Delete current conversation",
+    "会话状态": "Conversation status",
+    "请先登录后刷新历史会话。": "Sign in first, then refresh the conversation history.",
     "情绪感知对话助手": "Emotion-Aware Chat Assistant",
     "本地模型可留空；OpenAI 兼容接口可填写服务地址": "Leave blank for local models; enter the service URL for OpenAI-compatible APIs",
     "可留空并改用 .env，例如 DEEPSEEK_API_KEY": "Optional when configured in .env, such as DEEPSEEK_API_KEY",

@@ -124,6 +124,28 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_session_items_user_section_position
             ON session_items(user_id, section, position);
 
+        CREATE TABLE IF NOT EXISTS conversations (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            title TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversations_user_updated
+            ON conversations(user_id, updated_at DESC);
+
+        CREATE TABLE IF NOT EXISTS conversation_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            position INTEGER NOT NULL CHECK (position >= 0),
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
+            content TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(conversation_id, position)
+        );
+        CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_position
+            ON conversation_messages(conversation_id, position);
+
         CREATE TABLE IF NOT EXISTS rag_documents (
             collection TEXT NOT NULL CHECK (collection IN ('knowledge', 'style')),
             name TEXT NOT NULL,

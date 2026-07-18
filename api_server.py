@@ -53,6 +53,7 @@ class ChatRequest(BaseModel):
     use_knowledge: bool = False
     use_style: bool = False
     show_memory_receipt: bool = True
+    conversation_id: str | None = Field(default=None, max_length=64)
 
 
 class MoodCheckinRequest(BaseModel):
@@ -127,6 +128,7 @@ def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, Non
         model_config=config,
         use_knowledge=request.use_knowledge,
         use_style=request.use_style,
+        conversation_id=request.conversation_id,
     )
 
 

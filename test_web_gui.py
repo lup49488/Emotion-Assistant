@@ -368,7 +368,8 @@ def test_chat_auth_prompt_uses_session_locale():
         "en",
     )
 
-    assert next(response).startswith("Enter a User ID and access password")
+    message, _ = next(response)
+    assert message.startswith("Enter a User ID and access password")
 
 
 def test_locale_sync_callback_persists_browser_locale():

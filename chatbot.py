@@ -7,6 +7,7 @@ from typing import Generator
 import goemotions_local as goemotions
 import memory_store as _memory_store
 import session_store as _session_store
+from conversation_store import append_exchange
 from config import BASE_DIR as CONFIG_BASE_DIR
 from config import CHAT_MODEL_NAME, DEFAULT_LLM_PROVIDER, KNOWLEDGE_ENABLED, SHORT_TERM_LIMIT, STYLE_ENABLED
 from config import USERS_DIR as CONFIG_USERS_DIR
@@ -134,6 +135,7 @@ def chat(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    conversation_id: str | None = None,
 ) -> Generator[str, None, None]:
     user_text = user_text.strip()
     if not user_text:
@@ -149,6 +151,7 @@ def chat(
 
     if crisis_reply is not None:
         update_short_term(state, user_text, crisis_reply)
+        _archive_exchange(state.user_id, conversation_id, user_text, crisis_reply)
         yield crisis_reply
         return
 
@@ -177,6 +180,7 @@ def chat(
         logger.exception("模型回复生成失败。provider=%s model=%s", config.provider, config.model)
         error_reply = f"模型调用失败：{exc}"
         update_short_term(state, user_text, error_reply)
+        _archive_exchange(state.user_id, conversation_id, user_text, error_reply)
         yield error_reply
         return
 
@@ -189,6 +193,7 @@ def chat(
             config.model,
         )
         update_short_term(state, user_text, final_reply)
+        _archive_exchange(state.user_id, conversation_id, user_text, final_reply)
         yield final_reply
         return
 
@@ -199,6 +204,14 @@ def chat(
         yield "\n" + tool_result
 
     update_short_term(state, user_text, final_reply)
+    _archive_exchange(state.user_id, conversation_id, user_text, final_reply)
+
+
+def _archive_exchange(user_id: str, conversation_id: str | None, user_text: str, assistant_text: str) -> None:
+    try:
+        append_exchange(user_id, conversation_id, user_text, assistant_text)
+    except Exception:
+        logger.exception("Failed to archive chat exchange. user=%s", user_id)
 
 
 def chat_sync(
@@ -207,6 +220,7 @@ def chat_sync(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    conversation_id: str | None = None,
 ) -> str:
     return "".join(chat(
         state,
@@ -214,6 +228,7 @@ def chat_sync(
         model_config=model_config,
         use_knowledge=use_knowledge,
         use_style=use_style,
+        conversation_id=conversation_id,
     ))
 
 
@@ -226,6 +241,7 @@ def handle_user_message(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    conversation_id: str | None = None,
 ) -> str:
     with session_store.session(user_id) as state:
         return chat_sync(
@@ -234,6 +250,7 @@ def handle_user_message(
             model_config=model_config,
             use_knowledge=use_knowledge,
             use_style=use_style,
+            conversation_id=conversation_id,
         )
 
 
@@ -243,6 +260,7 @@ def handle_user_message_stream(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    conversation_id: str | None = None,
 ) -> Generator[str, None, None]:
     with session_store.session(user_id) as state:
         yield from chat(
@@ -251,6 +269,7 @@ def handle_user_message_stream(
             model_config=model_config,
             use_knowledge=use_knowledge,
             use_style=use_style,
+            conversation_id=conversation_id,
         )
 
 

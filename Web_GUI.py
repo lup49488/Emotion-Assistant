@@ -14,6 +14,7 @@ import gui_runtime_settings as runtime_settings
 
 from app_logging import clear_logs, get_log_text, setup_gui_logging
 import goemotions_local as goemotions
+from conversation_store import ensure_conversation
 from chatbot import (
     DEFAULT_LLM_PROVIDER,
     get_embedding_model,
@@ -80,6 +81,13 @@ from gui_memory import (
     restore_memory_from_gui,
     save_memory_editor,
     save_stable_profile_editor,
+)
+from gui_conversations import (
+    conversation_choices,
+    delete_conversation_from_gui,
+    load_conversation_from_gui,
+    new_conversation_from_gui,
+    refresh_conversation_panel,
 )
 from gui_knowledge import (
     clear_knowledge_documents,
@@ -231,10 +239,22 @@ def respond(
     top_p: float,
     max_new_tokens: int,
     locale: str = "zh-CN",
+    conversation_id: str | None = None,
 ):
     user_id, auth_error = _authorize_or_message(user_id, access_key)
     if auth_error:
-        yield localize_status_text(auth_error, locale)
+        yield localize_status_text(auth_error, locale), gr.update()
+        return
+
+    try:
+        active_conversation = ensure_conversation(user_id, conversation_id, message)
+        active_conversation_id = str(active_conversation["id"])
+        conversation_update = gr.update(
+            choices=conversation_choices(user_id), value=active_conversation_id
+        )
+    except Exception as exc:
+        logger.exception("Unable to prepare conversation archive. user=%s", user_id)
+        yield f"Conversation archive setup failed: {exc}", gr.update()
         return
 
     config = make_model_config(
@@ -262,24 +282,25 @@ def respond(
             model_config=config,
             use_knowledge=use_knowledge,
             use_style=use_style,
+            conversation_id=active_conversation_id,
         ):
             if chunk:
                 partial += chunk
                 yielded_response = True
-                yield partial
+                yield partial, conversation_update
         if show_memory_receipt:
             with session_store.session(user_id) as state:
                 receipt = latest_memory_receipt(state)
-            yield f"{partial}\n\n---\n{receipt}"
+            yield f"{partial}\n\n---\n{receipt}", conversation_update
         elif not yielded_response:
             fallback = "模型本次没有返回可显示的文本，请重试；若问题持续出现，请检查运行日志。"
             logger.warning("GUI 收到空对话流。user=%s provider=%s", user_id, config.normalized_provider())
             set_chat_status("模型未返回文本")
-            yield fallback
+            yield fallback, conversation_update
         set_chat_status("回复完成")
     except Exception as exc:
         set_chat_status(f"请求失败：{exc}")
-        yield f"请求失败：{exc}"
+        yield f"请求失败：{exc}", conversation_update
 
 
 def provider_changed(provider: str, api_key: str = "", locale: str = "zh-CN"):
@@ -915,49 +936,68 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
             onboarding = build_onboarding(
                 tr, show_on_first_use=not bool(os.getenv("CHATBOT_USER_ID", "").strip())
             )
-            with gr.Accordion(tr("常用设置"), open=True):
-                with gr.Row():
-                    user_id_input.render()
-                    access_key_input.render()
-                save_access_key_button.render()
-                with gr.Row():
-                    login_status_box.render()
-                    access_key_status.render()
-                with gr.Row():
-                    provider_input.render()
-                    model_input.render()
-                with gr.Row():
-                    use_knowledge_input.render()
-                    use_style_input.render()
-                    show_memory_receipt_input.render()
-            with gr.Column(visible=False) as advanced_chat_settings:
-                with gr.Accordion(tr("生成参数"), open=False):
-                    base_url_input.render()
-                    api_key_input.render()
+            with gr.Row(elem_id="chat-workspace", equal_height=True):
+                with gr.Column(scale=3, min_width=260, elem_id="chat-sidebar"):
+                    gr.Markdown(f"### {tr('会话')}")
+                    new_conversation_button = gr.Button(tr("新建会话"), variant="primary")
+                    conversation_selector = gr.Radio(
+                        label=tr("会话列表"), choices=[], value=None,
+                        show_label=False, container=False, elem_id="conversation-list",
+                    )
                     with gr.Row():
-                        temperature_input.render()
-                        top_p_input.render()
-                        max_new_tokens_input.render()
-            locale_probe_input.render()
-            gr.ChatInterface(
-                fn=respond,
-                title=tr("情绪感知对话助手"),
-                additional_inputs=[
-                    user_id_input,
-                    access_key_input,
-                    use_knowledge_input,
-                    use_style_input,
-                    show_memory_receipt_input,
-                    provider_input,
-                    model_input,
-                    base_url_input,
-                    api_key_input,
-                    temperature_input,
-                    top_p_input,
-                    max_new_tokens_input,
-                    locale_probe_input,
-                ],
-            )
+                        refresh_conversations_button = gr.Button(tr("刷新"), scale=1)
+                    delete_conversation_button = gr.Button(tr("删除当前会话"), variant="stop")
+                    conversation_status_box = gr.Textbox(
+                        label=tr("会话状态"), value=tr("请先登录后刷新历史会话。"),
+                        lines=2, interactive=False,
+                    )
+                    with gr.Accordion(tr("常用设置"), open=False):
+                        with gr.Row():
+                            user_id_input.render()
+                            access_key_input.render()
+                        save_access_key_button.render()
+                        with gr.Row():
+                            login_status_box.render()
+                            access_key_status.render()
+                        with gr.Row():
+                            provider_input.render()
+                            model_input.render()
+                        with gr.Row():
+                            use_knowledge_input.render()
+                            use_style_input.render()
+                            show_memory_receipt_input.render()
+                    with gr.Column(visible=False) as advanced_chat_settings:
+                        with gr.Accordion(tr("生成参数"), open=False):
+                            base_url_input.render()
+                            api_key_input.render()
+                            with gr.Row():
+                                temperature_input.render()
+                                top_p_input.render()
+                                max_new_tokens_input.render()
+                with gr.Column(scale=7, min_width=360, elem_id="chat-main"):
+                    locale_probe_input.render()
+                    chat_widget = gr.Chatbot(height=620, elem_id="conversation-chat")
+                    gr.ChatInterface(
+                        fn=respond,
+                        chatbot=chat_widget,
+                        additional_outputs=conversation_selector,
+                        additional_inputs=[
+                            user_id_input,
+                            access_key_input,
+                            use_knowledge_input,
+                            use_style_input,
+                            show_memory_receipt_input,
+                            provider_input,
+                            model_input,
+                            base_url_input,
+                            api_key_input,
+                            temperature_input,
+                            top_p_input,
+                            max_new_tokens_input,
+                            locale_probe_input,
+                            conversation_selector,
+                        ],
+                    )
 
         with gr.Tab(tr("tab_mood"), id="mood"):
             with gr.Accordion("Mood Check-in", open=True):
@@ -1097,6 +1137,12 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
         weekly_mood_chart=weekly_mood_chart,
         weekly_mood_summary=weekly_mood_summary,
         weekly_mood_analysis=weekly_mood_analysis,
+        conversation_selector=conversation_selector,
+        refresh_conversations_button=refresh_conversations_button,
+        new_conversation_button=new_conversation_button,
+        delete_conversation_button=delete_conversation_button,
+        conversation_status_box=conversation_status_box,
+        chat_widget=chat_widget,
         onboarding_guide=onboarding.guide,
         onboarding_complete_button=onboarding.complete_button,
         **data_tab.__dict__,

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from config import BASE_DIR
+from conversation_store import list_conversations, get_conversation
 from mood_store import load_mood_checkins
 from session_store import load_state, validate_user_id
 
@@ -22,7 +23,7 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
     state = load_state(user_id)
     mood_checkins = load_mood_checkins(user_id)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "user_id": user_id,
         "notes": [
@@ -30,6 +31,10 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
             "不会导出访问密码、密码哈希、API Key 或本地 .env 配置。",
         ],
         "history": list(state.history),
+        "conversations": [
+            get_conversation(user_id, item["id"])
+            for item in list_conversations(user_id)
+        ],
         "emotion_memory": list(state.emotion_memory),
         "long_memory": list(state.long_memory),
         "stable_profile": list(state.stable_profile),

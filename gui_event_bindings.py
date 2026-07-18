@@ -127,6 +127,30 @@ def bind_gui_events(
         outputs=[ui.export_user_data_status, ui.export_user_data_file],
         js=sync_locale_js,
     )
+    ui.refresh_conversations_button.click(
+        fn=callback("refresh_conversation_panel"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.conversation_selector, ui.locale_probe_input],
+        outputs=[ui.conversation_selector, ui.conversation_status_box],
+        js=sync_locale_js,
+    )
+    ui.new_conversation_button.click(
+        fn=callback("new_conversation_from_gui"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],
+        outputs=[ui.conversation_selector, ui.chat_widget, ui.conversation_status_box],
+        js=sync_locale_js,
+    )
+    ui.conversation_selector.change(
+        fn=callback("load_conversation_from_gui"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.conversation_selector, ui.locale_probe_input],
+        outputs=[ui.chat_widget, ui.conversation_status_box],
+        js=sync_locale_js,
+    )
+    ui.delete_conversation_button.click(
+        fn=callback("delete_conversation_from_gui"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.conversation_selector, ui.locale_probe_input],
+        outputs=[ui.conversation_selector, ui.chat_widget, ui.conversation_status_box],
+        js=sync_locale_js,
+    )
 
     ui.refresh_logs_button.click(fn=callback("get_log_text"), outputs=ui.log_box)
     ui.clear_logs_button.click(fn=callback("clear_logs"), outputs=ui.log_box)
