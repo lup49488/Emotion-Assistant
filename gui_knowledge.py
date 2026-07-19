@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gui_i18n import localize_status_text
 from knowledge_store import (
     assess_knowledge_quality,
     clear_documents,
@@ -12,7 +13,7 @@ from knowledge_store import (
 )
 
 
-def format_knowledge_quality_report() -> str:
+def format_knowledge_quality_report(locale: str = "zh-CN") -> str:
     report = assess_knowledge_quality()
     index_count = report["index_count"]
     lines = [
@@ -27,7 +28,7 @@ def format_knowledge_quality_report() -> str:
     lines.extend(f"- {issue}" for issue in issues)
     if not issues:
         lines.append("- 未发现明显质量问题")
-    return "\n".join(lines)
+    return localize_status_text("\n".join(lines), locale)
 
 
 def format_knowledge_search_diagnostics(
@@ -35,10 +36,11 @@ def format_knowledge_search_diagnostics(
     top_k: int,
     threshold: float,
     candidate_multiplier: int,
+    locale: str = "zh-CN",
 ) -> str:
     query = (query or "").strip()
     if not query:
-        return "请输入检索问题。"
+        return localize_status_text("请输入检索问题。", locale)
     diagnostic = diagnose_knowledge_search(
         query,
         top_k=int(top_k),
@@ -53,7 +55,7 @@ def format_knowledge_search_diagnostics(
     ]
     if not candidates:
         lines.append("没有可供检索的候选片段。")
-        return "\n".join(lines)
+        return localize_status_text("\n".join(lines), locale)
     for index, item in enumerate(candidates, start=1):
         marker = "采用" if item.get("accepted") else "淘汰"
         text = " ".join(str(item.get("text", "")).split())
@@ -63,13 +65,13 @@ def format_knowledge_search_diagnostics(
             f"原因：{item.get('decision', '未分类')}",
             text[:280] + ("..." if len(text) > 280 else ""),
         ])
-    return "\n".join(lines)
+    return localize_status_text("\n".join(lines), locale)
 
 
-def format_knowledge_document_list() -> str:
+def format_knowledge_document_list(locale: str = "zh-CN") -> str:
     documents = list_document_details()
     if not documents:
-        return "当前没有已入库的 RAG 文档。"
+        return localize_status_text("当前没有已入库的 RAG 文档。", locale)
 
     lines = [f"已入库文档：{len(documents)}"]
     for item in documents:
@@ -77,18 +79,18 @@ def format_knowledge_document_list() -> str:
         lines.append(
             f"- {item['name']} | {item['chunks']} 个片段 | {size_kb:.1f} KB | 更新于 {item['modified_at']}"
         )
-    return "\n".join(lines)
+    return localize_status_text("\n".join(lines), locale)
 
 
 def knowledge_document_names() -> list[str]:
     return [item["name"] for item in list_document_details()]
 
 
-def refresh_knowledge_document_panel() -> tuple[list[str], str]:
-    return knowledge_document_names(), format_knowledge_document_list()
+def refresh_knowledge_document_panel(locale: str = "zh-CN") -> tuple[list[str], str]:
+    return knowledge_document_names(), format_knowledge_document_list(locale)
 
 
-def _format_management_result(action: str, result: dict[str, Any]) -> str:
+def _format_management_result(action: str, result: dict[str, Any], locale: str) -> str:
     lines = [
         f"{action}完成。",
         f"当前文档数：{result.get('documents', 0)}",
@@ -98,26 +100,32 @@ def _format_management_result(action: str, result: dict[str, Any]) -> str:
     if errors:
         lines.append("重建警告：")
         lines.extend(f"- {error}" for error in errors)
-    lines.extend(["", format_knowledge_document_list(), "", knowledge_status()])
-    return "\n".join(lines)
+    localized = localize_status_text("\n".join(lines), locale)
+    return "\n".join([
+        localized,
+        "",
+        format_knowledge_document_list(locale),
+        "",
+        localize_status_text(knowledge_status(), locale),
+    ])
 
 
-def delete_knowledge_document(name: str) -> tuple[list[str], str, str]:
+def delete_knowledge_document(name: str, locale: str = "zh-CN") -> tuple[list[str], str, str]:
     try:
         result = delete_document(name)
-        message = _format_management_result(f"已删除文档“{result['deleted']}”", result)
+        message = _format_management_result(f"已删除文档“{result['deleted']}”", result, locale)
     except Exception as exc:
-        message = f"删除失败：{exc}\n\n{format_knowledge_document_list()}"
-    names, document_list = refresh_knowledge_document_panel()
+        message = localize_status_text(f"删除失败：{exc}", locale) + "\n\n" + format_knowledge_document_list(locale)
+    names, document_list = refresh_knowledge_document_panel(locale)
     return names, document_list, message
 
 
-def clear_knowledge_documents() -> tuple[list[str], str, str]:
+def clear_knowledge_documents(locale: str = "zh-CN") -> tuple[list[str], str, str]:
     try:
         result = clear_documents()
         removed = result.get("removed") or []
-        message = _format_management_result(f"已清空 {len(removed)} 个文档", result)
+        message = _format_management_result(f"已清空 {len(removed)} 个文档", result, locale)
     except Exception as exc:
-        message = f"清空失败：{exc}\n\n{format_knowledge_document_list()}"
-    names, document_list = refresh_knowledge_document_panel()
+        message = localize_status_text(f"清空失败：{exc}", locale) + "\n\n" + format_knowledge_document_list(locale)
+    names, document_list = refresh_knowledge_document_panel(locale)
     return names, document_list, message

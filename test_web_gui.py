@@ -1,8 +1,10 @@
 from unittest.mock import Mock, patch
 import json
+import re
 from pathlib import Path
 
 import export_store
+import gui_knowledge
 import gui_memory
 import session_store
 import chatbot
@@ -634,3 +636,81 @@ def test_load_memory_editor_allowed_with_correct_passphrase(tmp_path, monkeypatc
         editor_text, message = Web_GUI.load_memory_editor("alice", "alice-secret", "history")
 
     assert "private" in editor_text
+
+
+def _has_chinese(text: str) -> bool:
+    return bool(re.search(r"[一-鿿]", text))
+
+
+def test_memory_snapshot_is_english_under_english_locale(tmp_path, monkeypatch):
+    # A distinct user id keeps this out of the process-wide SessionStore cache,
+    # which other tests populate with Chinese user content.
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.save_access_key_from_gui("i18n-snapshot", "alice-secret")
+
+    snapshot = Web_GUI.load_memory_panel("i18n-snapshot", "alice-secret", "en")
+
+    assert "User: i18n-snapshot" in snapshot
+    assert "## Recent conversations" in snapshot
+    assert "## Stable profile" in snapshot
+    assert "No entries" in snapshot
+    assert not _has_chinese(snapshot)
+
+
+def test_memory_snapshot_stays_chinese_by_default(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.save_access_key_from_gui("i18n-snapshot-zh", "alice-secret")
+
+    snapshot = Web_GUI.load_memory_panel("i18n-snapshot-zh", "alice-secret")
+
+    assert "用户：i18n-snapshot-zh" in snapshot
+    assert "## 短期对话" in snapshot
+    assert "暂无记录" in snapshot
+
+
+def test_memory_event_log_and_status_are_english_under_english_locale(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    user = "i18n-events"
+    Web_GUI.save_access_key_from_gui(user, "alice-secret")
+    Web_GUI.save_memory_editor(user, "alice-secret", "history", "[]", "en")
+
+    event_log = Web_GUI.load_memory_event_log(user, "alice-secret", "en")
+    backup_status, _ = gui_memory.backup_memory_from_gui(user, "alice-secret", "en")
+
+    assert "memory decisions:" in event_log
+    assert "Reason:" in event_log
+    assert not _has_chinese(event_log)
+    assert backup_status.startswith("Backed up all memory:")
+
+
+def test_memory_quality_report_counts_are_english(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.save_access_key_from_gui("i18n-quality", "alice-secret")
+
+    report = gui_memory.assess_memory_quality("i18n-quality", "alice-secret", "en")
+
+    assert "Recent conversations:" in report
+    assert "Stable profile:" in report
+    assert not _has_chinese(report)
+
+
+def test_knowledge_quality_report_is_english_under_english_locale():
+    report = gui_knowledge.format_knowledge_quality_report("en")
+
+    assert "Quality level:" in report
+    assert "Documents / chunks:" in report
+    assert "Findings:" in report
+    assert not _has_chinese(report)
+
+
+def test_knowledge_quality_report_stays_chinese_by_default():
+    report = gui_knowledge.format_knowledge_quality_report()
+
+    assert "质量等级：" in report
+    assert "检查结果：" in report
+
+
+def test_knowledge_search_diagnostics_prompt_is_english():
+    message = gui_knowledge.format_knowledge_search_diagnostics("", 4, 0.35, 3, "en")
+
+    assert message == "Enter a retrieval question."

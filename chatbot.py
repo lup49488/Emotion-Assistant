@@ -156,6 +156,8 @@ def chat(
         return
 
     config = model_config or ModelRuntimeConfig()
+    # Provider 层用此标识做按用户限额与用量归集。
+    config.user_id = state.user_id
     should_use_knowledge = KNOWLEDGE_ENABLED if use_knowledge is None else bool(use_knowledge)
     should_use_style = STYLE_ENABLED if use_style is None else bool(use_style)
     knowledge_context = build_knowledge_context(user_text) if should_use_knowledge else ""

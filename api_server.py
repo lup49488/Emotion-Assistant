@@ -121,6 +121,7 @@ def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, Non
         temperature=request.temperature,
         top_p=request.top_p,
         max_new_tokens=request.max_new_tokens,
+        user_id=user_id,
     )
     yield from handle_user_message_stream(
         user_id,

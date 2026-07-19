@@ -26,6 +26,8 @@ class AdvancedTabComponents:
     refresh_local_runtime_button: Any
     local_runtime_status: Any
     local_runtime_save_result: Any
+    api_usage_status: Any
+    refresh_api_usage_button: Any
     log_box: Any
     refresh_logs_button: Any
     clear_logs_button: Any
@@ -47,6 +49,7 @@ def build_advanced_tab(
     local_cpu_threads: int,
     build_status_text: Callable[[str, str, str], str],
     build_local_runtime_text: Callable[[str, str, bool, bool, int], str],
+    build_api_usage_text: Callable[[], str],
     get_log_text: Callable[[], str],
 ) -> AdvancedTabComponents:
     """Render the advanced runtime and diagnostic controls."""
@@ -102,6 +105,12 @@ def build_advanced_tab(
                 label=tr("保存结果"), value=tr("尚未保存本地运行配置。"), lines=3, interactive=False
             )
 
+        with gr.Accordion(tr("API 稳定性与成本"), open=False):
+            api_usage_status = gr.Textbox(
+                label=tr("当前 API 用量与限额"), value=build_api_usage_text, lines=11, interactive=False
+            )
+            refresh_api_usage_button = gr.Button(tr("刷新 API 用量"))
+
         with gr.Accordion(tr("日志面板"), open=False):
             log_box = gr.Textbox(label=tr("最近日志"), value=get_log_text, lines=14, interactive=False)
             with gr.Row():
@@ -114,6 +123,7 @@ def build_advanced_tab(
         connection_result, connection_detail_result, save_model_config_result, status_timer,
         local_dtype_input, local_attention_input, local_low_cpu_mem_input, local_compile_input,
         local_cpu_threads_input, save_local_runtime_button, refresh_local_runtime_button,
-        local_runtime_status, local_runtime_save_result, log_box, refresh_logs_button,
+        local_runtime_status, local_runtime_save_result, api_usage_status, refresh_api_usage_button,
+        log_box, refresh_logs_button,
         clear_logs_button, log_timer,
     )

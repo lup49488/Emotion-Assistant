@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -71,3 +72,25 @@ def test_get_llm_configures_cpu_offload_when_enabled(tmp_path):
     assert kwargs["max_memory"] == {0: "5.5GiB", "cpu": "12.0GiB"}
     assert kwargs["offload_state_dict"] is True
     assert (tmp_path / "data" / "model_offload").is_dir()
+
+
+def test_openai_stream_retries_timeout_before_first_chunk():
+    event = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="hello"))])
+    fake_client = Mock()
+    fake_client.chat.completions.create.side_effect = [TimeoutError("request timeout"), iter([event])]
+    fake_openai = Mock(return_value=fake_client)
+    config = llm_providers.ModelRuntimeConfig(
+        provider="deepseek", model="test-model", api_key="test-key", max_new_tokens=8,
+    )
+
+    with patch.object(llm_providers, "require_openai_client", return_value=fake_openai), \
+        patch.object(llm_providers, "API_MAX_RETRIES", 1), \
+        patch.object(llm_providers, "API_RETRY_BACKOFF_SECONDS", 0):
+        chunks = list(llm_providers._stream_openai_compatible([
+            {"role": "user", "content": "hello"},
+        ], config))
+
+    assert chunks == ["hello"]
+    assert fake_client.chat.completions.create.call_count == 2
+    assert fake_openai.call_args.kwargs["timeout"] == llm_providers.API_REQUEST_TIMEOUT_SECONDS
+    assert fake_openai.call_args.kwargs["max_retries"] == 0

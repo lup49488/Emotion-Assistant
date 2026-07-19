@@ -7,6 +7,7 @@ from typing import Any
 from chatbot import session_store
 from config import LONG_TERM_EXPIRY_DAYS
 from gui_auth import authorize_or_message
+from gui_i18n import localize_status_text
 from memory_backup import create_memory_backup, load_memory_backup, restore_memory_payload
 from memory_store import record_memory_event, update_stable_profile
 
@@ -83,9 +84,9 @@ def load_memory_panel(user_id: str, access_key: str, locale: str = "zh-CN") -> s
         return auth_error
     try:
         with session_store.session(user_id) as state:
-            return format_memory_snapshot(user_id, state)
+            return localize_status_text(format_memory_snapshot(user_id, state), locale)
     except Exception as exc:
-        return f"读取记忆失败：{exc}"
+        return localize_status_text(f"读取记忆失败：{exc}", locale)
 
 
 def _memory_section_items(state: Any, section: str) -> list[dict[str, Any]]:
@@ -149,9 +150,9 @@ def load_memory_editor(
             items = _memory_section_items(state, section)
             editor_text = json.dumps(items, ensure_ascii=False, indent=2)
             snapshot = format_memory_snapshot(user_id, state)
-        return editor_text, snapshot
+        return editor_text, localize_status_text(snapshot, locale)
     except Exception as exc:
-        return "", f"读取记忆失败：{exc}"
+        return "", localize_status_text(f"读取记忆失败：{exc}", locale)
 
 
 def save_memory_editor(
@@ -162,7 +163,9 @@ def save_memory_editor(
         return editor_text, auth_error
     section = section or "history"
     if section == "all":
-        return editor_text, "暂不支持直接保存“全部记忆”。请分别选择短期、情绪、长期或兴趣记忆保存。"
+        return editor_text, localize_status_text(
+            "暂不支持直接保存“全部记忆”。请分别选择短期、情绪、长期或兴趣记忆保存。", locale
+        )
 
     try:
         data = json.loads(editor_text or "[]")
@@ -177,15 +180,15 @@ def save_memory_editor(
                 state,
                 section=section,
                 action="updated",
-                text=f"手动保存 {len(data)} 条{MEMORY_SECTION_LABELS.get(section, section)}",
+                text=f"手动保存记忆：{MEMORY_SECTION_LABELS.get(section, section)} × {len(data)}",
                 reason="用户在记忆管理面板中保存了编辑内容",
             )
             snapshot = format_memory_snapshot(user_id, state)
         normalized = json.dumps(data, ensure_ascii=False, indent=2)
         label = MEMORY_SECTION_LABELS.get(section, section)
-        return normalized, f"已保存 {user_id} 的{label}。\n\n{snapshot}"
+        return normalized, localize_status_text(f"已保存记忆：{user_id} | {label}\n\n{snapshot}", locale)
     except Exception as exc:
-        return editor_text, f"保存记忆失败：{exc}"
+        return editor_text, localize_status_text(f"保存记忆失败：{exc}", locale)
 
 
 def clear_memory_section(
@@ -209,9 +212,10 @@ def clear_memory_section(
             if section in {"stable", "all"}:
                 state.stable_profile.clear()
         label = MEMORY_SECTION_LABELS.get(section, section)
-        return f"已清理 {user_id} 的{label}。\n\n{load_memory_panel(user_id, access_key, locale)}"
+        cleared = localize_status_text(f"已清理记忆：{user_id} | {label}", locale)
+        return f"{cleared}\n\n{load_memory_panel(user_id, access_key, locale)}"
     except Exception as exc:
-        return f"清理记忆失败：{exc}"
+        return localize_status_text(f"清理记忆失败：{exc}", locale)
 
 
 def clear_memory_section_and_reload(
@@ -264,9 +268,9 @@ def add_stable_profile(
             )
             editor_text = json.dumps(state.stable_profile, ensure_ascii=False, indent=2)
             snapshot = format_memory_snapshot(user_id, state)
-        return "", editor_text, f"已保存稳定资料。\n\n{snapshot}"
+        return "", editor_text, localize_status_text(f"已保存稳定资料。\n\n{snapshot}", locale)
     except Exception as exc:
-        return text, "", f"保存稳定资料失败：{exc}"
+        return text, "", localize_status_text(f"保存稳定资料失败：{exc}", locale)
 
 
 def format_memory_event_log(user_id: str, state: Any, limit: int = 20) -> str:
@@ -274,10 +278,12 @@ def format_memory_event_log(user_id: str, state: Any, limit: int = 20) -> str:
     if not events:
         return f"用户：{user_id}\n\n尚无记忆写入记录。"
     labels = {
+        "history": "短期对话",
         "stable": "稳定资料",
         "interest": "兴趣记忆",
         "long": "长期记忆",
         "emotion": "情绪记忆",
+        "all": "全部记忆",
         "none": "未写入",
     }
     actions = {
@@ -310,9 +316,9 @@ def load_memory_event_log(user_id: str, access_key: str, locale: str = "zh-CN") 
         return auth_error
     try:
         with session_store.session(user_id) as state:
-            return format_memory_event_log(user_id, state)
+            return localize_status_text(format_memory_event_log(user_id, state), locale)
     except Exception as exc:
-        return f"读取记忆写入记录失败：{exc}"
+        return localize_status_text(f"读取记忆写入记录失败：{exc}", locale)
 
 
 def _normalized_memory_text(item: Any, field: str) -> str:
@@ -404,7 +410,16 @@ def build_memory_quality_report(user_id: str, state: Any, locale: str = "zh-CN")
 
     counts = "，".join(f"{name} {len(items)} 条" for name, items in sections.items())
     if is_english:
-        counts = ", ".join(f"{name}: {len(items)}" for name, items in sections.items())
+        english_names = {
+            "短期对话": "Recent conversations",
+            "情绪记忆": "Emotion memory",
+            "长期记忆": "Long-term memory",
+            "兴趣记忆": "Interest memory",
+            "稳定资料": "Stable profile",
+        }
+        counts = ", ".join(
+            f"{english_names.get(name, name)}: {len(items)}" for name, items in sections.items()
+        )
         lines = [f"Memory quality report for {user_id}", f"Score: {score}/100 ({level})", f"Counts: {counts}"]
         lines.append("No issues found. Current memory structure looks healthy." if not issues else "Findings:")
     else:
@@ -435,9 +450,9 @@ def backup_memory_from_gui(
     try:
         with session_store.session(user_id) as state:
             path = create_memory_backup(user_id, state)
-        return f"已备份 {user_id} 的全部记忆。", str(path)
+        return localize_status_text(f"已备份全部记忆：{user_id}", locale), str(path)
     except Exception as exc:
-        return f"备份记忆失败：{exc}", None
+        return localize_status_text(f"备份记忆失败：{exc}", locale), None
 
 
 def _uploaded_backup_path(file_obj: Any) -> str:
@@ -468,8 +483,8 @@ def restore_memory_from_gui(
                 state,
                 section="all",
                 action="updated",
-                text=f"从 {result['source_user_id']} 恢复全部记忆",
-                reason=f"用户使用 {result['mode']} 模式恢复记忆备份",
+                text=f"恢复全部记忆：来源 {result['source_user_id']}",
+                reason=f"用户从备份恢复记忆，恢复模式：{result['mode']}",
             )
             snapshot = format_memory_snapshot(user_id, state)
             event_log = format_memory_event_log(user_id, state)
@@ -481,7 +496,12 @@ def restore_memory_from_gui(
             f"稳定资料 {counts['stable_profile']}，兴趣 {counts['interest_memory']}。\n"
             "恢复前的记忆已自动备份。"
         )
-        return status, str(safety_backup), snapshot, event_log
+        return (
+            localize_status_text(status, locale),
+            str(safety_backup),
+            localize_status_text(snapshot, locale),
+            localize_status_text(event_log, locale),
+        )
     except Exception as exc:
-        message = f"恢复记忆失败：{exc}"
+        message = localize_status_text(f"恢复记忆失败：{exc}", locale)
         return message, None, message, message

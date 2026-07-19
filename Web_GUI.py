@@ -13,6 +13,7 @@ import gradio as gr
 import gui_runtime_settings as runtime_settings
 
 from app_logging import clear_logs, get_log_text, setup_gui_logging
+from api_usage_store import usage_summary
 import goemotions_local as goemotions
 from conversation_store import ensure_conversation
 from chatbot import (
@@ -223,6 +224,44 @@ def build_status_text(
     ])
 
 
+def build_api_usage_text() -> str:
+    return "请先输入 User ID 和访问密码，然后点击“刷新 API 用量”。"
+
+
+def build_api_usage_text_from_gui(user_id: str, access_key: str, locale: str = "zh-CN") -> str:
+    user_id, auth_error = _authorize_or_message(user_id, access_key)
+    if auth_error:
+        return localize_status_text(auth_error, locale)
+    summary = usage_summary(user_id)
+    today = summary["today"]
+    month = summary["month"]
+    limits = summary["limits"]
+    english = str(locale or "").lower().startswith("en")
+    if english:
+        return "\n".join([
+            "API usage is estimated locally and may differ from your provider invoice.",
+            f"Today: {today['requests']} requests, {today['failures']} failures, ${today['estimated_cost_usd']:.6f}",
+            f"This month: {month['requests']} requests, {month['failures']} failures, ${month['estimated_cost_usd']:.6f}",
+            f"Estimated tokens today: input {today['input_tokens']}, output {today['output_tokens']}",
+            f"Last minute: {summary['requests_last_minute']} requests",
+            f"Request limit: {'disabled' if not limits['requests_per_minute'] else str(limits['requests_per_minute']) + ' / minute'}",
+            f"Daily budget: {'disabled' if not limits['daily_budget_usd'] else '$' + format(limits['daily_budget_usd'], '.4f')}",
+            f"Monthly budget: {'disabled' if not limits['monthly_budget_usd'] else '$' + format(limits['monthly_budget_usd'], '.4f')}",
+            f"Rates per 1M tokens: input ${limits['input_cost_per_1m']:.4f}, output ${limits['output_cost_per_1m']:.4f}",
+        ])
+    return "\n".join([
+        "API 用量为本机估算值，可能与服务商账单存在差异。",
+        f"今日：{today['requests']} 次请求，{today['failures']} 次失败，预计 ${today['estimated_cost_usd']:.6f}",
+        f"本月：{month['requests']} 次请求，{month['failures']} 次失败，预计 ${month['estimated_cost_usd']:.6f}",
+        f"今日估算 Token：输入 {today['input_tokens']}，输出 {today['output_tokens']}",
+        f"最近一分钟：{summary['requests_last_minute']} 次请求",
+        f"请求频率限制：{'未启用' if not limits['requests_per_minute'] else str(limits['requests_per_minute']) + ' 次/分钟'}",
+        f"每日费用限额：{'未启用' if not limits['daily_budget_usd'] else '$' + format(limits['daily_budget_usd'], '.4f')}",
+        f"每月费用限额：{'未启用' if not limits['monthly_budget_usd'] else '$' + format(limits['monthly_budget_usd'], '.4f')}",
+        f"每百万 Token 单价：输入 ${limits['input_cost_per_1m']:.4f}，输出 ${limits['output_cost_per_1m']:.4f}",
+    ])
+
+
 def respond(
     message: str,
     history: list,
@@ -265,6 +304,7 @@ def respond(
         temperature=temperature,
         top_p=top_p,
         max_new_tokens=max_new_tokens,
+        user_id=user_id,
     )
     partial = ""
     yielded_response = False
@@ -290,10 +330,12 @@ def respond(
                 yield partial, conversation_update
         if show_memory_receipt:
             with session_store.session(user_id) as state:
-                receipt = latest_memory_receipt(state)
+                receipt = localize_status_text(latest_memory_receipt(state), locale)
             yield f"{partial}\n\n---\n{receipt}", conversation_update
         elif not yielded_response:
-            fallback = "模型本次没有返回可显示的文本，请重试；若问题持续出现，请检查运行日志。"
+            fallback = localize_status_text(
+                "模型本次没有返回可显示的文本，请重试；若问题持续出现，请检查运行日志。", locale
+            )
             logger.warning("GUI 收到空对话流。user=%s provider=%s", user_id, config.normalized_provider())
             set_chat_status("模型未返回文本")
             yield fallback, conversation_update
@@ -709,28 +751,35 @@ def preview_knowledge_search(
     top_k: int = KNOWLEDGE_TOP_K,
     threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
     candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
+    locale: str = "zh-CN",
 ) -> str:
-    return format_knowledge_search_diagnostics(query, top_k, threshold, candidate_multiplier)
+    return format_knowledge_search_diagnostics(
+        query, top_k, threshold, candidate_multiplier, locale
+    )
 
 
-def refresh_knowledge_documents_from_gui() -> tuple[Any, str]:
-    names, document_list = refresh_knowledge_document_panel()
+def refresh_knowledge_documents_from_gui(locale: str = "zh-CN") -> tuple[Any, str]:
+    names, document_list = refresh_knowledge_document_panel(locale)
     return gr.update(choices=names, value=None), document_list
 
 
-def import_knowledge_files_and_refresh(files: list[Any] | None) -> tuple[str, Any, str]:
-    status = import_knowledge_files(files)
-    selector, document_list = refresh_knowledge_documents_from_gui()
+def import_knowledge_files_and_refresh(
+    files: list[Any] | None, locale: str = "zh-CN"
+) -> tuple[str, Any, str]:
+    status = localize_status_text(import_knowledge_files(files), locale)
+    selector, document_list = refresh_knowledge_documents_from_gui(locale)
     return status, selector, document_list
 
 
-def delete_knowledge_document_from_gui(name: str) -> tuple[Any, str, str]:
-    names, document_list, status = delete_knowledge_document(name)
+def delete_knowledge_document_from_gui(
+    name: str, locale: str = "zh-CN"
+) -> tuple[Any, str, str]:
+    names, document_list, status = delete_knowledge_document(name, locale)
     return gr.update(choices=names, value=None), document_list, status
 
 
-def clear_knowledge_documents_from_gui() -> tuple[Any, str, str]:
-    names, document_list, status = clear_knowledge_documents()
+def clear_knowledge_documents_from_gui(locale: str = "zh-CN") -> tuple[Any, str, str]:
+    names, document_list, status = clear_knowledge_documents(locale)
     return gr.update(choices=names, value=None), document_list, status
 
 
@@ -1100,6 +1149,7 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
             local_cpu_threads=LOCAL_MODEL_CPU_THREADS,
             build_status_text=build_status_text,
             build_local_runtime_text=build_local_runtime_config_text,
+            build_api_usage_text=build_api_usage_text,
             get_log_text=get_log_text,
         )
 

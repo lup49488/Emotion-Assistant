@@ -32,7 +32,11 @@ from config import (
     LOCAL_MODEL_ALLOW_CPU_OFFLOAD,
     LOCAL_MODEL_GPU_MAX_MEMORY_GB,
     LOCAL_MODEL_CPU_MAX_MEMORY_GB,
+    API_REQUEST_TIMEOUT_SECONDS,
+    API_MAX_RETRIES,
+    API_RETRY_BACKOFF_SECONDS,
 )
+from api_usage_store import check_request_allowed, estimate_input_tokens, estimate_tokens, record_usage
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +147,7 @@ class ModelRuntimeConfig:
     temperature: float = DEFAULT_TEMPERATURE
     top_p: float = DEFAULT_TOP_P
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
+    user_id: str | None = None
 
     def normalized_provider(self) -> str:
         return (self.provider or "local_hf").strip().lower()
@@ -196,6 +201,7 @@ def make_model_config(
     temperature: float = DEFAULT_TEMPERATURE,
     top_p: float = DEFAULT_TOP_P,
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS,
+    user_id: str | None = None,
 ) -> ModelRuntimeConfig:
     return ModelRuntimeConfig(
         provider=provider,
@@ -205,6 +211,7 @@ def make_model_config(
         temperature=float(temperature),
         top_p=float(top_p),
         max_new_tokens=int(max_new_tokens),
+        user_id=user_id,
     )
 
 
@@ -373,28 +380,109 @@ def _stream_openai_compatible(
             "或设置 DEEPSEEK_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / LLM_API_KEY。"
         )
 
+    input_tokens = estimate_input_tokens(full_messages)
+    check_request_allowed(
+        config.user_id,
+        projected_input_tokens=input_tokens,
+        projected_output_tokens=config.max_new_tokens,
+    )
+
     OpenAI = require_openai_client()
     client_kwargs: dict[str, Any] = {"api_key": api_key}
     base_url = config.resolved_base_url()
     if base_url:
         client_kwargs["base_url"] = base_url
+    client_kwargs["timeout"] = API_REQUEST_TIMEOUT_SECONDS
+    # 应用层仅在尚未输出任何 token 时重试，避免 SDK 自动重试造成重复计费。
+    client_kwargs["max_retries"] = 0
     client = OpenAI(**client_kwargs)
+    started = time.perf_counter()
+    chunks: list[str] = []
+    provider = config.normalized_provider()
+    model = config.resolved_model()
 
-    response = client.chat.completions.create(
-        model=config.resolved_model(),
-        messages=full_messages,
-        temperature=config.temperature,
-        top_p=config.top_p,
-        max_tokens=config.max_new_tokens,
-        stream=True,
-    )
-    for event in response:
-        if not event.choices:
-            continue
-        delta = event.choices[0].delta
-        content = getattr(delta, "content", None)
-        if content:
-            yield content
+    for attempt in range(API_MAX_RETRIES + 1):
+        emitted_content = False
+        try:
+            response = client.chat.completions.create(
+                model=model,
+                messages=full_messages,
+                temperature=config.temperature,
+                top_p=config.top_p,
+                max_tokens=config.max_new_tokens,
+                stream=True,
+            )
+            for event in response:
+                if not event.choices:
+                    continue
+                delta = event.choices[0].delta
+                content = getattr(delta, "content", None)
+                if content:
+                    emitted_content = True
+                    chunks.append(content)
+                    yield content
+            record_usage(
+                config.user_id,
+                provider=provider,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
+                duration_ms=int((time.perf_counter() - started) * 1000),
+                success=True,
+            )
+            return
+        except Exception as exc:
+            retryable = _is_retryable_api_error(exc)
+            if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
+                error_kind = _api_error_kind(exc)
+                record_usage(
+                    config.user_id,
+                    provider=provider,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    success=False,
+                    error_kind=error_kind,
+                )
+                raise RuntimeError(f"API 请求失败（{error_kind}）：{exc}") from exc
+            delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
+            logger.warning(
+                "API 请求失败，%.1f 秒后重试。provider=%s model=%s attempt=%s/%s error=%s",
+                delay, provider, model, attempt + 1, API_MAX_RETRIES + 1, exc,
+            )
+            if delay:
+                time.sleep(delay)
+
+
+def _api_error_kind(exc: Exception) -> str:
+    raw_status_code = getattr(exc, "status_code", None)
+    try:
+        status_code = int(raw_status_code) if raw_status_code is not None else None
+    except (TypeError, ValueError):
+        status_code = None
+    text = str(exc).lower()
+    if status_code in {401, 403} or "unauthorized" in text or "authentication" in text:
+        return "authentication"
+    if status_code == 429 or "rate limit" in text or "quota" in text:
+        return "rate_limit"
+    if status_code and int(status_code) >= 500:
+        return "server"
+    if isinstance(exc, TimeoutError) or "timeout" in text or "timed out" in text:
+        return "timeout"
+    if any(word in text for word in ("connection", "network", "dns", "ssl", "proxy")):
+        return "network"
+    return "unknown"
+
+
+def _is_retryable_api_error(exc: Exception) -> bool:
+    try:
+        status_code = int(getattr(exc, "status_code", None))
+    except (TypeError, ValueError):
+        status_code = None
+    if status_code in {408, 409, 429, 500, 502, 503, 504}:
+        return True
+    return _api_error_kind(exc) in {"timeout", "network", "server", "rate_limit"}
 
 
 def stream_model_response(

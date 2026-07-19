@@ -171,11 +171,27 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             collection TEXT PRIMARY KEY CHECK (collection IN ('knowledge', 'style')),
             imported_at TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS api_usage_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            provider TEXT NOT NULL,
+            model TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL DEFAULT 0,
+            output_tokens INTEGER NOT NULL DEFAULT 0,
+            estimated_cost_usd REAL NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            success INTEGER NOT NULL CHECK (success IN (0, 1)),
+            error_kind TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_api_usage_events_user_created
+            ON api_usage_events(user_id, created_at DESC);
         """
     )
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-        (4, _now()),
+        (5, _now()),
     )
 
 

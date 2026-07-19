@@ -97,6 +97,12 @@ def bind_gui_events(
         outputs=ui.local_runtime_status,
         js=sync_locale_js,
     )
+    ui.refresh_api_usage_button.click(
+        fn=callback("build_api_usage_text_from_gui"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],
+        outputs=ui.api_usage_status,
+        js=sync_locale_js,
+    )
     ui.save_access_key_button.click(
         fn=callback("save_access_key_and_status"),
         inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],
@@ -281,28 +287,40 @@ def bind_gui_events(
 
     ui.import_knowledge_button.click(
         fn=callback("import_knowledge_files_and_refresh"),
-        inputs=ui.knowledge_files,
+        inputs=[ui.knowledge_files, ui.locale_probe_input],
         outputs=[ui.knowledge_box, ui.knowledge_document_selector, ui.knowledge_document_box],
     )
     ui.rebuild_knowledge_button.click(fn=callback("rebuild_knowledge_panel"), outputs=ui.knowledge_box)
     ui.refresh_knowledge_button.click(fn=callback("knowledge_status"), outputs=ui.knowledge_box)
     ui.preview_knowledge_button.click(
         fn=callback("preview_knowledge_search"),
-        inputs=[ui.knowledge_query, ui.knowledge_top_k, ui.knowledge_threshold, ui.knowledge_candidate_multiplier],
+        inputs=[
+            ui.knowledge_query,
+            ui.knowledge_top_k,
+            ui.knowledge_threshold,
+            ui.knowledge_candidate_multiplier,
+            ui.locale_probe_input,
+        ],
         outputs=ui.knowledge_box,
     )
-    ui.inspect_knowledge_quality_button.click(fn=callback("format_knowledge_quality_report"), outputs=ui.knowledge_box)
+    ui.inspect_knowledge_quality_button.click(
+        fn=callback("format_knowledge_quality_report"),
+        inputs=ui.locale_probe_input,
+        outputs=ui.knowledge_box,
+    )
     ui.refresh_knowledge_documents_button.click(
         fn=callback("refresh_knowledge_documents_from_gui"),
+        inputs=ui.locale_probe_input,
         outputs=[ui.knowledge_document_selector, ui.knowledge_document_box],
     )
     ui.delete_knowledge_document_button.click(
         fn=callback("delete_knowledge_document_from_gui"),
-        inputs=ui.knowledge_document_selector,
+        inputs=[ui.knowledge_document_selector, ui.locale_probe_input],
         outputs=[ui.knowledge_document_selector, ui.knowledge_document_box, ui.knowledge_box],
     )
     ui.clear_knowledge_documents_button.click(
         fn=callback("clear_knowledge_documents_from_gui"),
+        inputs=ui.locale_probe_input,
         outputs=[ui.knowledge_document_selector, ui.knowledge_document_box, ui.knowledge_box],
     )
     ui.import_style_button.click(fn=callback("import_style_files"), inputs=ui.style_files, outputs=ui.style_box)
