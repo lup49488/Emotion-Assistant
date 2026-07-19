@@ -50,13 +50,13 @@ def bind_gui_events(
             ui.status_box, ui.connection_result, ui.connection_detail_result,
             ui.save_model_config_result, ui.local_runtime_status, ui.local_runtime_save_result,
             ui.login_status_box, ui.access_key_status, ui.export_user_data_status,
-            ui.admin_recovery_status_box, ui.locale_probe_input,
+            ui.privacy_status_box, ui.admin_recovery_status_box, ui.locale_probe_input,
         ],
         outputs=[
             ui.status_box, ui.connection_result, ui.connection_detail_result,
             ui.save_model_config_result, ui.local_runtime_status, ui.local_runtime_save_result,
             ui.login_status_box, ui.access_key_status, ui.export_user_data_status,
-            ui.admin_recovery_status_box, ui.locale_probe_input,
+            ui.privacy_status_box, ui.admin_recovery_status_box, ui.locale_probe_input,
         ],
         js=sync_locale_js,
         show_progress="hidden",
@@ -131,6 +131,18 @@ def bind_gui_events(
         fn=callback("export_user_data_from_gui"),
         inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],
         outputs=[ui.export_user_data_status, ui.export_user_data_file],
+        js=sync_locale_js,
+    )
+    ui.refresh_privacy_button.click(
+        fn=callback("privacy_summary_from_gui"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.locale_probe_input],
+        outputs=ui.privacy_status_box,
+        js=sync_locale_js,
+    )
+    ui.delete_all_user_data_button.click(
+        fn=callback("delete_all_user_data_from_gui"),
+        inputs=[ui.user_id_input, ui.access_key_input, ui.privacy_delete_confirmation, ui.locale_probe_input],
+        outputs=[ui.privacy_status_box, ui.access_key_input, ui.login_status_box],
         js=sync_locale_js,
     )
     ui.refresh_conversations_button.click(
@@ -290,8 +302,16 @@ def bind_gui_events(
         inputs=[ui.knowledge_files, ui.locale_probe_input],
         outputs=[ui.knowledge_box, ui.knowledge_document_selector, ui.knowledge_document_box],
     )
-    ui.rebuild_knowledge_button.click(fn=callback("rebuild_knowledge_panel"), outputs=ui.knowledge_box)
-    ui.refresh_knowledge_button.click(fn=callback("knowledge_status"), outputs=ui.knowledge_box)
+    ui.rebuild_knowledge_button.click(
+        fn=callback("rebuild_knowledge_panel"),
+        inputs=ui.locale_probe_input,
+        outputs=ui.knowledge_box,
+    )
+    ui.refresh_knowledge_button.click(
+        fn=callback("knowledge_status_from_gui"),
+        inputs=ui.locale_probe_input,
+        outputs=ui.knowledge_box,
+    )
     ui.preview_knowledge_button.click(
         fn=callback("preview_knowledge_search"),
         inputs=[
@@ -308,6 +328,19 @@ def bind_gui_events(
         inputs=ui.locale_probe_input,
         outputs=ui.knowledge_box,
     )
+    ui.import_rag_evaluation_button.click(
+        fn=callback("import_rag_evaluation_cases"),
+        inputs=[ui.rag_evaluation_file, ui.locale_probe_input],
+        outputs=ui.rag_evaluation_box,
+    )
+    ui.run_rag_evaluation_button.click(
+        fn=callback("run_rag_evaluation_from_gui"),
+        inputs=[
+            ui.knowledge_top_k, ui.knowledge_threshold,
+            ui.knowledge_candidate_multiplier, ui.locale_probe_input,
+        ],
+        outputs=ui.rag_evaluation_box,
+    )
     ui.refresh_knowledge_documents_button.click(
         fn=callback("refresh_knowledge_documents_from_gui"),
         inputs=ui.locale_probe_input,
@@ -323,7 +356,30 @@ def bind_gui_events(
         inputs=ui.locale_probe_input,
         outputs=[ui.knowledge_document_selector, ui.knowledge_document_box, ui.knowledge_box],
     )
-    ui.import_style_button.click(fn=callback("import_style_files"), inputs=ui.style_files, outputs=ui.style_box)
-    ui.rebuild_style_button.click(fn=callback("rebuild_style_panel"), outputs=ui.style_box)
-    ui.refresh_style_button.click(fn=callback("style_status"), outputs=ui.style_box)
-    ui.preview_style_button.click(fn=callback("preview_style_search"), inputs=ui.style_query, outputs=ui.style_box)
+    ui.import_style_button.click(
+        fn=callback("import_style_files"),
+        inputs=[ui.style_files, ui.locale_probe_input],
+        outputs=ui.style_box,
+    )
+    ui.rebuild_style_button.click(
+        fn=callback("rebuild_style_panel"),
+        inputs=ui.locale_probe_input,
+        outputs=ui.style_box,
+    )
+    ui.refresh_style_button.click(
+        fn=callback("style_status_from_gui"),
+        inputs=ui.locale_probe_input,
+        outputs=ui.style_box,
+    )
+    ui.preview_style_button.click(
+        fn=callback("preview_style_search"),
+        inputs=[ui.style_query, ui.locale_probe_input],
+        outputs=ui.style_box,
+    )
+    ui.demo.load(
+        fn=callback("load_rag_status_panels"),
+        inputs=ui.locale_probe_input,
+        outputs=[ui.knowledge_box, ui.style_box, ui.rag_evaluation_box],
+        js=sync_locale_js,
+        show_progress="hidden",
+    )

@@ -65,6 +65,6 @@ def test_request_limit_blocks_before_remote_call(tmp_path, monkeypatch):
     try:
         api_usage_store.check_request_allowed("alice", projected_input_tokens=1, projected_output_tokens=1)
     except RuntimeError as exc:
-        assert "每分钟" in str(exc)
+        assert "次/分钟" in str(exc)
     else:
         raise AssertionError("Expected the configured request limit to block the call")

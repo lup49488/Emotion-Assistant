@@ -11,6 +11,7 @@ from knowledge_store import (
     list_document_details,
     knowledge_status,
 )
+from rag_evaluation_store import import_evaluation_cases, latest_evaluation_report, run_evaluation
 
 
 def format_knowledge_quality_report(locale: str = "zh-CN") -> str:
@@ -129,3 +130,67 @@ def clear_knowledge_documents(locale: str = "zh-CN") -> tuple[list[str], str, st
         message = localize_status_text(f"清空失败：{exc}", locale) + "\n\n" + format_knowledge_document_list(locale)
     names, document_list = refresh_knowledge_document_panel(locale)
     return names, document_list, message
+
+
+def import_rag_evaluation_cases(file_obj: Any, locale: str = "zh-CN") -> str:
+    if not file_obj:
+        return localize_status_text("请先选择 RAG 评估集文件。", locale)
+    try:
+        path = getattr(file_obj, "name", None) or getattr(file_obj, "path", None) or str(file_obj)
+        result = import_evaluation_cases(path)
+    except Exception as exc:
+        return localize_status_text(f"导入 RAG 评估集失败：{exc}", locale)
+    return localize_status_text(f"RAG 评估集已导入：{result['cases']} 条样本。", locale)
+
+
+def format_rag_evaluation_report(report: dict[str, Any] | None, locale: str = "zh-CN") -> str:
+    english = str(locale or "").lower().startswith("en")
+    if not report:
+        return "No RAG evaluation has been run." if english else "尚未运行 RAG 评估。"
+    settings = report["settings"]
+    not_available = "n/a" if english else "不适用"
+    if english:
+        lines = [
+            f"Latest run: {report['created_at']}",
+            f"Settings: Top K={settings['top_k']}, threshold={settings['threshold']:.2f}, candidate multiplier={settings['candidate_multiplier']}",
+            f"Overall pass rate: {report['passed_cases']}/{report['total_cases']} ({report['pass_rate']:.1f}%)",
+            f"Source recall@K: {report['source_hits']}/{report['source_cases']} ({report['source_recall_at_k'] if report['source_recall_at_k'] is not None else not_available}%)",
+            f"MRR: {report['mrr'] if report['mrr'] is not None else not_available}",
+            f"Keyword coverage: {report['keyword_hits']}/{report['keyword_cases']} ({report['keyword_coverage'] if report['keyword_coverage'] is not None else not_available}%)",
+        ]
+    else:
+        lines = [
+            f"最近评估：{report['created_at']}",
+            f"参数：Top K={settings['top_k']}，阈值={settings['threshold']:.2f}，候选池倍数={settings['candidate_multiplier']}",
+            f"总体通过率：{report['passed_cases']}/{report['total_cases']} ({report['pass_rate']:.1f}%)",
+            f"来源召回率@K：{report['source_hits']}/{report['source_cases']} ({report['source_recall_at_k'] if report['source_recall_at_k'] is not None else not_available}%)",
+            f"MRR：{report['mrr'] if report['mrr'] is not None else not_available}",
+            f"关键词覆盖率：{report['keyword_hits']}/{report['keyword_cases']} ({report['keyword_coverage'] if report['keyword_coverage'] is not None else not_available}%)",
+        ]
+    failures = report.get("failures") or []
+    if failures:
+        lines.append("Failed samples:" if english else "失败样本：")
+        for item in failures[:5]:
+            returned = ", ".join(item.get("returned_sources") or []) or ("none" if english else "无")
+            lines.append(f"- {item['query'][:100]} | {'returned' if english else '返回'}: {returned}")
+    return "\n".join(lines)
+
+
+def run_rag_evaluation_from_gui(
+    top_k: int, threshold: float, candidate_multiplier: int, locale: str = "zh-CN"
+) -> str:
+    try:
+        report = run_evaluation(
+            top_k=int(top_k), threshold=float(threshold), candidate_multiplier=int(candidate_multiplier),
+        )
+    except Exception as exc:
+        return localize_status_text(f"运行 RAG 评估失败：{exc}", locale)
+    return format_rag_evaluation_report(report, locale)
+
+
+def latest_rag_evaluation_report(locale: str = "zh-CN") -> str:
+    # 该函数用作报告框的启动初始值：报告文件损坏或缺键时绝不能让整个应用启动失败。
+    try:
+        return format_rag_evaluation_report(latest_evaluation_report(), locale)
+    except Exception as exc:
+        return localize_status_text(f"读取 RAG 评估报告失败：{exc}", locale)

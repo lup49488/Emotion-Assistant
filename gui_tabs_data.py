@@ -13,6 +13,10 @@ class DataTabComponents:
     export_user_data_button: Any
     export_user_data_status: Any
     export_user_data_file: Any
+    privacy_status_box: Any
+    refresh_privacy_button: Any
+    privacy_delete_confirmation: Any
+    delete_all_user_data_button: Any
     admin_recovery_group: Any
     admin_recovery_key_input: Any
     admin_new_access_key_input: Any
@@ -65,6 +69,16 @@ def build_data_tab(
                 label=tr("数据导出状态"), value=tr("尚未导出。"), lines=3, interactive=False
             )
             export_user_data_file = gr.File(label=tr("导出的用户数据"), interactive=False)
+            with gr.Accordion(tr("数据与隐私"), open=False):
+                privacy_status_box = gr.Textbox(
+                    label=tr("数据与隐私状态"), value=tr("登录后可查看当前用户的数据范围。"),
+                    lines=9, interactive=False,
+                )
+                refresh_privacy_button = gr.Button(tr("刷新数据概览"))
+                privacy_delete_confirmation = gr.Textbox(
+                    label=tr("删除确认"), placeholder=tr("输入 DELETE 后永久删除当前用户全部数据"),
+                )
+                delete_all_user_data_button = gr.Button(tr("永久删除当前用户数据"), variant="stop")
             with gr.Column(visible=False) as admin_recovery_group:
                 with gr.Accordion(tr("管理员恢复"), open=False):
                     admin_recovery_key_input = gr.Textbox(
@@ -151,7 +165,8 @@ def build_data_tab(
 
     return DataTabComponents(
         new_access_key_input, change_access_key_button, export_user_data_button,
-        export_user_data_status, export_user_data_file, admin_recovery_group,
+        export_user_data_status, export_user_data_file, privacy_status_box, refresh_privacy_button,
+        privacy_delete_confirmation, delete_all_user_data_button, admin_recovery_group,
         admin_recovery_key_input, admin_new_access_key_input, admin_recovery_button,
         admin_recovery_status_box, stable_profile_input, add_stable_profile_button,
         load_stable_profile_button, stable_profile_box, stable_advanced_controls,

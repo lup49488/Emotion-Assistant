@@ -9,6 +9,7 @@ import gui_memory
 import session_store
 import chatbot
 import Web_GUI
+from gui_model_options import PROVIDER_CHOICES
 from gui_i18n import EN_TRANSLATIONS, localize_status_text
 from gui_auth import authorize_or_message
 from onboarding_store import onboarding_completed
@@ -116,6 +117,11 @@ def test_test_model_connection_reports_missing_api_key():
 
     assert result.startswith("[配置错误]")
     assert "API Key" in result
+
+
+def test_gui_provider_choices_hide_local_hf():
+    assert "local_hf" not in PROVIDER_CHOICES
+    assert "deepseek" in PROVIDER_CHOICES
 
 
 def test_test_model_connection_api_success():
@@ -714,3 +720,54 @@ def test_knowledge_search_diagnostics_prompt_is_english():
     message = gui_knowledge.format_knowledge_search_diagnostics("", 4, 0.35, 3, "en")
 
     assert message == "Enter a retrieval question."
+
+
+def test_rag_status_panels_are_english_under_english_locale():
+    knowledge, style, evaluation = Web_GUI.load_rag_status_panels("en")
+
+    assert "Documents: " in knowledge
+    assert "Chunks: " in knowledge
+    assert "Index status: " in knowledge
+    assert "文档数：" not in knowledge
+    assert "Style documents: " in style
+    assert "Style chunks: " in style
+    assert "风格文档数：" not in style
+    assert evaluation == "No RAG evaluation has been run."
+
+
+def test_rag_status_panels_stay_chinese_by_default():
+    knowledge, style, evaluation = Web_GUI.load_rag_status_panels("zh-CN")
+
+    assert "文档数：" in knowledge
+    assert "索引状态：" in knowledge
+    assert "风格文档数：" in style
+    assert evaluation == "尚未运行 RAG 评估。"
+
+
+def test_style_import_prompt_and_preview_are_english_under_english_locale():
+    import_message = Web_GUI.import_style_files(None, "en")
+    preview_message = Web_GUI.preview_style_search("", "en")
+
+    assert import_message.startswith("Select style files to import first.")
+    assert "请先选择" not in import_message
+    assert preview_message == "Enter a retrieval question or the current conversation intent."
+
+
+def test_chat_error_bubble_is_localized_under_english_locale(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    Web_GUI.save_access_key_from_gui("i18n-chat-err", "alice-secret")
+
+    def fake_stream(*args, **kwargs):
+        yield "模型调用失败：API 请求频率已达到本机限制：5 次/分钟"
+
+    with patch.object(Web_GUI, "handle_user_message_stream", fake_stream), \
+         patch.object(Web_GUI, "ensure_conversation", return_value={"id": "conv-1"}), \
+         patch.object(Web_GUI, "conversation_choices", return_value=[]):
+        outputs = [text for text, _ in Web_GUI.respond(
+            "hi", [], "i18n-chat-err", "alice-secret", False, False, False,
+            "deepseek", "deepseek-chat", "", "key", 0.8, 0.9, 64, "en",
+        )]
+
+    assert outputs[-1] == (
+        "Model call failed: API request rate reached the local limit: 5 requests per minute"
+    )

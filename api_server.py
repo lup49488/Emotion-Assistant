@@ -5,111 +5,262 @@ Run locally with: ``python api_server.py``.
 from __future__ import annotations
 
 import json
+import base64
+import hashlib
+import hmac
+import logging
 import os
 import secrets
 import time
 from collections.abc import Generator
-from dataclasses import dataclass
 from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, Header, HTTPException, status
+from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
+from fastapi.openapi.utils import get_openapi
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 
+from api_contracts import (
+    ApiError,
+    ChatRequest,
+    ChatResponse,
+    ContractInfoResponse,
+    ConversationCreateRequest,
+    ConversationListResponse,
+    ConversationResponse,
+    ExportResponse,
+    HealthResponse,
+    LoginRequest,
+    LoginResponse,
+    MemoryQualityResponse,
+    MemorySnapshotResponse,
+    MoodCheckinListResponse,
+    MoodCheckinRequest,
+    MoodCheckinResponse,
+    PrivacyDeletionResponse,
+    PrivacyDeleteRequest,
+    PrivacyResponse,
+    RagEvaluationRequest,
+    RagEvaluationResponse,
+    RagQualityResponse,
+    RagSearchRequest,
+    RagSearchResponse,
+    RagStatusResponse,
+    SessionResponse,
+    UsageEventsResponse,
+    UsageSummaryResponse,
+    WeeklyMoodResponse,
+)
 from chatbot import handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
+from auth_store import access_key_version
+from api_usage_store import list_usage_events, usage_summary
+from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations
+from export_store import build_user_export_payload
 from gui_auth import authorize
-from mood_store import add_mood_checkin
+from knowledge_store import assess_knowledge_quality, diagnose_knowledge_search, knowledge_status, list_document_details
+from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
+from privacy_store import delete_all_user_data, privacy_summary
+from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from sqlite_store import storage_backend
 
 
-API_SESSION_TTL_SECONDS = int(os.getenv("API_SESSION_TTL_SECONDS", "43200"))
+logger = logging.getLogger(__name__)
 
-
-@dataclass
-class ApiSession:
-    user_id: str
-    expires_at: float
-
-
-_sessions: dict[str, ApiSession] = {}
-
-
-class LoginRequest(BaseModel):
-    user_id: str = Field(min_length=1, max_length=128)
-    access_key: str = Field(min_length=1, max_length=512)
-
-
-class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=20_000)
-    provider: str = "local_hf"
-    model: str | None = None
-    base_url: str | None = None
-    api_key: str | None = None
-    temperature: float = Field(default=0.8, ge=0, le=2)
-    top_p: float = Field(default=0.9, ge=0, le=1)
-    max_new_tokens: int = Field(default=300, ge=1, le=8_192)
-    use_knowledge: bool = False
-    use_style: bool = False
-    show_memory_receipt: bool = True
-    conversation_id: str | None = Field(default=None, max_length=64)
-
-
-class MoodCheckinRequest(BaseModel):
-    mood: str = Field(min_length=1, max_length=100)
-    intensity: int = Field(ge=1, le=5)
-    note: str = Field(default="", max_length=5_000)
-    checkin_date: str | None = None
+API_VERSION = "1.0.0"
+API_CONTRACT_VERSION = "2026-07-19.1"
+API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
+API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
+API_CSRF_COOKIE_NAME = os.getenv("API_CSRF_COOKIE_NAME", "chatbot_csrf").strip() or "chatbot_csrf"
+API_COOKIE_SECURE = os.getenv("API_COOKIE_SECURE", "false").lower() == "true"
+API_COOKIE_SAMESITE = os.getenv("API_COOKIE_SAMESITE", "lax").strip().lower() or "lax"
+if API_COOKIE_SAMESITE not in {"lax", "strict", "none"}:
+    raise RuntimeError("API_COOKIE_SAMESITE 仅支持 lax、strict 或 none。")
+if API_COOKIE_SAMESITE == "none" and not API_COOKIE_SECURE:
+    raise RuntimeError("API_COOKIE_SAMESITE=none 时必须设置 API_COOKIE_SECURE=true。")
+_configured_session_secret = os.getenv("API_SESSION_SECRET", "").strip()
+if _configured_session_secret and len(_configured_session_secret) < 32:
+    raise RuntimeError("API_SESSION_SECRET 至少需要 32 个字符。")
+if not _configured_session_secret:
+    logger.warning("API_SESSION_SECRET 未设置，正在使用进程临时密钥；服务重启后登录 Cookie 会失效。")
+SESSION_SECRET = _configured_session_secret.encode("utf-8") or secrets.token_bytes(32)
 
 
 def _cors_origins() -> list[str]:
     configured = os.getenv("API_CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173")
-    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+    origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    if "*" in origins:
+        raise RuntimeError("使用 Cookie 鉴权时 API_CORS_ORIGINS 不能包含 *。")
+    return origins
 
 
-app = FastAPI(title="Emotion-Aware Chat API", version="1.0.0")
+app = FastAPI(
+    title="Emotion-Aware Chat API",
+    version=API_VERSION,
+    description="Versioned API contract for the Emotion-Aware Chat application.",
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
-    allow_credentials=False,
-    allow_methods=["GET", "POST"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "DELETE"],
+    allow_headers=["Content-Type", "X-CSRF-Token"],
 )
 
 
+def _error_code(status_code: int) -> str:
+    return {
+        401: "authentication_required",
+        403: "csrf_validation_failed",
+        404: "not_found",
+        422: "validation_error",
+    }.get(status_code, "request_failed")
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+    message = exc.detail if isinstance(exc.detail, str) else "Request failed."
+    details = exc.detail if isinstance(exc.detail, list) else None
+    payload = ApiError(code=_error_code(exc.status_code), message=message, details=details)
+    return JSONResponse(status_code=exc.status_code, content=payload.model_dump(exclude_none=True))
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+    payload = ApiError(
+        code="request_validation_error",
+        message="Request validation failed.",
+        details=exc.errors(),
+    )
+    return JSONResponse(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, content=payload.model_dump())
+
+
+def _custom_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(title=app.title, version=app.version, routes=app.routes, description=app.description)
+    schema["info"]["x-contract-version"] = API_CONTRACT_VERSION
+    schema["info"]["x-api-version"] = "v1"
+    app.openapi_schema = schema
+    return schema
+
+
+app.openapi = _custom_openapi
+
+
+def _b64encode(value: bytes) -> str:
+    return base64.urlsafe_b64encode(value).decode("ascii").rstrip("=")
+
+
+def _b64decode(value: str) -> bytes:
+    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
+
+
+def _sign_session(payload: dict[str, Any]) -> str:
+    encoded = _b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signature = hmac.new(SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
+    return f"{encoded}.{_b64encode(signature)}"
+
+
+def _read_signed_session(cookie_value: str) -> dict[str, Any] | None:
+    encoded, separator, encoded_signature = (cookie_value or "").partition(".")
+    if not separator or not encoded or not encoded_signature:
+        return None
+    try:
+        expected = hmac.new(SESSION_SECRET, encoded.encode("ascii"), hashlib.sha256).digest()
+        supplied = _b64decode(encoded_signature)
+        if not hmac.compare_digest(expected, supplied):
+            return None
+        payload = json.loads(_b64decode(encoded).decode("utf-8"))
+        if not isinstance(payload, dict):
+            return None
+        return payload
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        return None
+
+
 def _issue_session(user_id: str) -> tuple[str, int]:
-    token = secrets.token_urlsafe(32)
-    _sessions[token] = ApiSession(user_id=user_id, expires_at=time.time() + API_SESSION_TTL_SECONDS)
-    return token, API_SESSION_TTL_SECONDS
+    credential_version = access_key_version(user_id)
+    if not credential_version:
+        raise RuntimeError("无法读取访问凭据版本。")
+    expires_at = int(time.time()) + API_SESSION_TTL_SECONDS
+    return _sign_session({"sub": user_id, "exp": expires_at, "ver": credential_version}), API_SESSION_TTL_SECONDS
 
 
-def _current_user(authorization: Annotated[str | None, Header()] = None) -> str:
-    scheme, _, token = (authorization or "").partition(" ")
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Bearer token is required.")
-    session = _sessions.get(token)
-    if session is None or session.expires_at <= time.time():
-        _sessions.pop(token, None)
+def _set_session_cookies(response: Response, user_id: str) -> int:
+    token, expires_in = _issue_session(user_id)
+    response.set_cookie(
+        key=API_SESSION_COOKIE_NAME, value=token, max_age=expires_in, path="/",
+        secure=API_COOKIE_SECURE, httponly=True, samesite=API_COOKIE_SAMESITE,
+    )
+    response.set_cookie(
+        key=API_CSRF_COOKIE_NAME, value=secrets.token_urlsafe(24), max_age=expires_in, path="/",
+        secure=API_COOKIE_SECURE, httponly=False, samesite=API_COOKIE_SAMESITE,
+    )
+    return expires_in
+
+
+def _current_user(
+    session_cookie: Annotated[str | None, Cookie(alias=API_SESSION_COOKIE_NAME)] = None,
+) -> str:
+    payload = _read_signed_session(session_cookie or "")
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Signed session cookie is required.")
+    try:
+        user_id = str(payload["sub"])
+        expires_at = int(payload["exp"])
+        credential_version = str(payload["ver"])
+    except (KeyError, TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signed session cookie.") from None
+    if expires_at <= int(time.time()) or access_key_version(user_id) != credential_version:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session is missing or expired.")
-    return session.user_id
+    return user_id
+
+
+def _csrf_protected_user(
+    user_id: CurrentUser,
+    csrf_cookie: Annotated[str | None, Cookie(alias=API_CSRF_COOKIE_NAME)] = None,
+    csrf_token: Annotated[str | None, Header(alias="X-CSRF-Token")] = None,
+) -> str:
+    if not csrf_cookie or not csrf_token or not hmac.compare_digest(csrf_cookie, csrf_token):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="CSRF token is invalid or missing.")
+    return user_id
 
 
 CurrentUser = Annotated[str, Depends(_current_user)]
+CsrfCurrentUser = Annotated[str, Depends(_csrf_protected_user)]
 
 
-@app.get("/health")
+@app.get("/health", response_model=HealthResponse)
 def health() -> dict[str, str]:
     return {"status": "ok", "storage_backend": storage_backend()}
 
 
-@app.post("/api/v1/auth/login")
-def login(request: LoginRequest) -> dict[str, Any]:
+@app.get("/api/v1/contract", response_model=ContractInfoResponse)
+def contract_info() -> dict[str, str]:
+    return {"api_version": "v1", "contract_version": API_CONTRACT_VERSION, "openapi_path": "/openapi.json"}
+
+
+@app.post("/api/v1/auth/login", response_model=LoginResponse)
+def login(request: LoginRequest, response: Response) -> dict[str, Any]:
     user_id, auth_error = authorize(request.user_id, request.access_key)
     if auth_error:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=auth_error)
-    token, expires_in = _issue_session(user_id)
-    return {"access_token": token, "token_type": "bearer", "expires_in": expires_in, "user_id": user_id}
+    expires_in = _set_session_cookies(response, user_id)
+    return {"token_type": "cookie", "expires_in": expires_in, "user_id": user_id}
+
+
+@app.post("/api/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(response: Response, _: CsrfCurrentUser) -> None:
+    cookie_settings = {"path": "/", "secure": API_COOKIE_SECURE, "samesite": API_COOKIE_SAMESITE}
+    response.delete_cookie(API_SESSION_COOKIE_NAME, httponly=True, **cookie_settings)
+    response.delete_cookie(API_CSRF_COOKIE_NAME, **cookie_settings)
+
+
+@app.get("/api/v1/auth/session", response_model=SessionResponse)
+def session_info(user_id: CurrentUser) -> dict[str, str]:
+    return {"user_id": user_id, "authentication": "signed_cookie"}
 
 
 def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, None]:
@@ -133,8 +284,8 @@ def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, Non
     )
 
 
-@app.post("/api/v1/chat")
-def chat(request: ChatRequest, user_id: CurrentUser) -> dict[str, str]:
+@app.post("/api/v1/chat", response_model=ChatResponse)
+def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, str]:
     reply = "".join(_chat_chunks(user_id, request))
     payload = {"reply": reply}
     if request.show_memory_receipt:
@@ -148,8 +299,17 @@ def _memory_receipt(user_id: str) -> str:
         return latest_memory_receipt(state)
 
 
-@app.post("/api/v1/chat/stream")
-async def chat_stream(request: ChatRequest, user_id: CurrentUser) -> StreamingResponse:
+@app.post(
+    "/api/v1/chat/stream",
+    response_class=StreamingResponse,
+    responses={
+        200: {
+            "description": "Server-sent events: `chunk` ({text}), optional `receipt` ({text}), then `done` ({}). On generation failure emits `error` ({code, message}).",
+            "content": {"text/event-stream": {}},
+        }
+    },
+)
+async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> StreamingResponse:
     async def event_source():
         try:
             # The chat generator does blocking model inference; iterate it in a
@@ -161,22 +321,23 @@ async def chat_stream(request: ChatRequest, user_id: CurrentUser) -> StreamingRe
                 yield f"event: receipt\ndata: {json.dumps({'text': receipt}, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
         except Exception as exc:
-            yield f"event: error\ndata: {json.dumps({'detail': str(exc)}, ensure_ascii=False)}\n\n"
+            error = ApiError(code="generation_failed", message=str(exc))
+            yield f"event: error\ndata: {error.model_dump_json()}\n\n"
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 
 
-@app.get("/api/v1/memory/quality")
+@app.get("/api/v1/memory/quality", response_model=MemoryQualityResponse)
 def memory_quality(user_id: CurrentUser) -> dict[str, str]:
-    # The bearer token has already authenticated the user.
+    # The signed session cookie has already authenticated the user.
     with session_store.session(user_id) as state:
         from gui_memory import build_memory_quality_report
 
         return {"report": build_memory_quality_report(user_id, state)}
 
 
-@app.post("/api/v1/mood/checkins")
-def create_mood_checkin(request: MoodCheckinRequest, user_id: CurrentUser) -> dict[str, Any]:
+@app.post("/api/v1/mood/checkins", response_model=MoodCheckinResponse)
+def create_mood_checkin(request: MoodCheckinRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
     try:
         record = add_mood_checkin(
             user_id=user_id,
@@ -188,6 +349,136 @@ def create_mood_checkin(request: MoodCheckinRequest, user_id: CurrentUser) -> di
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return {"record": record}
+
+
+@app.get("/api/v1/mood/checkins", response_model=MoodCheckinListResponse)
+def list_mood_records(user_id: CurrentUser) -> dict[str, Any]:
+    return {"records": load_mood_checkins(user_id)}
+
+
+@app.delete("/api/v1/mood/checkins/{checkin_date}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_mood_checkin(checkin_date: str, user_id: CsrfCurrentUser) -> None:
+    try:
+        deleted = delete_mood_checkin(user_id, checkin_date)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Mood check-in was not found.")
+
+
+@app.get("/api/v1/mood/weekly", response_model=WeeklyMoodResponse)
+def weekly_mood(
+    user_id: CurrentUser,
+    end_date: str | None = None,
+    days: int = Query(default=7, ge=1, le=31),
+) -> dict[str, Any]:
+    try:
+        points = get_weekly_mood_points(user_id, end_date=end_date, days=days)
+        return {
+            "points": points,
+            "summary": format_weekly_mood_summary(user_id, end_date=end_date, days=days),
+            "analysis": format_mood_fluctuation_analysis(points),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/conversations", response_model=ConversationListResponse)
+def conversations(user_id: CurrentUser) -> dict[str, Any]:
+    return {"conversations": list_conversations(user_id)}
+
+
+@app.post("/api/v1/conversations", response_model=ConversationResponse)
+def new_conversation(request: ConversationCreateRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    return {"conversation": create_conversation(user_id, request.title)}
+
+
+@app.get("/api/v1/conversations/{conversation_id}", response_model=ConversationResponse)
+def conversation(conversation_id: str, user_id: CurrentUser) -> dict[str, Any]:
+    result = get_conversation(user_id, conversation_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Conversation was not found.")
+    return {"conversation": result}
+
+
+@app.delete("/api/v1/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_conversation(conversation_id: str, user_id: CsrfCurrentUser) -> None:
+    if not delete_conversation(user_id, conversation_id):
+        raise HTTPException(status_code=404, detail="Conversation was not found.")
+
+
+@app.get("/api/v1/memory", response_model=MemorySnapshotResponse)
+def memory_snapshot(user_id: CurrentUser) -> dict[str, Any]:
+    with session_store.session(user_id) as state:
+        return {
+            "history": list(state.history),
+            "emotion_memory": list(state.emotion_memory),
+            "long_memory": list(state.long_memory),
+            "stable_profile": list(state.stable_profile),
+            "interest_memory": list(state.interest_store.items),
+            "memory_events": list(state.memory_events),
+        }
+
+
+@app.get("/api/v1/rag/status", response_model=RagStatusResponse)
+def rag_status(_: CurrentUser) -> dict[str, Any]:
+    return {"status": knowledge_status(), "documents": list_document_details()}
+
+
+@app.get("/api/v1/rag/quality", response_model=RagQualityResponse)
+def rag_quality(_: CurrentUser) -> dict[str, Any]:
+    return assess_knowledge_quality()
+
+
+@app.post("/api/v1/rag/search", response_model=RagSearchResponse)
+def rag_search(request: RagSearchRequest, _: CsrfCurrentUser) -> dict[str, Any]:
+    return diagnose_knowledge_search(
+        request.query, top_k=request.top_k, threshold=request.threshold,
+        candidate_multiplier=request.candidate_multiplier,
+    )
+
+
+@app.get("/api/v1/rag/evaluations/latest", response_model=RagEvaluationResponse)
+def rag_latest_evaluation(_: CurrentUser) -> dict[str, Any]:
+    return {"report": latest_evaluation_report()}
+
+
+@app.post("/api/v1/rag/evaluations/run", response_model=RagEvaluationResponse)
+def rag_run_evaluation(request: RagEvaluationRequest, _: CsrfCurrentUser) -> dict[str, Any]:
+    try:
+        return {"report": run_evaluation(
+            top_k=request.top_k, threshold=request.threshold,
+            candidate_multiplier=request.candidate_multiplier,
+        )}
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.get("/api/v1/usage", response_model=UsageSummaryResponse)
+def api_usage(user_id: CurrentUser) -> dict[str, Any]:
+    return usage_summary(user_id)
+
+
+@app.get("/api/v1/usage/events", response_model=UsageEventsResponse)
+def api_usage_event_list(user_id: CurrentUser, limit: int = Query(default=100, ge=1, le=1000)) -> dict[str, Any]:
+    return {"events": list_usage_events(user_id, limit=limit)}
+
+
+@app.get("/api/v1/privacy", response_model=PrivacyResponse)
+def privacy(user_id: CurrentUser) -> dict[str, Any]:
+    return privacy_summary(user_id)
+
+
+@app.get("/api/v1/export", response_model=ExportResponse)
+def export_data(user_id: CurrentUser) -> dict[str, Any]:
+    return build_user_export_payload(user_id)
+
+
+@app.delete("/api/v1/privacy/data", response_model=PrivacyDeletionResponse)
+def delete_privacy_data(request: PrivacyDeleteRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    if request.confirmation.strip() != "DELETE":
+        raise HTTPException(status_code=422, detail="Confirmation must be DELETE.")
+    return {"deleted": delete_all_user_data(user_id)}
 
 
 def main() -> None:

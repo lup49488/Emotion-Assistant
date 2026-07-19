@@ -49,7 +49,6 @@ def build_advanced_tab(
     local_cpu_threads: int,
     build_status_text: Callable[[str, str, str], str],
     build_local_runtime_text: Callable[[str, str, bool, bool, int], str],
-    build_api_usage_text: Callable[[], str],
     get_log_text: Callable[[], str],
 ) -> AdvancedTabComponents:
     """Render the advanced runtime and diagnostic controls."""
@@ -107,7 +106,10 @@ def build_advanced_tab(
 
         with gr.Accordion(tr("API 稳定性与成本"), open=False):
             api_usage_status = gr.Textbox(
-                label=tr("当前 API 用量与限额"), value=build_api_usage_text, lines=11, interactive=False
+                label=tr("当前 API 用量与限额"),
+                value=tr("请先输入 User ID 和访问密码，然后点击“刷新 API 用量”。"),
+                lines=11,
+                interactive=False,
             )
             refresh_api_usage_button = gr.Button(tr("刷新 API 用量"))
 

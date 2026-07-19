@@ -6,7 +6,6 @@ from config import DEFAULT_API_BASE_URL, DEFAULT_API_MODEL
 
 
 PROVIDER_CHOICES = [
-    "local_hf",
     "deepseek",
     "openai",
     "openrouter",

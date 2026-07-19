@@ -20,6 +20,10 @@ class KnowledgeTabComponents:
     rebuild_knowledge_button: Any
     preview_knowledge_button: Any
     inspect_knowledge_quality_button: Any
+    rag_evaluation_file: Any
+    import_rag_evaluation_button: Any
+    run_rag_evaluation_button: Any
+    rag_evaluation_box: Any
     knowledge_document_selector: Any
     refresh_knowledge_documents_button: Any
     delete_knowledge_document_button: Any
@@ -45,6 +49,7 @@ def build_knowledge_tab(
     style_status: Callable[[], str],
     refresh_document_panel: Callable[[], tuple[list[str], str]],
     format_document_list: Callable[[], str],
+    latest_rag_evaluation_report: Callable[[], str],
 ) -> KnowledgeTabComponents:
     """Render RAG and style-library controls; event wiring stays external."""
     with gr.Tab(tr("tab_knowledge"), id="knowledge"):
@@ -78,6 +83,17 @@ def build_knowledge_tab(
                     rebuild_knowledge_button = gr.Button(tr("重建索引"))
                     preview_knowledge_button = gr.Button(tr("检索质量诊断"))
                     inspect_knowledge_quality_button = gr.Button(tr("检查知识库质量"))
+                with gr.Accordion(tr("RAG 评估"), open=False):
+                    rag_evaluation_file = gr.File(
+                        label=tr("RAG 评估集"), file_count="single", file_types=[".json", ".jsonl"],
+                    )
+                    with gr.Row():
+                        import_rag_evaluation_button = gr.Button(tr("导入评估集"))
+                        run_rag_evaluation_button = gr.Button(tr("运行 RAG 评估"))
+                    rag_evaluation_box = gr.Textbox(
+                        label=tr("RAG 评估报告"), value=latest_rag_evaluation_report,
+                        lines=14, interactive=False
+                    )
                 with gr.Accordion(tr("RAG 文档管理"), open=False):
                     knowledge_document_selector = gr.Dropdown(
                         label=tr("已入库文档"), choices=refresh_document_panel()[0],
@@ -114,7 +130,9 @@ def build_knowledge_tab(
         knowledge_files_component, import_knowledge_button, refresh_knowledge_button,
         knowledge_query, knowledge_box, knowledge_advanced_controls, knowledge_top_k_input,
         knowledge_threshold_input, knowledge_candidate_multiplier_input, rebuild_knowledge_button,
-        preview_knowledge_button, inspect_knowledge_quality_button, knowledge_document_selector,
+        preview_knowledge_button, inspect_knowledge_quality_button, rag_evaluation_file,
+        import_rag_evaluation_button, run_rag_evaluation_button, rag_evaluation_box,
+        knowledge_document_selector,
         refresh_knowledge_documents_button, delete_knowledge_document_button,
         clear_knowledge_documents_button, knowledge_document_box, style_files,
         import_style_button, refresh_style_button, style_query, preview_style_button,

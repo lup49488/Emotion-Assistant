@@ -23,6 +23,25 @@ def _isolate_storage_backend(monkeypatch):
     monkeypatch.delenv("SQLITE_DATABASE_PATH", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _reset_session_cache():
+    """chatbot.session_store 是进程级单例，会把每个用户的 SessionState 缓存在内存里。
+
+    测试通常只把 session_store.USERS_DIR 指到 tmp_path，但内存缓存不会跟着清空，
+    导致一个测试写入的用户状态（对话、稳定资料等）泄漏到之后的测试。
+    这里在每个测试结束后清空缓存，保证测试之间互不影响。
+    """
+    yield
+    chatbot_module = sys.modules.get("chatbot")
+    store = getattr(chatbot_module, "session_store", None)
+    if store is None:
+        return
+    with store._registry_lock:
+        store._sessions.clear()
+        store._active_counts.clear()
+        store._locks.clear()
+
+
 def _install_stub(name: str, **attrs):
     """如果模块未安装，则注册一个同名 stub 到 sys.modules。"""
     if name in sys.modules:

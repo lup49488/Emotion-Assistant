@@ -185,11 +185,11 @@ def check_request_allowed(user_id: str | None, *, projected_input_tokens: int, p
     limits = summary["limits"]
     rpm = int(limits["requests_per_minute"])
     if rpm and summary["requests_last_minute"] >= rpm:
-        raise RuntimeError(f"API 请求频率已达到本机限制：每分钟最多 {rpm} 次。")
+        raise RuntimeError(f"API 请求频率已达到本机限制：{rpm} 次/分钟")
     projected_cost = estimate_cost_usd(projected_input_tokens, projected_output_tokens)
     daily_limit = float(limits["daily_budget_usd"])
     if daily_limit and summary["today"]["estimated_cost_usd"] + projected_cost > daily_limit:
-        raise RuntimeError(f"API 今日预计费用将超过本机限额 ${daily_limit:.4f}。")
+        raise RuntimeError(f"API 今日预计费用将超过本机限额 ${daily_limit:.4f}")
     monthly_limit = float(limits["monthly_budget_usd"])
     if monthly_limit and summary["month"]["estimated_cost_usd"] + projected_cost > monthly_limit:
-        raise RuntimeError(f"API 本月预计费用将超过本机限额 ${monthly_limit:.4f}。")
+        raise RuntimeError(f"API 本月预计费用将超过本机限额 ${monthly_limit:.4f}")

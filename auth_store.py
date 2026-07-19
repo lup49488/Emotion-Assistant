@@ -176,6 +176,18 @@ def has_access_key(user_id: str) -> bool:
     return _auth_path(user_id).exists()
 
 
+def access_key_version(user_id: str) -> str | None:
+    """Return the credential update marker used to invalidate signed web sessions."""
+    user_id = validate_user_id(user_id)
+    if sqlite_enabled():
+        with user_file_lock(user_id):
+            record = _sqlite_record(user_id)
+    else:
+        with user_file_lock(user_id):
+            record = _read_record(user_id)
+    return str(record.get("updated_at", "")) if record else None
+
+
 def verify_access(user_id: str, passphrase: str) -> tuple[bool, str]:
     """
     首次访问某个 user_id 时会用当前输入的密码为它建立访问密钥；

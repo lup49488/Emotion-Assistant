@@ -65,6 +65,7 @@ from gui_tabs_advanced import build_advanced_tab
 from gui_tabs_data import build_data_tab
 from gui_tabs_knowledge import build_knowledge_tab
 from export_store import export_user_data
+from privacy_store import delete_all_user_data, privacy_summary
 from gui_memory import (
     MEMORY_SECTION_LABELS,
     clear_memory_section,
@@ -96,6 +97,9 @@ from gui_knowledge import (
     format_knowledge_document_list,
     format_knowledge_quality_report,
     format_knowledge_search_diagnostics,
+    import_rag_evaluation_cases,
+    latest_rag_evaluation_report,
+    run_rag_evaluation_from_gui,
     refresh_knowledge_document_panel,
 )
 from gui_mood import (
@@ -224,10 +228,6 @@ def build_status_text(
     ])
 
 
-def build_api_usage_text() -> str:
-    return "请先输入 User ID 和访问密码，然后点击“刷新 API 用量”。"
-
-
 def build_api_usage_text_from_gui(user_id: str, access_key: str, locale: str = "zh-CN") -> str:
     user_id, auth_error = _authorize_or_message(user_id, access_key)
     if auth_error:
@@ -328,6 +328,10 @@ def respond(
                 partial += chunk
                 yielded_response = True
                 yield partial, conversation_update
+        if partial.startswith("模型调用失败："):
+            # 整条内容是错误提示而非模型输出，替换为当前语言的版本。
+            partial = localize_status_text(partial, locale)
+            yield partial, conversation_update
         if show_memory_receipt:
             with session_store.session(user_id) as state:
                 receipt = localize_status_text(latest_memory_receipt(state), locale)
@@ -342,7 +346,7 @@ def respond(
         set_chat_status("回复完成")
     except Exception as exc:
         set_chat_status(f"请求失败：{exc}")
-        yield f"请求失败：{exc}", conversation_update
+        yield localize_status_text(f"请求失败：{exc}", locale), conversation_update
 
 
 def provider_changed(provider: str, api_key: str = "", locale: str = "zh-CN"):
@@ -456,6 +460,56 @@ def export_user_data_from_gui(
         return localize_status_text(f"已导出 {user_id} 的用户数据：{path}", locale), str(path)
     except Exception as exc:
         return localize_status_text(f"导出用户数据失败：{exc}", locale), None
+
+
+def privacy_summary_from_gui(user_id: str, access_key: str, locale: str = "zh-CN") -> str:
+    user_id, auth_error = _authorize_or_message(user_id, access_key)
+    if auth_error:
+        return localize_status_text(auth_error, locale)
+    try:
+        summary = privacy_summary(user_id)
+    except Exception as exc:
+        return localize_status_text(f"读取数据与隐私概览失败：{exc}", locale)
+    english = str(locale or "").lower().startswith("en")
+    if english:
+        return "\n".join([
+            f"Storage: {'SQLite database' if summary['backend'] == 'sqlite' else 'local JSON files'}",
+            f"Archived conversations: {summary['conversation_count']} ({summary['message_count']} messages)",
+            f"Current session history: {summary['history_count']} entries",
+            f"Memory and profile records: {summary['memory_count']}",
+            f"Mood check-ins: {summary['mood_count']}",
+            f"API usage records this month: {summary['api_request_count']}",
+            "Your access password, API Key, and local .env settings are never included in exports.",
+            "Knowledge and style libraries are shared application data and are not deleted with this user.",
+        ])
+    return "\n".join([
+        f"存储方式：{'SQLite 数据库' if summary['backend'] == 'sqlite' else '本地 JSON 文件'}",
+        f"归档会话：{summary['conversation_count']} 个（{summary['message_count']} 条消息）",
+        f"当前会话历史：{summary['history_count']} 条",
+        f"记忆与稳定资料：{summary['memory_count']} 条",
+        f"Mood Check-in：{summary['mood_count']} 条",
+        f"本月 API 用量记录：{summary['api_request_count']} 条",
+        "导出不会包含访问密码、API Key 或本机 .env 配置。",
+        "知识库与风格库属于共享应用资料，不会随当前用户删除。",
+    ])
+
+
+def delete_all_user_data_from_gui(
+    user_id: str, access_key: str, confirmation: str, locale: str = "zh-CN"
+) -> tuple[str, Any, str]:
+    user_id, auth_error = _authorize_or_message(user_id, access_key)
+    if auth_error:
+        return localize_status_text(auth_error, locale), gr.update(), localize_status_text("未验证", locale)
+    if (confirmation or "").strip() != "DELETE":
+        return localize_status_text("请输入 DELETE 确认永久删除当前用户数据。", locale), gr.update(), localize_status_text(login_status_text(user_id, access_key), locale)
+    try:
+        result = delete_all_user_data(user_id)
+    except Exception as exc:
+        return localize_status_text(f"删除用户数据失败：{exc}", locale), gr.update(), localize_status_text(login_status_text(user_id, access_key), locale)
+    message = (
+        f"已永久删除当前用户数据。存储：{result['backend']}；导出文件 {result['exports']} 个；记忆备份 {result['backups']} 个。"
+    )
+    return localize_status_text(message, locale), gr.update(value=""), localize_status_text("未验证", locale)
 
 
 def relocalize_status_values(*values: Any) -> tuple[str, ...]:
@@ -727,11 +781,11 @@ def import_knowledge_files(files: list[Any] | None) -> str:
     return "\n".join(lines)
 
 
-def rebuild_knowledge_panel() -> str:
+def rebuild_knowledge_panel(locale: str = "zh-CN") -> str:
     try:
         result = rebuild_knowledge_index()
     except Exception as exc:
-        return f"重建索引失败：{exc}\n\n{knowledge_status()}"
+        return localize_status_text(f"重建索引失败：{exc}\n\n{knowledge_status()}", locale)
     lines = [
         "索引重建完成。",
         f"文档数：{result.get('documents', 0)}",
@@ -743,7 +797,24 @@ def rebuild_knowledge_panel() -> str:
         lines.extend(f"- {error}" for error in errors)
     lines.append("")
     lines.append(knowledge_status())
-    return "\n".join(lines)
+    return localize_status_text("\n".join(lines), locale)
+
+
+def knowledge_status_from_gui(locale: str = "zh-CN") -> str:
+    return localize_status_text(knowledge_status(), locale)
+
+
+def style_status_from_gui(locale: str = "zh-CN") -> str:
+    return localize_status_text(style_status(), locale)
+
+
+def load_rag_status_panels(locale: str = "zh-CN") -> tuple[str, str, str]:
+    """页面加载时按当前语言渲染知识库、风格库与评估状态。"""
+    return (
+        knowledge_status_from_gui(locale),
+        style_status_from_gui(locale),
+        latest_rag_evaluation_report(locale),
+    )
 
 
 def preview_knowledge_search(
@@ -783,14 +854,14 @@ def clear_knowledge_documents_from_gui(locale: str = "zh-CN") -> tuple[Any, str,
     return gr.update(choices=names, value=None), document_list, status
 
 
-def import_style_files(files: list[Any] | None) -> str:
+def import_style_files(files: list[Any] | None, locale: str = "zh-CN") -> str:
     if not files:
-        return "请先选择要导入的风格文件。\n\n" + style_status()
+        return localize_status_text("请先选择要导入的风格文件。\n\n" + style_status(), locale)
     paths = [_uploaded_file_path(file_obj) for file_obj in files]
     try:
         result = import_style_documents(paths)
     except Exception as exc:
-        return f"导入失败：{exc}\n\n{style_status()}"
+        return localize_status_text(f"导入失败：{exc}\n\n{style_status()}", locale)
 
     lines = [
         "风格库导入完成。",
@@ -807,14 +878,14 @@ def import_style_files(files: list[Any] | None) -> str:
         lines.extend(f"- {error}" for error in errors)
     lines.append("")
     lines.append(style_status())
-    return "\n".join(lines)
+    return localize_status_text("\n".join(lines), locale)
 
 
-def rebuild_style_panel() -> str:
+def rebuild_style_panel(locale: str = "zh-CN") -> str:
     try:
         result = rebuild_style_index()
     except Exception as exc:
-        return f"重建风格索引失败：{exc}\n\n{style_status()}"
+        return localize_status_text(f"重建风格索引失败：{exc}\n\n{style_status()}", locale)
     lines = [
         "风格索引重建完成。",
         f"文档数：{result.get('documents', 0)}",
@@ -826,15 +897,15 @@ def rebuild_style_panel() -> str:
         lines.extend(f"- {error}" for error in errors)
     lines.append("")
     lines.append(style_status())
-    return "\n".join(lines)
+    return localize_status_text("\n".join(lines), locale)
 
 
-def preview_style_search(query: str) -> str:
+def preview_style_search(query: str, locale: str = "zh-CN") -> str:
     query = (query or "").strip()
     if not query:
-        return "请输入检索问题或当前对话意图。"
+        return localize_status_text("请输入检索问题或当前对话意图。", locale)
     context = build_style_context(query)
-    return context or "没有检索到高相关风格样例。"
+    return localize_status_text(context or "没有检索到高相关风格样例。", locale)
 
 
 def warmup_models(provider: str) -> None:
@@ -873,8 +944,8 @@ def get_warmup_status() -> str:
 
 initial_provider = os.getenv("LLM_PROVIDER", DEFAULT_LLM_PROVIDER)
 if initial_provider not in PROVIDER_CHOICES:
-    initial_provider = DEFAULT_LLM_PROVIDER if DEFAULT_LLM_PROVIDER in PROVIDER_CHOICES else "local_hf"
-initial_model_choices = MODEL_CHOICES.get(initial_provider, MODEL_CHOICES["local_hf"])
+    initial_provider = DEFAULT_LLM_PROVIDER if DEFAULT_LLM_PROVIDER in PROVIDER_CHOICES else PROVIDER_CHOICES[0]
+initial_model_choices = MODEL_CHOICES.get(initial_provider, MODEL_CHOICES[PROVIDER_CHOICES[0]])
 initial_model = DEFAULT_MODELS.get(initial_provider, initial_model_choices[0])
 initial_base_url = DEFAULT_BASE_URLS.get(initial_provider, "")
 
@@ -1134,6 +1205,7 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
             style_status=style_status,
             refresh_document_panel=refresh_knowledge_document_panel,
             format_document_list=format_knowledge_document_list,
+            latest_rag_evaluation_report=latest_rag_evaluation_report,
         )
         advanced_tab = build_advanced_tab(
             tr,
@@ -1149,7 +1221,6 @@ with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
             local_cpu_threads=LOCAL_MODEL_CPU_THREADS,
             build_status_text=build_status_text,
             build_local_runtime_text=build_local_runtime_config_text,
-            build_api_usage_text=build_api_usage_text,
             get_log_text=get_log_text,
         )
 
