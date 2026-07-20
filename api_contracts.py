@@ -52,7 +52,8 @@ class SessionResponse(ContractModel):
 
 class ChatRequest(ContractModel):
     message: str = Field(min_length=1, max_length=20_000)
-    provider: str = "local_hf"
+    # None 表示使用服务器 .env 中 LLM_PROVIDER 配置的默认提供者。
+    provider: str | None = None
     model: str | None = None
     base_url: str | None = None
     api_key: str | None = None
@@ -109,6 +110,10 @@ class ConversationCreateRequest(ContractModel):
     title: str = Field(default="New conversation", min_length=1, max_length=200)
 
 
+class ConversationRenameRequest(ContractModel):
+    title: str = Field(min_length=1, max_length=200)
+
+
 class ConversationMessage(ContractModel):
     role: str
     content: str
@@ -137,8 +142,12 @@ class MemorySnapshotResponse(ContractModel):
     emotion_memory: list[dict[str, Any]]
     long_memory: list[dict[str, Any]]
     stable_profile: list[dict[str, Any]]
-    interest_memory: list[list[Any]]
+    interest_memory: list[dict[str, Any]]
     memory_events: list[dict[str, Any]]
+
+
+class LongTermMemoryUpdateRequest(ContractModel):
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
 
 
 class KnowledgeDocument(ContractModel):
@@ -152,6 +161,10 @@ class KnowledgeDocument(ContractModel):
 class RagStatusResponse(ContractModel):
     status: str
     documents: list[KnowledgeDocument]
+
+
+class RagDocumentMutationResponse(ContractModel):
+    result: dict[str, Any]
 
 
 class RagQualityResponse(BaseModel):
@@ -215,7 +228,7 @@ class ExportResponse(ContractModel):
     long_memory: list[dict[str, Any]]
     stable_profile: list[dict[str, Any]]
     memory_events: list[dict[str, Any]]
-    interest_memory: list[list[Any]]
+    interest_memory: list[dict[str, Any]]
     mood_checkins: list[dict[str, Any]]
 
 

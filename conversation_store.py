@@ -190,3 +190,31 @@ def delete_conversation(user_id: str, conversation_id: str) -> bool:
             return False
         _save_json_conversations(user_id, remaining)
     return True
+
+
+def rename_conversation(user_id: str, conversation_id: str, title: str) -> dict[str, Any] | None:
+    """Rename one conversation owned by the authenticated user."""
+    user_id = validate_user_id(user_id)
+    conversation_id = (conversation_id or "").strip()
+    new_title = _title_from_text(title)
+    if not conversation_id:
+        return None
+    timestamp = _now()
+    if sqlite_enabled():
+        with sqlite_connection() as conn:
+            result = conn.execute(
+                "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+                (new_title, timestamp, conversation_id, user_id),
+            )
+        if result.rowcount <= 0:
+            return None
+        return get_conversation(user_id, conversation_id)
+    with user_file_lock(user_id):
+        conversations = _load_json_conversations(user_id)
+        for record in conversations:
+            if str(record.get("id")) == conversation_id:
+                record["title"] = new_title
+                record["updated_at"] = timestamp
+                _save_json_conversations(user_id, conversations)
+                return _summary(record)
+    return None

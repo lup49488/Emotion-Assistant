@@ -1,0 +1,40 @@
+const messages = {
+  en: {
+    chat: 'Chat', personalData: 'Personal data', mood: 'Mood check-in', knowledge: 'Knowledge & RAG', privacy: 'Privacy & export',
+    newChat: 'New chat', conversations: 'Conversations', noChats: 'No saved chats yet.', logout: 'Log out', renameConversation: 'Rename conversation', deleteConversation: 'Delete conversation', deleteConversationConfirm: 'Delete this conversation permanently?', conversationTitle: 'Conversation title', saveTitle: 'Save title', cancel: 'Cancel',
+    theme: 'Theme', language: 'Language', light: 'Light', dark: 'Dark', system: 'System', english: 'English', chinese: 'Chinese',
+    newConversation: 'New conversation', connected: 'Connected to', preferences: 'Preferences', hidePreferences: 'Hide preferences',
+    settingsCopy: 'These options are sent with each reply. API keys remain in this browser tab only.', provider: 'Provider', model: 'Model', baseUrl: 'Base URL', apiKey: 'API key', serverDefault: 'Use server default', optionalEndpoint: 'Optional provider endpoint', tabOnly: 'Only held in this tab', knowledgeRetrieval: 'Knowledge retrieval', knowledgeHint: 'Include matching RAG references', styleReference: 'Style reference', styleHint: 'Apply the selected style corpus', temperature: 'Temperature',
+    welcomeTitle: 'How are you feeling today?', welcomeText: 'You can start with a question, a reflection, or a small thing that is on your mind.', talkPrompt: 'Talk through a feeling', planPrompt: 'Plan the next step', composer: 'Message Mindful',
+    stillWaiting: 'The provider is still working. You can stop this reply without refreshing the page.', stopGenerating: 'Stop generating', requestCancelled: 'Generation stopped.',
+    loginTitle: 'A quieter place to think.', loginText: 'Continue your conversations with memory, knowledge, and personal context kept under your control.', welcomeBack: 'Welcome back', loginHelp: 'Sign in to open your private workspace.', userId: 'User ID', password: 'Access password', signIn: 'Sign in',
+    refresh: 'Refresh', loading: 'Loading', save: 'Save check-in', delete: 'Delete', upload: 'Upload', rebuild: 'Rebuild', search: 'Search', runEvaluation: 'Run evaluation', downloadExport: 'Download export', deleteMyData: 'Delete my data',
+    memoryTitle: 'Personal data', memoryDescription: 'A transparent view of the memories currently available to your assistant.', memoryQuality: 'Memory quality', stableProfile: 'Stable profile', longTermMemory: 'Long-term memory', longTermDescription: 'Review, correct, add, or remove facts the assistant may reference.', addMemory: 'Add memory', editMemory: 'Edit memory', deleteMemory: 'Delete memory', saveMemory: 'Save memory', memoryText: 'Memory text', memoryRequired: 'Memory text is required.', noLongTerm: 'No long-term memories yet.', recentEvents: 'Recent memory events', noStable: 'No stable profile entries yet.', noEvents: 'No memory events yet.',
+    moodTitle: 'Mood check-in', moodDescription: 'Record a small signal today, then use the weekly view to notice patterns over time.', todayCheckin: "Today's check-in", moodLabel: 'Mood', moodPlaceholder: 'e.g. calm, anxious, hopeful', intensity: 'Intensity', note: 'Note', notePlaceholder: 'Optional context', weeklyTrend: 'Weekly mood trend', recentCheckins: 'Recent check-ins', noCheckins: 'No check-ins yet.',
+    noWeeklySummary: 'No weekly summary available.', noQualityResult: 'No quality result available.', noMatchingChunks: 'No matching chunks.', noEvaluation: 'No saved evaluation report.',
+    history: 'History', emotion: 'Emotion', longTerm: 'Long-term', interests: 'Interests',
+    knowledgeTitle: 'Knowledge & RAG', knowledgeDescription: 'Inspect indexed documents, test retrieval quality, and run your saved evaluation set.', status: 'Status', documents: 'Documents', quality: 'Quality', chunks: 'Chunks', indexedDocuments: 'Indexed documents', qualityReport: 'Quality report', noDocuments: 'No documents are indexed.', retrievalCheck: 'Retrieval check', retrievalPlaceholder: 'Ask a question to test retrieval', ragEvaluation: 'RAG evaluation',
+    privacyTitle: 'Privacy & export', privacyDescription: 'See what is stored for your account, create a portable export, or permanently remove your data.', exportTitle: 'Export your data', exportDescription: 'Download conversations, memories, Mood Check-ins, and other user-owned records as JSON. Access passwords, API keys, and .env secrets are excluded.', deleteTitle: 'Delete all data', deleteDescription: "This removes the authenticated user's stored data. Shared knowledge-base documents are not affected.", deletePlaceholder: 'Type DELETE to confirm.',
+  },
+  zh: {
+    chat: '聊天', personalData: '个人数据', mood: '心情记录', knowledge: '知识库与 RAG', privacy: '隐私与导出',
+    newChat: '新建对话', conversations: '历史会话', noChats: '暂无已保存的会话。', logout: '退出登录', renameConversation: '重命名对话', deleteConversation: '删除对话', deleteConversationConfirm: '确定永久删除此对话吗？', conversationTitle: '对话标题', saveTitle: '保存标题', cancel: '取消',
+    theme: '主题', language: '语言', light: '浅色', dark: '深色', system: '跟随系统', english: 'English', chinese: '中文',
+    newConversation: '新建对话', connected: '已连接至', preferences: '模型设置', hidePreferences: '收起设置',
+    settingsCopy: '这些选项会随每次回复发送。API Key 仅保留在当前浏览器标签页。', provider: '服务商', model: '模型', baseUrl: '基础地址', apiKey: 'API Key', serverDefault: '使用服务端默认值', optionalEndpoint: '可选的服务商地址', tabOnly: '仅在当前标签页保留', knowledgeRetrieval: '知识库检索', knowledgeHint: '为回复加入匹配的 RAG 参考', styleReference: '风格参考', styleHint: '应用已选择的风格语料', temperature: '随机性',
+    welcomeTitle: '今天的心情如何？', welcomeText: '您可以从一个问题、一段感受，或一件正在心里的小事开始。', talkPrompt: '梳理一下感受', planPrompt: '规划下一步', composer: '和 Mindful 聊聊',
+    stillWaiting: '模型仍在处理请求。您可以停止本次回复，无需刷新页面。', stopGenerating: '停止生成', requestCancelled: '已停止生成。',
+    loginTitle: '留一处安静思考的空间。', loginText: '在由您掌控的记忆、知识与个人上下文中继续对话。', welcomeBack: '欢迎回来', loginHelp: '登录后进入您的私密工作区。', userId: '用户 ID', password: '访问密码', signIn: '登录',
+    refresh: '刷新', loading: '加载中', save: '保存记录', delete: '删除', upload: '上传', rebuild: '重建', search: '检索', runEvaluation: '运行评估', downloadExport: '下载导出文件', deleteMyData: '删除我的数据',
+    memoryTitle: '个人数据', memoryDescription: '透明查看当前可供助手参考的记忆内容。', memoryQuality: '记忆质量', stableProfile: '稳定资料', longTermMemory: '长期记忆', longTermDescription: '查看、修正、添加或删除助手可能参考的长期信息。', addMemory: '添加记忆', editMemory: '编辑记忆', deleteMemory: '删除记忆', saveMemory: '保存记忆', memoryText: '记忆内容', memoryRequired: '记忆内容不能为空。', noLongTerm: '暂无长期记忆。', recentEvents: '最近记忆事件', noStable: '暂无稳定资料。', noEvents: '暂无记忆事件。',
+    moodTitle: '心情记录', moodDescription: '记录今天的一点感受，并通过一周趋势发现变化。', todayCheckin: '今天的记录', moodLabel: '心情', moodPlaceholder: '例如：平静、焦虑、充满希望', intensity: '强度', note: '备注', notePlaceholder: '可选的背景说明', weeklyTrend: '一周心情趋势', recentCheckins: '最近记录', noCheckins: '暂无记录。',
+    noWeeklySummary: '暂无一周总结。', noQualityResult: '暂无质量结果。', noMatchingChunks: '没有匹配的知识片段。', noEvaluation: '暂无已保存的评估报告。',
+    history: '对话历史', emotion: '情绪记忆', longTerm: '长期记忆', interests: '兴趣记忆',
+    knowledgeTitle: '知识库与 RAG', knowledgeDescription: '查看索引文档，测试检索，并运行已保存的评估集。', status: '状态', documents: '文档', quality: '质量', chunks: '片段', indexedDocuments: '已索引文档', qualityReport: '质量报告', noDocuments: '暂无已索引文档。', retrievalCheck: '检索测试', retrievalPlaceholder: '输入问题以测试检索效果', ragEvaluation: 'RAG 评估',
+    privacyTitle: '隐私与导出', privacyDescription: '查看账号存储内容、创建可携带导出，或永久删除数据。', exportTitle: '导出您的数据', exportDescription: '以 JSON 下载会话、记忆、心情记录和其他用户数据；不会导出访问密码、API Key 或 .env 密钥。', deleteTitle: '删除全部数据', deleteDescription: '这会删除当前用户的全部存储数据，不会影响共享知识库文档。', deletePlaceholder: '输入 DELETE 以确认。',
+  },
+}
+
+export function translate(locale, key) {
+  return messages[locale]?.[key] || messages.en[key] || key
+}

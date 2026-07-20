@@ -11,11 +11,15 @@ import hmac
 import logging
 import os
 import secrets
+import tempfile
 import time
 from collections.abc import Generator
+from contextlib import asynccontextmanager
+from datetime import datetime
+from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Cookie, Depends, FastAPI, Header, HTTPException, Query, Request, Response, status
+from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -29,11 +33,13 @@ from api_contracts import (
     ContractInfoResponse,
     ConversationCreateRequest,
     ConversationListResponse,
+    ConversationRenameRequest,
     ConversationResponse,
     ExportResponse,
     HealthResponse,
     LoginRequest,
     LoginResponse,
+    LongTermMemoryUpdateRequest,
     MemoryQualityResponse,
     MemorySnapshotResponse,
     MoodCheckinListResponse,
@@ -44,6 +50,7 @@ from api_contracts import (
     PrivacyResponse,
     RagEvaluationRequest,
     RagEvaluationResponse,
+    RagDocumentMutationResponse,
     RagQualityResponse,
     RagSearchRequest,
     RagSearchResponse,
@@ -55,12 +62,24 @@ from api_contracts import (
 )
 from chatbot import handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from auth_store import access_key_version
+from config import DEFAULT_LLM_PROVIDER
 from api_usage_store import list_usage_events, usage_summary
-from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations
+from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations, rename_conversation
 from export_store import build_user_export_payload
 from gui_auth import authorize
-from knowledge_store import assess_knowledge_quality, diagnose_knowledge_search, knowledge_status, list_document_details
+from knowledge_store import (
+    SUPPORTED_EXTENSIONS,
+    assess_knowledge_quality,
+    copy_document_to_store,
+    delete_document,
+    diagnose_knowledge_search,
+    knowledge_status,
+    list_document_details,
+    rebuild_knowledge_index,
+)
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
+from memory_store import record_memory_event
+from model_warmup import start_api_background_warmup
 from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from sqlite_store import storage_backend
@@ -69,7 +88,8 @@ from sqlite_store import storage_backend
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-07-19.1"
+API_CONTRACT_VERSION = "2026-07-19.2"
+API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
 API_CSRF_COOKIE_NAME = os.getenv("API_CSRF_COOKIE_NAME", "chatbot_csrf").strip() or "chatbot_csrf"
@@ -95,16 +115,23 @@ def _cors_origins() -> list[str]:
     return origins
 
 
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    start_api_background_warmup()
+    yield
+
+
 app = FastAPI(
     title="Emotion-Aware Chat API",
     version=API_VERSION,
     description="Versioned API contract for the Emotion-Aware Chat application.",
+    lifespan=lifespan,
 )
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
     allow_headers=["Content-Type", "X-CSRF-Token"],
 )
 
@@ -265,7 +292,7 @@ def session_info(user_id: CurrentUser) -> dict[str, str]:
 
 def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, None]:
     config = make_model_config(
-        provider=request.provider,
+        provider=request.provider or DEFAULT_LLM_PROVIDER,
         model=request.model,
         api_key=request.api_key,
         base_url=request.base_url,
@@ -401,6 +428,16 @@ def conversation(conversation_id: str, user_id: CurrentUser) -> dict[str, Any]:
     return {"conversation": result}
 
 
+@app.put("/api/v1/conversations/{conversation_id}", response_model=ConversationResponse)
+def rename_saved_conversation(
+    conversation_id: str, request: ConversationRenameRequest, user_id: CsrfCurrentUser,
+) -> dict[str, Any]:
+    result = rename_conversation(user_id, conversation_id, request.title)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Conversation was not found.")
+    return {"conversation": result}
+
+
 @app.delete("/api/v1/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
 def remove_conversation(conversation_id: str, user_id: CsrfCurrentUser) -> None:
     if not delete_conversation(user_id, conversation_id):
@@ -420,9 +457,93 @@ def memory_snapshot(user_id: CurrentUser) -> dict[str, Any]:
         }
 
 
+@app.put("/api/v1/memory/long-term", response_model=MemorySnapshotResponse)
+def update_long_term_memory(request: LongTermMemoryUpdateRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    normalized_items: list[dict[str, Any]] = []
+    for item in request.items:
+        text = str(item.get("text", "")).strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="Each long-term memory needs non-empty text.")
+        if len(text) > 2_000:
+            raise HTTPException(status_code=422, detail="A long-term memory cannot exceed 2000 characters.")
+        normalized_items.append({
+            **item,
+            "text": text,
+            "time": str(item.get("time") or datetime.now().isoformat(timespec="seconds")),
+            "kind": str(item.get("kind") or "manual"),
+        })
+
+    with session_store.session(user_id) as state:
+        state.long_memory = normalized_items
+        record_memory_event(
+            state,
+            section="long",
+            action="updated",
+            text=f"Long-term memories updated ({len(normalized_items)})",
+            reason="User edited long-term memory from the personal-data panel.",
+        )
+        return {
+            "history": list(state.history),
+            "emotion_memory": list(state.emotion_memory),
+            "long_memory": list(state.long_memory),
+            "stable_profile": list(state.stable_profile),
+            "interest_memory": list(state.interest_store.items),
+            "memory_events": list(state.memory_events),
+        }
+
+
 @app.get("/api/v1/rag/status", response_model=RagStatusResponse)
 def rag_status(_: CurrentUser) -> dict[str, Any]:
     return {"status": knowledge_status(), "documents": list_document_details()}
+
+
+@app.post("/api/v1/rag/documents", response_model=RagDocumentMutationResponse)
+async def upload_rag_document(file: Annotated[UploadFile, File(...)], _: CsrfCurrentUser) -> dict[str, Any]:
+    """Store one supported document and rebuild the derived RAG index."""
+    filename = (file.filename or "").strip()
+    suffix = Path(filename).suffix.lower()
+    if not filename or suffix not in SUPPORTED_EXTENSIONS:
+        allowed = ", ".join(sorted(SUPPORTED_EXTENSIONS))
+        raise HTTPException(status_code=422, detail=f"Unsupported document type. Allowed: {allowed}.")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=422, detail="The uploaded document is empty.")
+    if len(contents) > API_MAX_KNOWLEDGE_UPLOAD_BYTES:
+        raise HTTPException(status_code=422, detail="The uploaded document exceeds the configured size limit.")
+
+    def _store_and_rebuild() -> dict[str, Any]:
+        with tempfile.TemporaryDirectory(prefix="rag-upload-") as temporary_directory:
+            temporary_path = Path(temporary_directory) / Path(filename).name
+            temporary_path.write_bytes(contents)
+            # copy_document_to_store normalizes the filename and prevents storage outside the RAG directory.
+            stored_path = copy_document_to_store(temporary_path)
+        result = rebuild_knowledge_index()
+        result["uploaded"] = stored_path.name
+        return result
+
+    try:
+        # Index rebuilding embeds every chunk and can take seconds; keep the
+        # event loop responsive by running the blocking work in a thread.
+        result = await run_in_threadpool(_store_and_rebuild)
+        return {"result": result}
+    except (OSError, ValueError, RuntimeError) as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+
+@app.post("/api/v1/rag/rebuild", response_model=RagDocumentMutationResponse)
+def rebuild_rag(_: CsrfCurrentUser) -> dict[str, Any]:
+    return {"result": rebuild_knowledge_index()}
+
+
+@app.delete("/api/v1/rag/documents/{name}", response_model=RagDocumentMutationResponse)
+def remove_rag_document(name: str, _: CsrfCurrentUser) -> dict[str, Any]:
+    try:
+        return {"result": delete_document(name)}
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=404 if isinstance(exc, FileNotFoundError) else 422, detail=str(exc)) from exc
 
 
 @app.get("/api/v1/rag/quality", response_model=RagQualityResponse)

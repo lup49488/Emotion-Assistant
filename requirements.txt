@@ -11,6 +11,8 @@ langdetect==1.0.9
 gradio==6.19.0
 fastapi==0.139.0
 uvicorn==0.49.0
+# Required by the FastAPI multipart upload endpoint (/api/v1/rag/documents).
+python-multipart==0.0.32
 openai==2.44.0
 sentencepiece==0.1.99
 accelerate==2.3.0

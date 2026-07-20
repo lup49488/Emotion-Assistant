@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
+# Tests should not start real model downloads or loads in background threads.
+os.environ.setdefault("API_PRELOAD_MODELS", "false")
+
 import api_server
+import model_warmup
 import session_store
 from auth_store import change_access_key
 
@@ -25,6 +32,26 @@ def test_health_reports_storage_backend():
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
+def test_api_lifespan_starts_warmup_once(monkeypatch):
+    calls = []
+    monkeypatch.setattr(api_server, "start_api_background_warmup", lambda: calls.append(True))
+
+    with TestClient(api_server.app, base_url="https://testserver"):
+        pass
+
+    assert calls == [True]
+
+
+def test_api_warmup_loads_support_models_only(monkeypatch):
+    calls = []
+    monkeypatch.setattr(model_warmup.goemotions, "predict_emotion_zh", lambda text: calls.append(("emotion", text)))
+    monkeypatch.setattr(model_warmup, "get_embedding_model", lambda: calls.append(("embedding", None)))
+
+    model_warmup.warmup_api_models()
+
+    assert calls == [("emotion", "hello"), ("embedding", None)]
 
 
 def test_login_sets_signed_cookie_and_memory_quality_uses_it(monkeypatch, tmp_path):
@@ -137,6 +164,30 @@ def test_conversation_and_memory_api_use_signed_current_user(monkeypatch, tmp_pa
     assert "stable_profile" in memory.json()
 
 
+def test_conversation_rename_delete_and_long_term_memory_edit_are_protected(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        created = client.post("/api/v1/conversations", json={"title": "Before"}, headers=headers)
+        conversation_id = created.json()["conversation"]["id"]
+
+        renamed = client.put(
+            f"/api/v1/conversations/{conversation_id}", json={"title": "After"}, headers=headers,
+        )
+        updated_memory = client.put(
+            "/api/v1/memory/long-term",
+            json={"items": [{"text": "I am a student.", "kind": "manual"}]},
+            headers=headers,
+        )
+        removed = client.delete(f"/api/v1/conversations/{conversation_id}", headers=headers)
+
+    assert renamed.status_code == 200
+    assert renamed.json()["conversation"]["title"] == "After"
+    assert updated_memory.status_code == 200
+    assert updated_memory.json()["long_memory"][0]["text"] == "I am a student."
+    assert updated_memory.json()["memory_events"][-1]["section"] == "long"
+    assert removed.status_code == 204
+
+
 def test_usage_export_and_privacy_api_are_authenticated(monkeypatch, tmp_path):
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
@@ -168,3 +219,69 @@ def test_rag_api_exposes_status_quality_and_protected_search(monkeypatch, tmp_pa
     assert quality.status_code == 200
     assert latest.status_code == 200
     assert search_without_csrf.status_code == 403
+
+
+def test_rag_document_management_uses_csrf_and_supported_uploads(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "copy_document_to_store", lambda _: Path("notes.md"))
+    monkeypatch.setattr(api_server, "rebuild_knowledge_index", lambda: {"documents": 1, "chunks": 2, "errors": []})
+    monkeypatch.setattr(api_server, "delete_document", lambda name: {"deleted": name, "documents": 0, "chunks": 0, "errors": []})
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        upload = client.post(
+            "/api/v1/rag/documents",
+            files={"file": ("notes.md", b"# A note", "text/markdown")},
+            headers=headers,
+        )
+        remove = client.delete("/api/v1/rag/documents/notes.md", headers=headers)
+
+    assert upload.status_code == 200
+    assert upload.json()["result"]["uploaded"] == "notes.md"
+    assert remove.status_code == 200
+    assert remove.json()["result"]["deleted"] == "notes.md"
+
+
+def test_memory_and_export_return_dict_interest_memory(monkeypatch, tmp_path):
+    # interest_memory 是字典列表；合约曾误写为 list[list]，一旦用户有兴趣记忆就 500。
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        _login(client, monkeypatch, tmp_path)
+        import chatbot
+
+        with chatbot.session_store.session("api-alice") as state:
+            state.interest_store.append({"text": "喜欢跑步", "time": "2026-07-19T10:00:00"})
+
+        memory = client.get("/api/v1/memory")
+        export = client.get("/api/v1/export")
+
+    assert memory.status_code == 200
+    assert memory.json()["interest_memory"] == [{"text": "喜欢跑步", "time": "2026-07-19T10:00:00"}]
+    assert export.status_code == 200
+    assert export.json()["interest_memory"][0]["text"] == "喜欢跑步"
+
+
+def test_chat_provider_defaults_to_server_configured_provider(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_make_model_config(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    def fake_stream(user_id, message, **kwargs):
+        yield "ok"
+
+    monkeypatch.setattr(api_server, "make_model_config", fake_make_model_config)
+    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+    monkeypatch.setattr(api_server, "DEFAULT_LLM_PROVIDER", "deepseek")
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.post(
+            "/api/v1/chat",
+            json={"message": "hi", "show_memory_receipt": False},
+            headers=headers,
+        )
+
+    assert response.status_code == 200
+    assert response.json()["reply"] == "ok"
+    # 前端未指定 provider 时，应遵循服务器 .env 配置而不是硬编码 local_hf。
+    assert captured["provider"] == "deepseek"

@@ -1,55 +1,2089 @@
 {
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Emotion-Aware Chat API",
+    "description": "Versioned API contract for the Emotion-Aware Chat application.",
+    "version": "1.0.0",
+    "x-contract-version": "2026-07-19.2",
+    "x-api-version": "v1"
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health",
+        "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/contract": {
+      "get": {
+        "summary": "Contract Info",
+        "operationId": "contract_info_api_v1_contract_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContractInfoResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/login": {
+      "post": {
+        "summary": "Login",
+        "operationId": "login_api_v1_auth_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/logout": {
+      "post": {
+        "summary": "Logout",
+        "operationId": "logout_api_v1_auth_logout_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "summary": "Session Info",
+        "operationId": "session_info_api_v1_auth_session_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat": {
+      "post": {
+        "summary": "Chat",
+        "operationId": "chat_api_v1_chat_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChatResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chat/stream": {
+      "post": {
+        "summary": "Chat Stream",
+        "operationId": "chat_stream_api_v1_chat_stream_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChatRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Server-sent events: `chunk` ({text}), optional `receipt` ({text}), then `done` ({}). On generation failure emits `error` ({code, message}).",
+            "content": {
+              "text/event-stream": {}
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memory/quality": {
+      "get": {
+        "summary": "Memory Quality",
+        "operationId": "memory_quality_api_v1_memory_quality_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryQualityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mood/checkins": {
+      "post": {
+        "summary": "Create Mood Checkin",
+        "operationId": "create_mood_checkin_api_v1_mood_checkins_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MoodCheckinRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoodCheckinResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "summary": "List Mood Records",
+        "operationId": "list_mood_records_api_v1_mood_checkins_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MoodCheckinListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mood/checkins/{checkin_date}": {
+      "delete": {
+        "summary": "Remove Mood Checkin",
+        "operationId": "remove_mood_checkin_api_v1_mood_checkins__checkin_date__delete",
+        "parameters": [
+          {
+            "name": "checkin_date",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Checkin Date"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/mood/weekly": {
+      "get": {
+        "summary": "Weekly Mood",
+        "operationId": "weekly_mood_api_v1_mood_weekly_get",
+        "parameters": [
+          {
+            "name": "end_date",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "End Date"
+            }
+          },
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 31,
+              "minimum": 1,
+              "default": 7,
+              "title": "Days"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WeeklyMoodResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations": {
+      "get": {
+        "summary": "Conversations",
+        "operationId": "conversations_api_v1_conversations_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "summary": "New Conversation",
+        "operationId": "new_conversation_api_v1_conversations_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/conversations/{conversation_id}": {
+      "get": {
+        "summary": "Conversation",
+        "operationId": "conversation_api_v1_conversations__conversation_id__get",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Rename Saved Conversation",
+        "operationId": "rename_saved_conversation_api_v1_conversations__conversation_id__put",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationRenameRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Remove Conversation",
+        "operationId": "remove_conversation_api_v1_conversations__conversation_id__delete",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memory": {
+      "get": {
+        "summary": "Memory Snapshot",
+        "operationId": "memory_snapshot_api_v1_memory_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySnapshotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/memory/long-term": {
+      "put": {
+        "summary": "Update Long Term Memory",
+        "operationId": "update_long_term_memory_api_v1_memory_long_term_put",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LongTermMemoryUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemorySnapshotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/status": {
+      "get": {
+        "summary": "Rag Status",
+        "operationId": "rag_status_api_v1_rag_status_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagStatusResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/documents": {
+      "post": {
+        "summary": "Upload Rag Document",
+        "description": "Store one supported document and rebuild the derived RAG index.",
+        "operationId": "upload_rag_document_api_v1_rag_documents_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_rag_document_api_v1_rag_documents_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagDocumentMutationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/rebuild": {
+      "post": {
+        "summary": "Rebuild Rag",
+        "operationId": "rebuild_rag_api_v1_rag_rebuild_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagDocumentMutationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/documents/{name}": {
+      "delete": {
+        "summary": "Remove Rag Document",
+        "operationId": "remove_rag_document_api_v1_rag_documents__name__delete",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagDocumentMutationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/quality": {
+      "get": {
+        "summary": "Rag Quality",
+        "operationId": "rag_quality_api_v1_rag_quality_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagQualityResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/search": {
+      "post": {
+        "summary": "Rag Search",
+        "operationId": "rag_search_api_v1_rag_search_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RagSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagSearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/evaluations/latest": {
+      "get": {
+        "summary": "Rag Latest Evaluation",
+        "operationId": "rag_latest_evaluation_api_v1_rag_evaluations_latest_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagEvaluationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/rag/evaluations/run": {
+      "post": {
+        "summary": "Rag Run Evaluation",
+        "operationId": "rag_run_evaluation_api_v1_rag_evaluations_run_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RagEvaluationRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagEvaluationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage": {
+      "get": {
+        "summary": "Api Usage",
+        "operationId": "api_usage_api_v1_usage_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageSummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage/events": {
+      "get": {
+        "summary": "Api Usage Event List",
+        "operationId": "api_usage_event_list_api_v1_usage_events_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 1000,
+              "minimum": 1,
+              "default": 100,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageEventsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/privacy": {
+      "get": {
+        "summary": "Privacy",
+        "operationId": "privacy_api_v1_privacy_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/export": {
+      "get": {
+        "summary": "Export Data",
+        "operationId": "export_data_api_v1_export_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/privacy/data": {
+      "delete": {
+        "summary": "Delete Privacy Data",
+        "operationId": "delete_privacy_data_api_v1_privacy_data_delete",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PrivacyDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PrivacyDeletionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
   "components": {
     "schemas": {
-      "ChatRequest": {
-        "additionalProperties": false,
+      "Body_upload_rag_document_api_v1_rag_documents_post": {
         "properties": {
-          "api_key": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Api Key"
-          },
-          "base_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Base Url"
-          },
-          "conversation_id": {
-            "anyOf": [
-              {
-                "maxLength": 64,
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Conversation Id"
-          },
-          "max_new_tokens": {
-            "default": 300,
-            "maximum": 8192.0,
-            "minimum": 1.0,
-            "title": "Max New Tokens",
-            "type": "integer"
-          },
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_rag_document_api_v1_rag_documents_post"
+      },
+      "ChatRequest": {
+        "properties": {
           "message": {
+            "type": "string",
             "maxLength": 20000,
             "minLength": 1,
-            "title": "Message",
-            "type": "string"
+            "title": "Message"
+          },
+          "provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Provider"
           },
           "model": {
             "anyOf": [
@@ -62,50 +2096,90 @@
             ],
             "title": "Model"
           },
-          "provider": {
-            "default": "local_hf",
-            "title": "Provider",
-            "type": "string"
+          "base_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Base Url"
           },
-          "show_memory_receipt": {
-            "default": true,
-            "title": "Show Memory Receipt",
-            "type": "boolean"
+          "api_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Api Key"
           },
           "temperature": {
-            "default": 0.8,
+            "type": "number",
             "maximum": 2.0,
             "minimum": 0.0,
             "title": "Temperature",
-            "type": "number"
+            "default": 0.8
           },
           "top_p": {
-            "default": 0.9,
+            "type": "number",
             "maximum": 1.0,
             "minimum": 0.0,
             "title": "Top P",
-            "type": "number"
+            "default": 0.9
+          },
+          "max_new_tokens": {
+            "type": "integer",
+            "maximum": 8192.0,
+            "minimum": 1.0,
+            "title": "Max New Tokens",
+            "default": 300
           },
           "use_knowledge": {
-            "default": false,
+            "type": "boolean",
             "title": "Use Knowledge",
-            "type": "boolean"
+            "default": false
           },
           "use_style": {
-            "default": false,
+            "type": "boolean",
             "title": "Use Style",
-            "type": "boolean"
+            "default": false
+          },
+          "show_memory_receipt": {
+            "type": "boolean",
+            "title": "Show Memory Receipt",
+            "default": true
+          },
+          "conversation_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Conversation Id"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "message"
         ],
-        "title": "ChatRequest",
-        "type": "object"
+        "title": "ChatRequest"
       },
       "ChatResponse": {
-        "additionalProperties": false,
         "properties": {
+          "reply": {
+            "type": "string",
+            "title": "Reply"
+          },
           "memory_receipt": {
             "anyOf": [
               {
@@ -116,68 +2190,72 @@
               }
             ],
             "title": "Memory Receipt"
-          },
-          "reply": {
-            "title": "Reply",
-            "type": "string"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "reply"
         ],
-        "title": "ChatResponse",
-        "type": "object"
+        "title": "ChatResponse"
       },
       "ContractInfoResponse": {
-        "additionalProperties": false,
         "properties": {
           "api_version": {
+            "type": "string",
             "const": "v1",
-            "default": "v1",
             "title": "Api Version",
-            "type": "string"
+            "default": "v1"
           },
           "contract_version": {
-            "title": "Contract Version",
-            "type": "string"
+            "type": "string",
+            "title": "Contract Version"
           },
           "openapi_path": {
+            "type": "string",
             "const": "/openapi.json",
-            "default": "/openapi.json",
             "title": "Openapi Path",
-            "type": "string"
+            "default": "/openapi.json"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "contract_version"
         ],
-        "title": "ContractInfoResponse",
-        "type": "object"
+        "title": "ContractInfoResponse"
       },
       "ConversationCreateRequest": {
-        "additionalProperties": false,
         "properties": {
           "title": {
-            "default": "New conversation",
+            "type": "string",
             "maxLength": 200,
             "minLength": 1,
             "title": "Title",
-            "type": "string"
+            "default": "New conversation"
           }
         },
-        "title": "ConversationCreateRequest",
-        "type": "object"
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ConversationCreateRequest"
       },
       "ConversationData": {
-        "additionalProperties": false,
         "properties": {
-          "created_at": {
-            "title": "Created At",
-            "type": "string"
-          },
           "id": {
-            "title": "Id",
-            "type": "string"
+            "type": "string",
+            "title": "Id"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
           },
           "message_count": {
             "anyOf": [
@@ -194,50 +2272,46 @@
             "items": {
               "$ref": "#/components/schemas/ConversationMessage"
             },
-            "title": "Messages",
-            "type": "array"
-          },
-          "title": {
-            "title": "Title",
-            "type": "string"
-          },
-          "updated_at": {
-            "title": "Updated At",
-            "type": "string"
+            "type": "array",
+            "title": "Messages"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "id",
           "title",
           "created_at",
           "updated_at"
         ],
-        "title": "ConversationData",
-        "type": "object"
+        "title": "ConversationData"
       },
       "ConversationListResponse": {
-        "additionalProperties": false,
         "properties": {
           "conversations": {
             "items": {
               "$ref": "#/components/schemas/ConversationData"
             },
-            "title": "Conversations",
-            "type": "array"
+            "type": "array",
+            "title": "Conversations"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "conversations"
         ],
-        "title": "ConversationListResponse",
-        "type": "object"
+        "title": "ConversationListResponse"
       },
       "ConversationMessage": {
-        "additionalProperties": false,
         "properties": {
+          "role": {
+            "type": "string",
+            "title": "Role"
+          },
           "content": {
-            "title": "Content",
-            "type": "string"
+            "type": "string",
+            "title": "Content"
           },
           "created_at": {
             "anyOf": [
@@ -249,119 +2323,133 @@
               }
             ],
             "title": "Created At"
-          },
-          "role": {
-            "title": "Role",
-            "type": "string"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "role",
           "content"
         ],
-        "title": "ConversationMessage",
-        "type": "object"
+        "title": "ConversationMessage"
+      },
+      "ConversationRenameRequest": {
+        "properties": {
+          "title": {
+            "type": "string",
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Title"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "title"
+        ],
+        "title": "ConversationRenameRequest"
       },
       "ConversationResponse": {
-        "additionalProperties": false,
         "properties": {
           "conversation": {
             "$ref": "#/components/schemas/ConversationData"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "conversation"
         ],
-        "title": "ConversationResponse",
-        "type": "object"
+        "title": "ConversationResponse"
       },
       "ExportResponse": {
-        "additionalProperties": false,
         "properties": {
-          "conversations": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Conversations",
-            "type": "array"
-          },
-          "emotion_memory": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Emotion Memory",
-            "type": "array"
+          "schema_version": {
+            "type": "integer",
+            "title": "Schema Version"
           },
           "exported_at": {
-            "title": "Exported At",
-            "type": "string"
+            "type": "string",
+            "title": "Exported At"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "notes": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Notes"
           },
           "history": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "History",
-            "type": "array"
+            "type": "array",
+            "title": "History"
           },
-          "interest_memory": {
+          "conversations": {
             "items": {
-              "items": {},
-              "type": "array"
+              "additionalProperties": true,
+              "type": "object"
             },
-            "title": "Interest Memory",
-            "type": "array"
+            "type": "array",
+            "title": "Conversations"
+          },
+          "emotion_memory": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Emotion Memory"
           },
           "long_memory": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Long Memory",
-            "type": "array"
-          },
-          "memory_events": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Memory Events",
-            "type": "array"
-          },
-          "mood_checkins": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Mood Checkins",
-            "type": "array"
-          },
-          "notes": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Notes",
-            "type": "array"
-          },
-          "schema_version": {
-            "title": "Schema Version",
-            "type": "integer"
+            "type": "array",
+            "title": "Long Memory"
           },
           "stable_profile": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Stable Profile",
-            "type": "array"
+            "type": "array",
+            "title": "Stable Profile"
           },
-          "user_id": {
-            "title": "User Id",
-            "type": "string"
+          "memory_events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Memory Events"
+          },
+          "interest_memory": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Interest Memory"
+          },
+          "mood_checkins": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Mood Checkins"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "schema_version",
           "exported_at",
@@ -376,8 +2464,7 @@
           "interest_memory",
           "mood_checkins"
         ],
-        "title": "ExportResponse",
-        "type": "object"
+        "title": "ExportResponse"
       },
       "HTTPValidationError": {
         "properties": {
@@ -385,40 +2472,54 @@
             "items": {
               "$ref": "#/components/schemas/ValidationError"
             },
-            "title": "Detail",
-            "type": "array"
+            "type": "array",
+            "title": "Detail"
           }
         },
-        "title": "HTTPValidationError",
-        "type": "object"
+        "type": "object",
+        "title": "HTTPValidationError"
       },
       "HealthResponse": {
-        "additionalProperties": false,
         "properties": {
           "status": {
+            "type": "string",
             "const": "ok",
-            "title": "Status",
-            "type": "string"
+            "title": "Status"
           },
           "storage_backend": {
+            "type": "string",
             "enum": [
               "json",
               "sqlite"
             ],
-            "title": "Storage Backend",
-            "type": "string"
+            "title": "Storage Backend"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "status",
           "storage_backend"
         ],
-        "title": "HealthResponse",
-        "type": "object"
+        "title": "HealthResponse"
       },
       "KnowledgeDocument": {
-        "additionalProperties": false,
         "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "size_bytes": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Size Bytes"
+          },
           "chunks": {
             "anyOf": [
               {
@@ -429,17 +2530,6 @@
               }
             ],
             "title": "Chunks"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At"
           },
           "modified_at": {
             "anyOf": [
@@ -452,156 +2542,6 @@
             ],
             "title": "Modified At"
           },
-          "name": {
-            "title": "Name",
-            "type": "string"
-          },
-          "size_bytes": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Size Bytes"
-          }
-        },
-        "required": [
-          "name"
-        ],
-        "title": "KnowledgeDocument",
-        "type": "object"
-      },
-      "LoginRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "access_key": {
-            "maxLength": 512,
-            "minLength": 1,
-            "title": "Access Key",
-            "type": "string"
-          },
-          "user_id": {
-            "maxLength": 128,
-            "minLength": 1,
-            "title": "User Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "user_id",
-          "access_key"
-        ],
-        "title": "LoginRequest",
-        "type": "object"
-      },
-      "LoginResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "expires_in": {
-            "title": "Expires In",
-            "type": "integer"
-          },
-          "token_type": {
-            "const": "cookie",
-            "title": "Token Type",
-            "type": "string"
-          },
-          "user_id": {
-            "title": "User Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "token_type",
-          "expires_in",
-          "user_id"
-        ],
-        "title": "LoginResponse",
-        "type": "object"
-      },
-      "MemoryQualityResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "report": {
-            "title": "Report",
-            "type": "string"
-          }
-        },
-        "required": [
-          "report"
-        ],
-        "title": "MemoryQualityResponse",
-        "type": "object"
-      },
-      "MemorySnapshotResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "emotion_memory": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Emotion Memory",
-            "type": "array"
-          },
-          "history": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "History",
-            "type": "array"
-          },
-          "interest_memory": {
-            "items": {
-              "items": {},
-              "type": "array"
-            },
-            "title": "Interest Memory",
-            "type": "array"
-          },
-          "long_memory": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Long Memory",
-            "type": "array"
-          },
-          "memory_events": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Memory Events",
-            "type": "array"
-          },
-          "stable_profile": {
-            "items": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "title": "Stable Profile",
-            "type": "array"
-          }
-        },
-        "required": [
-          "history",
-          "emotion_memory",
-          "long_memory",
-          "stable_profile",
-          "interest_memory",
-          "memory_events"
-        ],
-        "title": "MemorySnapshotResponse",
-        "type": "object"
-      },
-      "MoodCheckin": {
-        "additionalProperties": false,
-        "properties": {
           "created_at": {
             "anyOf": [
               {
@@ -612,28 +2552,190 @@
               }
             ],
             "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "KnowledgeDocument"
+      },
+      "LoginRequest": {
+        "properties": {
+          "user_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "User Id"
           },
+          "access_key": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Access Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "user_id",
+          "access_key"
+        ],
+        "title": "LoginRequest"
+      },
+      "LoginResponse": {
+        "properties": {
+          "token_type": {
+            "type": "string",
+            "const": "cookie",
+            "title": "Token Type"
+          },
+          "expires_in": {
+            "type": "integer",
+            "title": "Expires In"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "token_type",
+          "expires_in",
+          "user_id"
+        ],
+        "title": "LoginResponse"
+      },
+      "LongTermMemoryUpdateRequest": {
+        "properties": {
+          "items": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "maxItems": 100,
+            "title": "Items"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LongTermMemoryUpdateRequest"
+      },
+      "MemoryQualityResponse": {
+        "properties": {
+          "report": {
+            "type": "string",
+            "title": "Report"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "report"
+        ],
+        "title": "MemoryQualityResponse"
+      },
+      "MemorySnapshotResponse": {
+        "properties": {
+          "history": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "History"
+          },
+          "emotion_memory": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Emotion Memory"
+          },
+          "long_memory": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Long Memory"
+          },
+          "stable_profile": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Stable Profile"
+          },
+          "interest_memory": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Interest Memory"
+          },
+          "memory_events": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Memory Events"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "history",
+          "emotion_memory",
+          "long_memory",
+          "stable_profile",
+          "interest_memory",
+          "memory_events"
+        ],
+        "title": "MemorySnapshotResponse"
+      },
+      "MoodCheckin": {
+        "properties": {
           "date": {
-            "title": "Date",
-            "type": "string"
-          },
-          "intensity": {
-            "title": "Intensity",
-            "type": "integer"
+            "type": "string",
+            "title": "Date"
           },
           "mood": {
-            "title": "Mood",
-            "type": "string"
+            "type": "string",
+            "title": "Mood"
+          },
+          "intensity": {
+            "type": "integer",
+            "title": "Intensity"
           },
           "note": {
-            "default": "",
+            "type": "string",
             "title": "Note",
-            "type": "string"
+            "default": ""
           },
           "source": {
-            "default": "checkin",
+            "type": "string",
             "title": "Source",
-            "type": "string"
+            "default": "checkin"
+          },
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
           },
           "updated_at": {
             "anyOf": [
@@ -647,34 +2749,52 @@
             "title": "Updated At"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "date",
           "mood",
           "intensity"
         ],
-        "title": "MoodCheckin",
-        "type": "object"
+        "title": "MoodCheckin"
       },
       "MoodCheckinListResponse": {
-        "additionalProperties": false,
         "properties": {
           "records": {
             "items": {
               "$ref": "#/components/schemas/MoodCheckin"
             },
-            "title": "Records",
-            "type": "array"
+            "type": "array",
+            "title": "Records"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "records"
         ],
-        "title": "MoodCheckinListResponse",
-        "type": "object"
+        "title": "MoodCheckinListResponse"
       },
       "MoodCheckinRequest": {
-        "additionalProperties": false,
         "properties": {
+          "mood": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Mood"
+          },
+          "intensity": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Intensity"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 5000,
+            "title": "Note",
+            "default": ""
+          },
           "checkin_date": {
             "anyOf": [
               {
@@ -685,113 +2805,97 @@
               }
             ],
             "title": "Checkin Date"
-          },
-          "intensity": {
-            "maximum": 5.0,
-            "minimum": 1.0,
-            "title": "Intensity",
-            "type": "integer"
-          },
-          "mood": {
-            "maxLength": 100,
-            "minLength": 1,
-            "title": "Mood",
-            "type": "string"
-          },
-          "note": {
-            "default": "",
-            "maxLength": 5000,
-            "title": "Note",
-            "type": "string"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "mood",
           "intensity"
         ],
-        "title": "MoodCheckinRequest",
-        "type": "object"
+        "title": "MoodCheckinRequest"
       },
       "MoodCheckinResponse": {
-        "additionalProperties": false,
         "properties": {
           "record": {
             "$ref": "#/components/schemas/MoodCheckin"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "record"
         ],
-        "title": "MoodCheckinResponse",
-        "type": "object"
+        "title": "MoodCheckinResponse"
       },
       "PrivacyDeleteRequest": {
-        "additionalProperties": false,
         "properties": {
           "confirmation": {
+            "type": "string",
             "maxLength": 32,
             "minLength": 1,
-            "title": "Confirmation",
-            "type": "string"
+            "title": "Confirmation"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "confirmation"
         ],
-        "title": "PrivacyDeleteRequest",
-        "type": "object"
+        "title": "PrivacyDeleteRequest"
       },
       "PrivacyDeletionResponse": {
-        "additionalProperties": false,
         "properties": {
           "deleted": {
             "additionalProperties": true,
-            "title": "Deleted",
-            "type": "object"
+            "type": "object",
+            "title": "Deleted"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "deleted"
         ],
-        "title": "PrivacyDeletionResponse",
-        "type": "object"
+        "title": "PrivacyDeletionResponse"
       },
       "PrivacyResponse": {
-        "additionalProperties": false,
         "properties": {
-          "api_request_count": {
-            "title": "Api Request Count",
-            "type": "integer"
-          },
           "backend": {
+            "type": "string",
             "enum": [
               "json",
               "sqlite"
             ],
-            "title": "Backend",
-            "type": "string"
+            "title": "Backend"
           },
           "conversation_count": {
-            "title": "Conversation Count",
-            "type": "integer"
-          },
-          "history_count": {
-            "title": "History Count",
-            "type": "integer"
-          },
-          "memory_count": {
-            "title": "Memory Count",
-            "type": "integer"
+            "type": "integer",
+            "title": "Conversation Count"
           },
           "message_count": {
-            "title": "Message Count",
-            "type": "integer"
+            "type": "integer",
+            "title": "Message Count"
+          },
+          "history_count": {
+            "type": "integer",
+            "title": "History Count"
+          },
+          "memory_count": {
+            "type": "integer",
+            "title": "Memory Count"
           },
           "mood_count": {
-            "title": "Mood Count",
-            "type": "integer"
+            "type": "integer",
+            "title": "Mood Count"
+          },
+          "api_request_count": {
+            "type": "integer",
+            "title": "Api Request Count"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "backend",
           "conversation_count",
@@ -801,39 +2905,52 @@
           "mood_count",
           "api_request_count"
         ],
-        "title": "PrivacyResponse",
-        "type": "object"
+        "title": "PrivacyResponse"
+      },
+      "RagDocumentMutationResponse": {
+        "properties": {
+          "result": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Result"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "result"
+        ],
+        "title": "RagDocumentMutationResponse"
       },
       "RagEvaluationRequest": {
-        "additionalProperties": false,
         "properties": {
-          "candidate_multiplier": {
-            "default": 4,
-            "maximum": 16.0,
-            "minimum": 1.0,
-            "title": "Candidate Multiplier",
-            "type": "integer"
-          },
-          "threshold": {
-            "default": 0.35,
-            "maximum": 1.0,
-            "minimum": -1.0,
-            "title": "Threshold",
-            "type": "number"
-          },
           "top_k": {
-            "default": 4,
+            "type": "integer",
             "maximum": 20.0,
             "minimum": 1.0,
             "title": "Top K",
-            "type": "integer"
+            "default": 4
+          },
+          "threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Threshold",
+            "default": 0.35
+          },
+          "candidate_multiplier": {
+            "type": "integer",
+            "maximum": 16.0,
+            "minimum": 1.0,
+            "title": "Candidate Multiplier",
+            "default": 4
           }
         },
-        "title": "RagEvaluationRequest",
-        "type": "object"
+        "additionalProperties": false,
+        "type": "object",
+        "title": "RagEvaluationRequest"
       },
       "RagEvaluationResponse": {
-        "additionalProperties": false,
         "properties": {
           "report": {
             "anyOf": [
@@ -848,127 +2965,127 @@
             "title": "Report"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "report"
         ],
-        "title": "RagEvaluationResponse",
-        "type": "object"
+        "title": "RagEvaluationResponse"
       },
       "RagQualityResponse": {
-        "additionalProperties": true,
-        "description": "Quality output stays forward-compatible while its envelope is stable.",
         "properties": {},
+        "additionalProperties": true,
+        "type": "object",
         "title": "RagQualityResponse",
-        "type": "object"
+        "description": "Quality output stays forward-compatible while its envelope is stable."
       },
       "RagSearchRequest": {
-        "additionalProperties": false,
         "properties": {
-          "candidate_multiplier": {
-            "default": 4,
-            "maximum": 16.0,
-            "minimum": 1.0,
-            "title": "Candidate Multiplier",
-            "type": "integer"
-          },
           "query": {
+            "type": "string",
             "maxLength": 20000,
             "minLength": 1,
-            "title": "Query",
-            "type": "string"
-          },
-          "threshold": {
-            "default": 0.35,
-            "maximum": 1.0,
-            "minimum": -1.0,
-            "title": "Threshold",
-            "type": "number"
+            "title": "Query"
           },
           "top_k": {
-            "default": 4,
+            "type": "integer",
             "maximum": 20.0,
             "minimum": 1.0,
             "title": "Top K",
-            "type": "integer"
+            "default": 4
+          },
+          "threshold": {
+            "type": "number",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "title": "Threshold",
+            "default": 0.35
+          },
+          "candidate_multiplier": {
+            "type": "integer",
+            "maximum": 16.0,
+            "minimum": 1.0,
+            "title": "Candidate Multiplier",
+            "default": 4
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "query"
         ],
-        "title": "RagSearchRequest",
-        "type": "object"
+        "title": "RagSearchRequest"
       },
       "RagSearchResponse": {
-        "additionalProperties": true,
-        "description": "Diagnostic results are intentionally extensible for retrieval tuning.",
         "properties": {},
+        "additionalProperties": true,
+        "type": "object",
         "title": "RagSearchResponse",
-        "type": "object"
+        "description": "Diagnostic results are intentionally extensible for retrieval tuning."
       },
       "RagStatusResponse": {
-        "additionalProperties": false,
         "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
           "documents": {
             "items": {
               "$ref": "#/components/schemas/KnowledgeDocument"
             },
-            "title": "Documents",
-            "type": "array"
-          },
-          "status": {
-            "title": "Status",
-            "type": "string"
+            "type": "array",
+            "title": "Documents"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "status",
           "documents"
         ],
-        "title": "RagStatusResponse",
-        "type": "object"
+        "title": "RagStatusResponse"
       },
       "SessionResponse": {
-        "additionalProperties": false,
         "properties": {
-          "authentication": {
-            "const": "signed_cookie",
-            "title": "Authentication",
-            "type": "string"
-          },
           "user_id": {
-            "title": "User Id",
-            "type": "string"
+            "type": "string",
+            "title": "User Id"
+          },
+          "authentication": {
+            "type": "string",
+            "const": "signed_cookie",
+            "title": "Authentication"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "user_id",
           "authentication"
         ],
-        "title": "SessionResponse",
-        "type": "object"
+        "title": "SessionResponse"
       },
       "UsageEventsResponse": {
-        "additionalProperties": false,
         "properties": {
           "events": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Events",
-            "type": "array"
+            "type": "array",
+            "title": "Events"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "events"
         ],
-        "title": "UsageEventsResponse",
-        "type": "object"
+        "title": "UsageEventsResponse"
       },
       "UsageSummaryResponse": {
-        "additionalProperties": false,
         "properties": {
-          "limits": {
+          "today": {
             "additionalProperties": {
               "anyOf": [
                 {
@@ -979,8 +3096,8 @@
                 }
               ]
             },
-            "title": "Limits",
-            "type": "object"
+            "type": "object",
+            "title": "Today"
           },
           "month": {
             "additionalProperties": {
@@ -993,14 +3110,14 @@
                 }
               ]
             },
-            "title": "Month",
-            "type": "object"
+            "type": "object",
+            "title": "Month"
           },
           "requests_last_minute": {
-            "title": "Requests Last Minute",
-            "type": "integer"
+            "type": "integer",
+            "title": "Requests Last Minute"
           },
-          "today": {
+          "limits": {
             "additionalProperties": {
               "anyOf": [
                 {
@@ -1011,28 +3128,22 @@
                 }
               ]
             },
-            "title": "Today",
-            "type": "object"
+            "type": "object",
+            "title": "Limits"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "today",
           "month",
           "requests_last_minute",
           "limits"
         ],
-        "title": "UsageSummaryResponse",
-        "type": "object"
+        "title": "UsageSummaryResponse"
       },
       "ValidationError": {
         "properties": {
-          "ctx": {
-            "title": "Context",
-            "type": "object"
-          },
-          "input": {
-            "title": "Input"
-          },
           "loc": {
             "items": {
               "anyOf": [
@@ -1044,1667 +3155,60 @@
                 }
               ]
             },
-            "title": "Location",
-            "type": "array"
+            "type": "array",
+            "title": "Location"
           },
           "msg": {
-            "title": "Message",
-            "type": "string"
+            "type": "string",
+            "title": "Message"
           },
           "type": {
-            "title": "Error Type",
-            "type": "string"
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
           }
         },
+        "type": "object",
         "required": [
           "loc",
           "msg",
           "type"
         ],
-        "title": "ValidationError",
-        "type": "object"
+        "title": "ValidationError"
       },
       "WeeklyMoodResponse": {
-        "additionalProperties": false,
         "properties": {
-          "analysis": {
-            "title": "Analysis",
-            "type": "string"
-          },
           "points": {
             "items": {
               "additionalProperties": true,
               "type": "object"
             },
-            "title": "Points",
-            "type": "array"
+            "type": "array",
+            "title": "Points"
           },
           "summary": {
-            "title": "Summary",
-            "type": "string"
+            "type": "string",
+            "title": "Summary"
+          },
+          "analysis": {
+            "type": "string",
+            "title": "Analysis"
           }
         },
+        "additionalProperties": false,
+        "type": "object",
         "required": [
           "points",
           "summary",
           "analysis"
         ],
-        "title": "WeeklyMoodResponse",
-        "type": "object"
-      }
-    }
-  },
-  "info": {
-    "description": "Versioned API contract for the Emotion-Aware Chat application.",
-    "title": "Emotion-Aware Chat API",
-    "version": "1.0.0",
-    "x-api-version": "v1",
-    "x-contract-version": "2026-07-19.1"
-  },
-  "openapi": "3.1.0",
-  "paths": {
-    "/api/v1/auth/login": {
-      "post": {
-        "operationId": "login_api_v1_auth_login_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/LoginRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/LoginResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Login"
-      }
-    },
-    "/api/v1/auth/logout": {
-      "post": {
-        "operationId": "logout_api_v1_auth_logout_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Logout"
-      }
-    },
-    "/api/v1/auth/session": {
-      "get": {
-        "operationId": "session_info_api_v1_auth_session_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Session Info"
-      }
-    },
-    "/api/v1/chat": {
-      "post": {
-        "operationId": "chat_api_v1_chat_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChatResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Chat"
-      }
-    },
-    "/api/v1/chat/stream": {
-      "post": {
-        "operationId": "chat_stream_api_v1_chat_stream_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChatRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "text/event-stream": {}
-            },
-            "description": "Server-sent events: `chunk` ({text}), optional `receipt` ({text}), then `done` ({}). On generation failure emits `error` ({code, message})."
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Chat Stream"
-      }
-    },
-    "/api/v1/contract": {
-      "get": {
-        "operationId": "contract_info_api_v1_contract_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ContractInfoResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Contract Info"
-      }
-    },
-    "/api/v1/conversations": {
-      "get": {
-        "operationId": "conversations_api_v1_conversations_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConversationListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Conversations"
-      },
-      "post": {
-        "operationId": "new_conversation_api_v1_conversations_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ConversationCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConversationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "New Conversation"
-      }
-    },
-    "/api/v1/conversations/{conversation_id}": {
-      "delete": {
-        "operationId": "remove_conversation_api_v1_conversations__conversation_id__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Remove Conversation"
-      },
-      "get": {
-        "operationId": "conversation_api_v1_conversations__conversation_id__get",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "conversation_id",
-            "required": true,
-            "schema": {
-              "title": "Conversation Id",
-              "type": "string"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ConversationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Conversation"
-      }
-    },
-    "/api/v1/export": {
-      "get": {
-        "operationId": "export_data_api_v1_export_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ExportResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Export Data"
-      }
-    },
-    "/api/v1/memory": {
-      "get": {
-        "operationId": "memory_snapshot_api_v1_memory_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemorySnapshotResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Memory Snapshot"
-      }
-    },
-    "/api/v1/memory/quality": {
-      "get": {
-        "operationId": "memory_quality_api_v1_memory_quality_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MemoryQualityResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Memory Quality"
-      }
-    },
-    "/api/v1/mood/checkins": {
-      "get": {
-        "operationId": "list_mood_records_api_v1_mood_checkins_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MoodCheckinListResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "List Mood Records"
-      },
-      "post": {
-        "operationId": "create_mood_checkin_api_v1_mood_checkins_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/MoodCheckinRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/MoodCheckinResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Create Mood Checkin"
-      }
-    },
-    "/api/v1/mood/checkins/{checkin_date}": {
-      "delete": {
-        "operationId": "remove_mood_checkin_api_v1_mood_checkins__checkin_date__delete",
-        "parameters": [
-          {
-            "in": "path",
-            "name": "checkin_date",
-            "required": true,
-            "schema": {
-              "title": "Checkin Date",
-              "type": "string"
-            }
-          },
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "204": {
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Remove Mood Checkin"
-      }
-    },
-    "/api/v1/mood/weekly": {
-      "get": {
-        "operationId": "weekly_mood_api_v1_mood_weekly_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "end_date",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "End Date"
-            }
-          },
-          {
-            "in": "query",
-            "name": "days",
-            "required": false,
-            "schema": {
-              "default": 7,
-              "maximum": 31,
-              "minimum": 1,
-              "title": "Days",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/WeeklyMoodResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Weekly Mood"
-      }
-    },
-    "/api/v1/privacy": {
-      "get": {
-        "operationId": "privacy_api_v1_privacy_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrivacyResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Privacy"
-      }
-    },
-    "/api/v1/privacy/data": {
-      "delete": {
-        "operationId": "delete_privacy_data_api_v1_privacy_data_delete",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/PrivacyDeleteRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/PrivacyDeletionResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Delete Privacy Data"
-      }
-    },
-    "/api/v1/rag/evaluations/latest": {
-      "get": {
-        "operationId": "rag_latest_evaluation_api_v1_rag_evaluations_latest_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RagEvaluationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Rag Latest Evaluation"
-      }
-    },
-    "/api/v1/rag/evaluations/run": {
-      "post": {
-        "operationId": "rag_run_evaluation_api_v1_rag_evaluations_run_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RagEvaluationRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RagEvaluationResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Rag Run Evaluation"
-      }
-    },
-    "/api/v1/rag/quality": {
-      "get": {
-        "operationId": "rag_quality_api_v1_rag_quality_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RagQualityResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Rag Quality"
-      }
-    },
-    "/api/v1/rag/search": {
-      "post": {
-        "operationId": "rag_search_api_v1_rag_search_post",
-        "parameters": [
-          {
-            "in": "header",
-            "name": "X-CSRF-Token",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "X-Csrf-Token"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_csrf",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Csrf"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/RagSearchRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RagSearchResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Rag Search"
-      }
-    },
-    "/api/v1/rag/status": {
-      "get": {
-        "operationId": "rag_status_api_v1_rag_status_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/RagStatusResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Rag Status"
-      }
-    },
-    "/api/v1/usage": {
-      "get": {
-        "operationId": "api_usage_api_v1_usage_get",
-        "parameters": [
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UsageSummaryResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Api Usage"
-      }
-    },
-    "/api/v1/usage/events": {
-      "get": {
-        "operationId": "api_usage_event_list_api_v1_usage_events_get",
-        "parameters": [
-          {
-            "in": "query",
-            "name": "limit",
-            "required": false,
-            "schema": {
-              "default": 100,
-              "maximum": 1000,
-              "minimum": 1,
-              "title": "Limit",
-              "type": "integer"
-            }
-          },
-          {
-            "in": "cookie",
-            "name": "chatbot_session",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/UsageEventsResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
-          }
-        },
-        "summary": "Api Usage Event List"
-      }
-    },
-    "/health": {
-      "get": {
-        "operationId": "health_health_get",
-        "responses": {
-          "200": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HealthResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          }
-        },
-        "summary": "Health"
+        "title": "WeeklyMoodResponse"
       }
     }
   }
