@@ -1,6 +1,7 @@
-// 默认跟随页面所在主机名：localhost 页面配 localhost API、127.0.0.1 配 127.0.0.1。
-// 二者混用属于跨站请求，SameSite=Lax 的会话 Cookie 不会被浏览器附带，登录会静默失效。
-const DEFAULT_API_BASE_URL = `${window.location.protocol}//${window.location.hostname}:8000`
+// Local Vite development uses FastAPI on port 8000. Public deployments use
+// same-origin /api routing so signed and CSRF cookies remain first-party.
+const isLocalHost = ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname)
+const DEFAULT_API_BASE_URL = isLocalHost ? `${window.location.protocol}//${window.location.hostname}:8000` : ''
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, '')
 
 export async function apiFetch(path, options = {}) {

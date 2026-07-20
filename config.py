@@ -59,7 +59,7 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5
 CHAT_MODEL_NAME      = os.getenv("CHAT_MODEL_NAME", "Qwen/Qwen2.5-3B-Instruct")
 HF_TOKEN             = os.getenv("HF_TOKEN") or None
 
-DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "local_hf")
+DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")
 DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
 DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")
 DEFAULT_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.8)

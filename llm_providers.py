@@ -5,6 +5,7 @@ import time
 import torch
 import ctypes
 import re
+from urllib.parse import urlparse
 
 from dataclasses import dataclass
 from typing import Any, Generator
@@ -37,6 +38,7 @@ from config import (
     API_RETRY_BACKOFF_SECONDS,
 )
 from api_usage_store import check_request_allowed, estimate_input_tokens, estimate_tokens, record_usage
+from observability import get_request_id
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +47,23 @@ _tokenizer: Any | None = None
 _llm_model: Any | None = None
 _model_init_lock = threading.Lock()       # 保护模型懒加载本身的并发初始化
 _llm_inference_lock = threading.Lock()    # 保护 model.generate() 调用的并发执行
+
+def _normalize_api_base_url(base_url: str | None) -> str | None:
+    """Return an OpenAI client compatible HTTP(S) base URL."""
+    value = (base_url or "").strip()
+    if not value:
+        return None
+
+    if "://" not in value:
+        local_prefixes = ("localhost", "127.0.0.1", "[::1]", "::1")
+        scheme = "http" if value.lower().startswith(local_prefixes) else "https"
+        value = f"{scheme}://{value}"
+
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("API Base URL must be a valid http:// or https:// address.")
+    return value.rstrip("/")
+
 
 def _resolve_torch_dtype() -> Any | None:
     dtype = LOCAL_MODEL_DTYPE
@@ -150,7 +169,7 @@ class ModelRuntimeConfig:
     user_id: str | None = None
 
     def normalized_provider(self) -> str:
-        return (self.provider or "local_hf").strip().lower()
+        return (self.provider or DEFAULT_LLM_PROVIDER).strip().lower()
 
     def resolved_model(self) -> str:
         if self.model and self.model.strip():
@@ -168,7 +187,7 @@ class ModelRuntimeConfig:
 
     def resolved_base_url(self) -> str | None:
         if self.base_url and self.base_url.strip():
-            return self.base_url.strip()
+            return _normalize_api_base_url(self.base_url)
         provider = self.normalized_provider()
         if provider == "deepseek":
             return "https://api.deepseek.com"
@@ -177,8 +196,8 @@ class ModelRuntimeConfig:
         if provider == "openrouter":
             return "https://openrouter.ai/api/v1"
         if provider in {"openai_compatible", "custom"}:
-            return DEFAULT_API_BASE_URL
-        return self.base_url
+            return _normalize_api_base_url(DEFAULT_API_BASE_URL)
+        return _normalize_api_base_url(self.base_url)
 
     def resolved_api_key(self) -> str | None:
         if self.api_key and self.api_key.strip():
@@ -448,8 +467,8 @@ def _stream_openai_compatible(
                 raise RuntimeError(f"API 请求失败（{error_kind}）：{exc}") from exc
             delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
             logger.warning(
-                "API 请求失败，%.1f 秒后重试。provider=%s model=%s attempt=%s/%s error=%s",
-                delay, provider, model, attempt + 1, API_MAX_RETRIES + 1, exc,
+                "event=provider_retry request_id=%s provider=%s model=%s attempt=%s/%s delay_seconds=%.1f error=%s",
+                get_request_id(), provider, model, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
             )
             if delay:
                 time.sleep(delay)

@@ -29,9 +29,20 @@ class ContractInfoResponse(ContractModel):
     openapi_path: Literal["/openapi.json"] = "/openapi.json"
 
 
+class HealthComponent(ContractModel):
+    status: Literal["ok", "degraded", "pending", "disabled"]
+    detail: str | None = None
+
+
 class HealthResponse(ContractModel):
-    status: Literal["ok"]
+    status: Literal["ok", "degraded"]
     storage_backend: Literal["json", "sqlite"]
+    components: dict[str, HealthComponent]
+    metrics: dict[str, int | float]
+
+
+class StatusResponse(HealthResponse):
+    api_version: Literal["v1"] = "v1"
 
 
 class LoginRequest(ContractModel):
@@ -64,6 +75,7 @@ class ChatRequest(ContractModel):
     use_style: bool = False
     show_memory_receipt: bool = True
     conversation_id: str | None = Field(default=None, max_length=64)
+    retry_last_response: bool = False
 
 
 class ChatResponse(ContractModel):

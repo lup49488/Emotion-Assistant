@@ -6,6 +6,31 @@ import pytest
 import llm_providers
 
 
+def test_resolved_base_url_adds_https_for_public_host():
+    config = llm_providers.ModelRuntimeConfig(
+        provider="deepseek", base_url="api.deepseek.com",
+    )
+
+    assert config.resolved_base_url() == "https://api.deepseek.com"
+
+
+def test_resolved_base_url_adds_http_for_local_host():
+    config = llm_providers.ModelRuntimeConfig(
+        provider="openai_compatible", base_url="127.0.0.1:8001/v1",
+    )
+
+    assert config.resolved_base_url() == "http://127.0.0.1:8001/v1"
+
+
+def test_resolved_base_url_rejects_unsupported_scheme():
+    config = llm_providers.ModelRuntimeConfig(
+        provider="deepseek", base_url="ftp://api.deepseek.com",
+    )
+
+    with pytest.raises(ValueError, match="http"):
+        config.resolved_base_url()
+
+
 def test_get_llm_applies_local_model_loading_options():
     fake_tokenizer_cls = Mock()
     fake_tokenizer_cls.from_pretrained.return_value = Mock(name_or_path="tokenizer")

@@ -17,6 +17,7 @@ from chatbot import get_embedding_model
 logger = logging.getLogger(__name__)
 _warmup_lock = threading.Lock()
 _warmup_started = False
+_warmup_status: dict[str, str] = {"emotion": "pending", "embedding": "pending"}
 
 
 def _api_preload_enabled() -> bool:
@@ -29,10 +30,16 @@ def warmup_api_models() -> None:
         ("emotion", lambda: goemotions.predict_emotion_zh("hello")),
         ("embedding", get_embedding_model),
     ):
+        with _warmup_lock:
+            _warmup_status[label] = "running"
         try:
             loader()
+            with _warmup_lock:
+                _warmup_status[label] = "ready"
             logger.info("API background warmup completed for the %s model.", label)
         except Exception:
+            with _warmup_lock:
+                _warmup_status[label] = "degraded"
             # A failed optional warmup must never prevent the API from serving.
             logger.exception("API background warmup failed for the %s model.", label)
 
@@ -46,6 +53,9 @@ def start_api_background_warmup() -> bool:
     global _warmup_started
 
     if not _api_preload_enabled():
+        with _warmup_lock:
+            for label in _warmup_status:
+                _warmup_status[label] = "disabled"
         logger.info("API model warmup is disabled by API_PRELOAD_MODELS.")
         return False
 
@@ -57,3 +67,9 @@ def start_api_background_warmup() -> bool:
     threading.Thread(target=warmup_api_models, name="api-model-warmup", daemon=True).start()
     logger.info("API background model warmup thread started.")
     return True
+
+
+def warmup_status() -> dict[str, str]:
+    """Return model-preload state without triggering model initialization."""
+    with _warmup_lock:
+        return dict(_warmup_status)

@@ -177,6 +177,49 @@ def append_exchange(user_id: str, conversation_id: str | None, user_text: str, a
     return conversation_id
 
 
+def remove_last_exchange(user_id: str, conversation_id: str | None, user_text: str) -> bool:
+    """Remove the last matching user/assistant pair before a retry."""
+    user_id = validate_user_id(user_id)
+    conversation_id = (conversation_id or "").strip()
+    if not conversation_id:
+        return False
+    if sqlite_enabled():
+        with sqlite_connection() as conn:
+            rows = conn.execute(
+                """
+                SELECT m.id, m.role, m.content FROM conversation_messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE m.conversation_id = ? AND c.user_id = ?
+                ORDER BY m.position DESC, m.id DESC LIMIT 2
+                """,
+                (conversation_id, user_id),
+            ).fetchall()
+            if len(rows) != 2 or rows[0]["role"] != "assistant" or rows[1]["role"] != "user":
+                return False
+            if str(rows[1]["content"]) != user_text:
+                return False
+            conn.executemany("DELETE FROM conversation_messages WHERE id = ?", [(rows[0]["id"],), (rows[1]["id"],)])
+        return True
+    with user_file_lock(user_id):
+        conversations = _load_json_conversations(user_id)
+        for record in conversations:
+            if str(record.get("id")) != conversation_id:
+                continue
+            messages = record.get("messages", [])
+            if not isinstance(messages, list) or len(messages) < 2:
+                return False
+            user_message, assistant_message = messages[-2:]
+            if user_message.get("role") != "user" or assistant_message.get("role") != "assistant":
+                return False
+            if str(user_message.get("content", "")) != user_text:
+                return False
+            record["messages"] = messages[:-2]
+            record["updated_at"] = _now()
+            _save_json_conversations(user_id, conversations)
+            return True
+    return False
+
+
 def delete_conversation(user_id: str, conversation_id: str) -> bool:
     user_id = validate_user_id(user_id)
     if sqlite_enabled():

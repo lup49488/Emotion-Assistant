@@ -129,9 +129,11 @@ class TestScoreMemory(unittest.TestCase):
 
     def test_threshold_boundary_long_term_inclusive(self):
         # score 恰好等于阈值 4.0 时应该判定为 long（>= 是包含边界的）
-        result = chatbot.smart_memory_filter(
-            self._fresh_state(), "我喜欢一个人难过", "sadness", 0.5
-        )
+        # This test validates classification boundaries, not vector-index loading.
+        with patch.object(memory_store, "save_interest", return_value="added"):
+            result = chatbot.smart_memory_filter(
+                self._fresh_state(), "我喜欢一个人难过", "sadness", 0.5
+            )
         self.assertEqual(result, "long")
 
     def test_threshold_boundary_mid_term_inclusive(self):

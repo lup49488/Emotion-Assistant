@@ -12,6 +12,7 @@ import api_server
 import model_warmup
 import session_store
 from auth_store import change_access_key
+from conversation_store import append_exchange
 
 
 def _login(client, monkeypatch, tmp_path, user_id="api-alice", access_key="api-secret"):
@@ -28,10 +29,24 @@ def _login(client, monkeypatch, tmp_path, user_id="api-alice", access_key="api-s
 
 def test_health_reports_storage_backend():
     with TestClient(api_server.app, base_url="https://testserver") as client:
-        response = client.get("/health")
+        response = client.get("/health", headers={"X-Request-ID": "health-check-1"})
 
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.json()["components"]["storage"]["status"] == "ok"
+    assert "metrics" in response.json()
+    assert response.headers["X-Request-ID"] == "health-check-1"
+
+
+def test_versioned_status_exposes_safe_runtime_metrics():
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        response = client.get("/api/v1/status")
+
+    payload = response.json()
+    assert response.status_code == 200
+    assert payload["api_version"] == "v1"
+    assert "api_key" not in str(payload).lower()
+    assert payload["metrics"]["http_requests_total"] >= 1
 
 
 def test_api_lifespan_starts_warmup_once(monkeypatch):
@@ -105,16 +120,49 @@ def test_chat_stream_emits_chunks_receipt_and_done(monkeypatch, tmp_path):
 
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
+        headers["X-Request-ID"] = "stream-check-1"
         with client.stream(
             "POST", "/api/v1/chat/stream", json={"message": "hi"}, headers=headers
         ) as response:
             assert response.status_code == 200
+            assert response.headers["X-Request-ID"] == "stream-check-1"
             body = "".join(response.iter_text())
 
     assert "event: chunk" in body
     assert "在的" in body
     assert "event: receipt" in body
     assert body.rstrip().endswith("event: done\ndata: {}")
+
+
+def test_chat_retry_replaces_the_last_saved_exchange(monkeypatch, tmp_path):
+    def fake_stream(user_id, message, **kwargs):
+        reply = "Retried reply"
+        append_exchange(user_id, kwargs.get("conversation_id"), message, reply)
+        yield reply
+
+    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        created = client.post("/api/v1/conversations", json={"title": "Retry"}, headers=headers)
+        conversation_id = created.json()["conversation"]["id"]
+        first = client.post(
+            "/api/v1/chat",
+            json={"message": "Try again", "conversation_id": conversation_id, "show_memory_receipt": False},
+            headers=headers,
+        )
+        retried = client.post(
+            "/api/v1/chat",
+            json={
+                "message": "Try again", "conversation_id": conversation_id,
+                "retry_last_response": True, "show_memory_receipt": False,
+            },
+            headers=headers,
+        )
+        detail = client.get(f"/api/v1/conversations/{conversation_id}")
+
+    assert first.status_code == 200
+    assert retried.status_code == 200
+    assert [message["content"] for message in detail.json()["conversation"]["messages"]] == ["Try again", "Retried reply"]
 
 
 def test_mood_checkin_rejects_invalid_date_with_422(monkeypatch, tmp_path):
@@ -285,3 +333,57 @@ def test_chat_provider_defaults_to_server_configured_provider(monkeypatch, tmp_p
     assert response.json()["reply"] == "ok"
     # 前端未指定 provider 时，应遵循服务器 .env 配置而不是硬编码 local_hf。
     assert captured["provider"] == "deepseek"
+
+
+def test_retry_cannot_remove_messages_from_another_users_conversation(monkeypatch, tmp_path):
+    from conversation_store import append_exchange, get_conversation
+
+    monkeypatch.setenv("STORAGE_BACKEND", "sqlite")
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "retry.db"))
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    from conversation_store import create_conversation
+
+    victim_conversation = create_conversation("victim-user", "Victim chat")
+    append_exchange("victim-user", victim_conversation["id"], "秘密消息", "受害者的回复")
+
+    from conversation_store import remove_last_exchange
+
+    # 攻击者知道会话 ID 和消息原文，但不是会话所有者。
+    assert remove_last_exchange("attacker-user", victim_conversation["id"], "秘密消息") is False
+    record = get_conversation("victim-user", victim_conversation["id"])
+    assert [message["content"] for message in record["messages"]] == ["秘密消息", "受害者的回复"]
+
+    # 所有者本人可以正常执行重试删除。
+    assert remove_last_exchange("victim-user", victim_conversation["id"], "秘密消息") is True
+
+
+def test_retry_rolls_back_short_term_memory(monkeypatch, tmp_path):
+    import chatbot
+
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    def fake_stream(user_id, message, **kwargs):
+        yield "ok"
+
+    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with chatbot.session_store.session("api-alice") as state:
+            state.history.extend([
+                {"role": "user", "content": "重试这条"},
+                {"role": "assistant", "content": "模型调用失败：boom"},
+            ])
+
+        response = client.post(
+            "/api/v1/chat",
+            json={"message": "重试这条", "retry_last_response": True, "show_memory_receipt": False},
+            headers=headers,
+        )
+        with chatbot.session_store.session("api-alice") as state:
+            history_after = list(state.history)
+
+    assert response.status_code == 200
+    # 失败的一轮已从短期记忆移除，重试上下文不再包含旧的错误回复。
+    assert {"role": "assistant", "content": "模型调用失败：boom"} not in history_after

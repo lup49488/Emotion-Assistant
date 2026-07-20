@@ -55,7 +55,20 @@ Verify locally before exposing either service:
 
 ```bash
 curl http://127.0.0.1:8000/health
+curl http://127.0.0.1:8000/api/v1/status
 curl -I http://127.0.0.1:4173/
+```
+
+`/health` is safe for a reverse proxy or uptime monitor. It reports storage,
+RAG, warmup state, and aggregate request metrics without exposing credentials,
+user data, model prompts, or API keys. Every API response also includes an
+`X-Request-ID` header; use that value to correlate a browser failure with the
+server log.
+
+Run the same checks used by CI before a manual deployment:
+
+```bash
+python3 deployment_check.py --skip-dependencies --smoke-api --frontend-build
 ```
 
 ## 3. Configure Cloudflare Tunnel
@@ -108,6 +121,7 @@ sudo systemctl status cloudflared
    both `Secure` and sent to the same hostname.
 3. Send a chat message and confirm that `POST /api/v1/chat/stream` succeeds.
 4. Check the server logs and `systemctl status cloudflared`.
+   Search logs by `request_id=<X-Request-ID>` when investigating a failed chat request.
 
 Use a named tunnel for this project. Quick Tunnels (`trycloudflare.com`) are
 not suitable because they do not support the application's SSE chat stream.

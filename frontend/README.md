@@ -1,4 +1,4 @@
-# Mindful React Frontend
+# Serenova React Frontend
 
 Standalone React + Vite client for the FastAPI `/api/v1` contract.
 

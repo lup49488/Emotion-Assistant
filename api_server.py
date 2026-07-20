@@ -13,6 +13,7 @@ import os
 import secrets
 import tempfile
 import time
+import uuid
 from collections.abc import Generator
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -56,15 +57,16 @@ from api_contracts import (
     RagSearchResponse,
     RagStatusResponse,
     SessionResponse,
+    StatusResponse,
     UsageEventsResponse,
     UsageSummaryResponse,
     WeeklyMoodResponse,
 )
 from chatbot import handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from auth_store import access_key_version
-from config import DEFAULT_LLM_PROVIDER
+from config import BASE_DIR, DEFAULT_LLM_PROVIDER
 from api_usage_store import list_usage_events, usage_summary
-from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations, rename_conversation
+from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations, remove_last_exchange, rename_conversation
 from export_store import build_user_export_payload
 from gui_auth import authorize
 from knowledge_store import (
@@ -79,16 +81,17 @@ from knowledge_store import (
 )
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
 from memory_store import record_memory_event
-from model_warmup import start_api_background_warmup
+from model_warmup import start_api_background_warmup, warmup_status
+from observability import chat_finished, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
 from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
-from sqlite_store import storage_backend
+from sqlite_store import connection, storage_backend
 
 
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-07-19.2"
+API_CONTRACT_VERSION = "2026-07-20.1"
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -132,8 +135,41 @@ app.add_middleware(
     allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE"],
-    allow_headers=["Content-Type", "X-CSRF-Token"],
+    allow_headers=["Content-Type", "X-CSRF-Token", "X-Request-ID"],
 )
+
+
+def _request_id_from_header(request: Request) -> str:
+    supplied = request.headers.get("X-Request-ID", "").strip()
+    if supplied and len(supplied) <= 64 and supplied.replace("-", "").replace("_", "").isalnum():
+        return supplied
+    return uuid.uuid4().hex
+
+
+@app.middleware("http")
+async def request_observability(request: Request, call_next):
+    request_id = _request_id_from_header(request)
+    token = set_request_id(request_id)
+    started = time.perf_counter()
+    request_started()
+    response: Response | None = None
+    status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        response.headers["X-Request-ID"] = request_id
+        return response
+    except Exception:
+        logger.exception("event=http_request_failed request_id=%s method=%s path=%s", request_id, request.method, request.url.path)
+        raise
+    finally:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        request_finished(status_code, duration_ms)
+        logger.info(
+            "event=http_request request_id=%s method=%s path=%s status=%s duration_ms=%s",
+            request_id, request.method, request.url.path, status_code, duration_ms,
+        )
+        reset_request_id(token)
 
 
 def _error_code(status_code: int) -> str:
@@ -259,9 +295,47 @@ CurrentUser = Annotated[str, Depends(_current_user)]
 CsrfCurrentUser = Annotated[str, Depends(_csrf_protected_user)]
 
 
+def _storage_component() -> dict[str, str]:
+    try:
+        if storage_backend() == "sqlite":
+            with connection() as conn:
+                conn.execute("SELECT 1")
+        else:
+            (BASE_DIR / "users").mkdir(parents=True, exist_ok=True)
+        return {"status": "ok"}
+    except Exception as exc:
+        logger.exception("event=health_storage_failed request_id=%s", get_request_id())
+        return {"status": "degraded", "detail": type(exc).__name__}
+
+
+def _health_payload() -> dict[str, Any]:
+    storage = _storage_component()
+    preload = warmup_status()
+    warmup_state = "degraded" if "degraded" in preload.values() else "disabled" if preload and set(preload.values()) == {"disabled"} else "pending" if any(value in {"pending", "running"} for value in preload.values()) else "ok"
+    components = {
+        "storage": storage,
+        "warmup": {"status": warmup_state},
+        "rag": {"status": "ok", "detail": knowledge_status()},
+    }
+    overall = "degraded" if any(component["status"] == "degraded" for component in components.values()) else "ok"
+    return {
+        "status": overall,
+        "storage_backend": storage_backend(),
+        "components": components,
+        "metrics": runtime_metrics(),
+    }
+
+
 @app.get("/health", response_model=HealthResponse)
-def health() -> dict[str, str]:
-    return {"status": "ok", "storage_backend": storage_backend()}
+def health() -> dict[str, Any]:
+    """Public liveness/readiness report without configuration secrets."""
+    return _health_payload()
+
+
+@app.get("/api/v1/status", response_model=StatusResponse)
+def api_status() -> dict[str, Any]:
+    """Versioned operational status for reverse proxies and monitoring."""
+    return {**_health_payload(), "api_version": "v1"}
 
 
 @app.get("/api/v1/contract", response_model=ContractInfoResponse)
@@ -290,7 +364,26 @@ def session_info(user_id: CurrentUser) -> dict[str, str]:
     return {"user_id": user_id, "authentication": "signed_cookie"}
 
 
+def _rollback_short_term_exchange(user_id: str, user_text: str) -> None:
+    """Drop the failed user/assistant pair from working memory before a retry.
+
+    Otherwise the model would see its own failed reply plus a duplicated user
+    turn in the short-term context while regenerating.
+    """
+    with session_store.session(user_id) as state:
+        if (
+            len(state.history) >= 2
+            and state.history[-2].get("role") == "user"
+            and str(state.history[-2].get("content", "")) == user_text
+            and state.history[-1].get("role") == "assistant"
+        ):
+            del state.history[-2:]
+
+
 def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, None]:
+    if request.retry_last_response:
+        remove_last_exchange(user_id, request.conversation_id, request.message)
+        _rollback_short_term_exchange(user_id, request.message)
     config = make_model_config(
         provider=request.provider or DEFAULT_LLM_PROVIDER,
         model=request.model,
@@ -313,7 +406,17 @@ def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, Non
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, str]:
-    reply = "".join(_chat_chunks(user_id, request))
+    started = time.perf_counter()
+    try:
+        reply = "".join(_chat_chunks(user_id, request))
+    except Exception:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        chat_finished(False, duration_ms, streaming=False)
+        logger.exception("event=chat_failed request_id=%s provider=%s streaming=false", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER)
+        raise
+    duration_ms = int((time.perf_counter() - started) * 1000)
+    chat_finished(True, duration_ms, streaming=False)
+    logger.info("event=chat_completed request_id=%s provider=%s streaming=false duration_ms=%s reply_chars=%s", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER, duration_ms, len(reply))
     payload = {"reply": reply}
     if request.show_memory_receipt:
         with session_store.session(user_id) as state:
@@ -337,7 +440,11 @@ def _memory_receipt(user_id: str) -> str:
     },
 )
 async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> StreamingResponse:
+    request_id = get_request_id()
+
     async def event_source():
+        token = set_request_id(request_id)
+        started = time.perf_counter()
         try:
             # The chat generator does blocking model inference; iterate it in a
             # worker thread so the async event loop stays responsive.
@@ -347,9 +454,17 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
                 receipt = await run_in_threadpool(_memory_receipt, user_id)
                 yield f"event: receipt\ndata: {json.dumps({'text': receipt}, ensure_ascii=False)}\n\n"
             yield "event: done\ndata: {}\n\n"
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            chat_finished(True, duration_ms, streaming=True)
+            logger.info("event=chat_completed request_id=%s provider=%s streaming=true duration_ms=%s", request_id, request.provider or DEFAULT_LLM_PROVIDER, duration_ms)
         except Exception as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            chat_finished(False, duration_ms, streaming=True)
+            logger.exception("event=chat_failed request_id=%s provider=%s streaming=true", request_id, request.provider or DEFAULT_LLM_PROVIDER)
             error = ApiError(code="generation_failed", message=str(exc))
             yield f"event: error\ndata: {error.model_dump_json()}\n\n"
+        finally:
+            reset_request_id(token)
 
     return StreamingResponse(event_source(), media_type="text/event-stream")
 

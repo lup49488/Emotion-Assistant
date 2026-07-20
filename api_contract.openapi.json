@@ -4,13 +4,14 @@
     "title": "Emotion-Aware Chat API",
     "description": "Versioned API contract for the Emotion-Aware Chat application.",
     "version": "1.0.0",
-    "x-contract-version": "2026-07-19.2",
+    "x-contract-version": "2026-07-20.1",
     "x-api-version": "v1"
   },
   "paths": {
     "/health": {
       "get": {
         "summary": "Health",
+        "description": "Public liveness/readiness report without configuration secrets.",
         "operationId": "health_health_get",
         "responses": {
           "200": {
@@ -19,6 +20,25 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/status": {
+      "get": {
+        "summary": "Api Status",
+        "description": "Versioned operational status for reverse proxies and monitoring.",
+        "operationId": "api_status_api_v1_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StatusResponse"
                 }
               }
             }
@@ -2165,6 +2185,11 @@
               }
             ],
             "title": "Conversation Id"
+          },
+          "retry_last_response": {
+            "type": "boolean",
+            "title": "Retry Last Response",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -2479,11 +2504,45 @@
         "type": "object",
         "title": "HTTPValidationError"
       },
+      "HealthComponent": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded",
+              "pending",
+              "disabled"
+            ],
+            "title": "Status"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "HealthComponent"
+      },
       "HealthResponse": {
         "properties": {
           "status": {
             "type": "string",
-            "const": "ok",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
             "title": "Status"
           },
           "storage_backend": {
@@ -2493,13 +2552,36 @@
               "sqlite"
             ],
             "title": "Storage Backend"
+          },
+          "components": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HealthComponent"
+            },
+            "type": "object",
+            "title": "Components"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Metrics"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "status",
-          "storage_backend"
+          "storage_backend",
+          "components",
+          "metrics"
         ],
         "title": "HealthResponse"
       },
@@ -3064,6 +3146,62 @@
           "authentication"
         ],
         "title": "SessionResponse"
+      },
+      "StatusResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "degraded"
+            ],
+            "title": "Status"
+          },
+          "storage_backend": {
+            "type": "string",
+            "enum": [
+              "json",
+              "sqlite"
+            ],
+            "title": "Storage Backend"
+          },
+          "components": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/HealthComponent"
+            },
+            "type": "object",
+            "title": "Components"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "type": "object",
+            "title": "Metrics"
+          },
+          "api_version": {
+            "type": "string",
+            "const": "v1",
+            "title": "Api Version",
+            "default": "v1"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status",
+          "storage_backend",
+          "components",
+          "metrics"
+        ],
+        "title": "StatusResponse"
       },
       "UsageEventsResponse": {
         "properties": {

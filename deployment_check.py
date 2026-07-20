@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import os
 import socket
 import subprocess
@@ -18,6 +19,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_project_env(BASE_DIR)
 REQUIRED_PROJECT_FILES = ("Web_GUI.py", "api_server.py", "config.py", "requirements.txt", "sqlite_store.py")
 REQUIRED_MODULES = ("fastapi", "gradio", "numpy", "openai", "pytest")
+FRONTEND_DIR = BASE_DIR / "frontend"
 
 
 class CheckReporter:
@@ -73,7 +75,7 @@ def check_runtime_configuration(reporter: CheckReporter) -> None:
     else:
         reporter.ok(f"GUI bind address: {host or '127.0.0.1'}")
 
-    provider = os.getenv("LLM_PROVIDER", "local_hf").strip().lower()
+    provider = os.getenv("LLM_PROVIDER", "openai_compatible").strip().lower()
     if provider not in {"", "local_hf"} and not os.getenv("LLM_API_KEY", "").strip():
         reporter.warn("No generic LLM_API_KEY is configured; provider-specific environment keys or GUI input are required.")
 
@@ -81,6 +83,24 @@ def check_runtime_configuration(reporter: CheckReporter) -> None:
         database_path = Path(os.getenv("SQLITE_DATABASE_PATH", BASE_DIR / "data" / "chatbot.db"))
         if not database_path.parent.exists():
             reporter.warn(f"SQLite parent directory will be created at startup: {database_path.parent}")
+
+    if not os.getenv("API_SESSION_SECRET", "").strip():
+        reporter.warn("API_SESSION_SECRET is not configured; signed sessions will be invalidated after a restart.")
+    if host in {"0.0.0.0", "::"} and os.getenv("API_COOKIE_SECURE", "false").strip().lower() != "true":
+        reporter.warn("API_COOKIE_SECURE should be true when serving the application through HTTPS.")
+
+
+def check_frontend_build(reporter: CheckReporter) -> None:
+    if not (FRONTEND_DIR / "package.json").is_file():
+        reporter.fail("frontend/package.json is missing.")
+        return
+    npm_command = "npm.cmd" if os.name == "nt" else "npm"
+    for script in ("lint", "build"):
+        result = subprocess.run([npm_command, "run", script], cwd=FRONTEND_DIR, check=False)
+        if result.returncode:
+            reporter.fail(f"Frontend npm run {script} failed.")
+            return
+    reporter.ok("Frontend lint and production build passed")
 
 
 def _free_local_port() -> int:
@@ -156,7 +176,11 @@ def smoke_check_api(reporter: CheckReporter, timeout_seconds: int = 45) -> None:
             try:
                 with urllib.request.urlopen(endpoint, timeout=2) as response:
                     if response.status == 200:
-                        reporter.ok("API smoke check returned HTTP 200")
+                        payload = json.loads(response.read().decode("utf-8"))
+                        if payload.get("status") == "ok" and "components" in payload and "metrics" in payload:
+                            reporter.ok("API smoke check returned a healthy structured status report")
+                            return
+                        reporter.fail("API smoke check returned an invalid health payload.")
                         return
             except OSError:
                 time.sleep(1)
@@ -184,6 +208,7 @@ def main() -> int:
     parser.add_argument("--smoke-web", action="store_true", help="Launch the Gradio app and check HTTP readiness.")
     parser.add_argument("--smoke-api", action="store_true", help="Launch the FastAPI adapter and check HTTP readiness.")
     parser.add_argument("--tests", action="store_true", help="Run the full pytest suite.")
+    parser.add_argument("--frontend-build", action="store_true", help="Run frontend lint and production build.")
     parser.add_argument("--skip-dependencies", action="store_true", help="Skip Python dependency discovery.")
     args = parser.parse_args()
 
@@ -195,6 +220,8 @@ def main() -> int:
     check_runtime_configuration(reporter)
     if args.tests:
         run_tests(reporter)
+    if args.frontend_build:
+        check_frontend_build(reporter)
     if args.smoke_web:
         smoke_check_web(reporter)
     if args.smoke_api:

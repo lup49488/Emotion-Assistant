@@ -949,7 +949,7 @@ initial_model_choices = MODEL_CHOICES.get(initial_provider, MODEL_CHOICES[PROVID
 initial_model = DEFAULT_MODELS.get(initial_provider, initial_model_choices[0])
 initial_base_url = DEFAULT_BASE_URLS.get(initial_provider, "")
 
-with gr.Blocks(title=tr("情绪感知对话助手")) as demo:
+with gr.Blocks(title="Serenova") as demo:
     locale_probe_input = gr.Textbox(value="zh-CN", visible=False, render=False)
     provider_input = gr.Dropdown(
         label="Provider",
