@@ -187,6 +187,50 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_api_usage_events_user_created
             ON api_usage_events(user_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS observability_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            request_id TEXT NOT NULL,
+            method TEXT NOT NULL,
+            path TEXT NOT NULL,
+            status_code INTEGER NOT NULL,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_observability_events_created
+            ON observability_events(created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_observability_events_path_created
+            ON observability_events(path, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS operations_alert_events (
+            fingerprint TEXT PRIMARY KEY,
+            severity TEXT NOT NULL CHECK (severity IN ('warning', 'critical')),
+            message TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('active', 'resolved')),
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            first_seen_at TEXT NOT NULL,
+            last_seen_at TEXT NOT NULL,
+            resolved_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_operations_alert_events_status_seen
+            ON operations_alert_events(status, last_seen_at DESC);
+
+        CREATE TABLE IF NOT EXISTS background_jobs (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            kind TEXT NOT NULL,
+            status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'cancelled')),
+            progress INTEGER NOT NULL DEFAULT 0 CHECK (progress BETWEEN 0 AND 100),
+            message TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL DEFAULT '{}',
+            result_json TEXT,
+            error TEXT,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_background_jobs_user_created
+            ON background_jobs(user_id, created_at DESC);
         """
     )
     conn.execute(

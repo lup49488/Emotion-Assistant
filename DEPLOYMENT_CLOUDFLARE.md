@@ -25,10 +25,20 @@ API_CORS_ORIGINS=https://chat.example.com
 API_SERVER_HOST=127.0.0.1
 API_SERVER_PORT=8000
 API_PRELOAD_MODELS=true
+API_PUBLIC_MODE=true
+API_TRUSTED_HOSTS=chat.example.com
+API_ENABLE_DOCS=false
+# cloudflared is the only path to FastAPI in this layout, so proxy client IP
+# headers can be trusted for login abuse limiting.
+API_TRUST_PROXY_HEADERS=true
 ```
 
 Replace `chat.example.com` with the hostname configured in Cloudflare. If you
 use a different API provider, configure its provider-specific key instead.
+
+Public mode refuses to start unless secure cookies, a fixed session secret, and
+an explicit public host allowlist are configured. The API also applies strict
+security response headers, a request-size limit, and failed-login rate limits.
 
 ## 2. Build and run the frontend locally on the server
 

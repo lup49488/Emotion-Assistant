@@ -328,10 +328,6 @@ def respond(
                 partial += chunk
                 yielded_response = True
                 yield partial, conversation_update
-        if partial.startswith("模型调用失败："):
-            # 整条内容是错误提示而非模型输出，替换为当前语言的版本。
-            partial = localize_status_text(partial, locale)
-            yield partial, conversation_update
         if show_memory_receipt:
             with session_store.session(user_id) as state:
                 receipt = localize_status_text(latest_memory_receipt(state), locale)

@@ -11,7 +11,6 @@ import hmac
 import logging
 import os
 import secrets
-import tempfile
 import time
 import uuid
 from collections.abc import Generator
@@ -26,9 +25,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from api_contracts import (
     ApiError,
+    BackgroundJobListResponse,
+    BackgroundJobResponse,
     ChatRequest,
     ChatResponse,
     ContractInfoResponse,
@@ -46,12 +48,13 @@ from api_contracts import (
     MoodCheckinListResponse,
     MoodCheckinRequest,
     MoodCheckinResponse,
+    ObservabilitySummaryResponse,
+    OperationsDashboardResponse,
     PrivacyDeletionResponse,
     PrivacyDeleteRequest,
     PrivacyResponse,
     RagEvaluationRequest,
     RagEvaluationResponse,
-    RagDocumentMutationResponse,
     RagQualityResponse,
     RagSearchRequest,
     RagSearchResponse,
@@ -64,7 +67,8 @@ from api_contracts import (
 )
 from chatbot import handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from auth_store import access_key_version
-from config import BASE_DIR, DEFAULT_LLM_PROVIDER
+from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER
+from auth_rate_limit import clear_login_failures, login_allowed, record_login_failure
 from api_usage_store import list_usage_events, usage_summary
 from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations, remove_last_exchange, rename_conversation
 from export_store import build_user_export_payload
@@ -73,25 +77,30 @@ from knowledge_store import (
     SUPPORTED_EXTENSIONS,
     assess_knowledge_quality,
     copy_document_to_store,
-    delete_document,
+    delete_document_from_store,
     diagnose_knowledge_search,
     knowledge_status,
     list_document_details,
-    rebuild_knowledge_index,
+    rebuild_with_release_gate,
+    release_gate_status,
 )
+from job_store import get_job, job_manager, list_jobs, mark_interrupted_jobs
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
 from memory_store import record_memory_event
 from model_warmup import start_api_background_warmup, warmup_status
 from observability import chat_finished, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
+from observability_store import observability_summary, record_http_event
+from operations_store import operations_dashboard
 from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
+from service_errors import ServiceError
 from sqlite_store import connection, storage_backend
 
 
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-07-20.1"
+API_CONTRACT_VERSION = "2026-07-21.6"
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -110,6 +119,19 @@ if not _configured_session_secret:
 SESSION_SECRET = _configured_session_secret.encode("utf-8") or secrets.token_bytes(32)
 
 
+def _trusted_hosts() -> list[str]:
+    return [host.strip() for host in API_TRUSTED_HOSTS.split(",") if host.strip()]
+
+
+if API_PUBLIC_MODE:
+    if not API_COOKIE_SECURE:
+        raise RuntimeError("公网模式要求 API_COOKIE_SECURE=true。")
+    if not _configured_session_secret:
+        raise RuntimeError("公网模式要求设置 API_SESSION_SECRET。")
+    if not _trusted_hosts() or any(host in {"*", "localhost", "127.0.0.1", "[::1]"} for host in _trusted_hosts()):
+        raise RuntimeError("公网模式要求 API_TRUSTED_HOSTS 仅包含明确的公网域名。")
+
+
 def _cors_origins() -> list[str]:
     configured = os.getenv("API_CORS_ORIGINS", "http://127.0.0.1:5173,http://localhost:5173")
     origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
@@ -120,6 +142,9 @@ def _cors_origins() -> list[str]:
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    interrupted = mark_interrupted_jobs()
+    if interrupted:
+        logger.warning("event=background_jobs_interrupted count=%s", interrupted)
     start_api_background_warmup()
     yield
 
@@ -129,7 +154,10 @@ app = FastAPI(
     version=API_VERSION,
     description="Versioned API contract for the Emotion-Aware Chat application.",
     lifespan=lifespan,
+    docs_url="/docs" if API_ENABLE_DOCS else None,
+    redoc_url="/redoc" if API_ENABLE_DOCS else None,
 )
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts())
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins(),
@@ -146,6 +174,21 @@ def _request_id_from_header(request: Request) -> str:
     return uuid.uuid4().hex
 
 
+def _client_ip(request: Request) -> str:
+    if API_TRUST_PROXY_HEADERS:
+        forwarded = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "")
+        if forwarded:
+            return forwarded.split(",", 1)[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _require_operations_user(user_id: str) -> str:
+    allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
+    if user_id not in allowed:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operations dashboard access is not permitted.")
+    return user_id
+
+
 @app.middleware("http")
 async def request_observability(request: Request, call_next):
     request_id = _request_id_from_header(request)
@@ -155,6 +198,13 @@ async def request_observability(request: Request, call_next):
     response: Response | None = None
     status_code = status.HTTP_500_INTERNAL_SERVER_ERROR
     try:
+        content_length = request.headers.get("content-length")
+        try:
+            too_large = bool(content_length and int(content_length) > API_MAX_REQUEST_BYTES)
+        except ValueError:
+            too_large = True
+        if too_large:
+            return JSONResponse(status_code=413, content={"code": "request_too_large", "message": "Request body exceeds the configured size limit."})
         response = await call_next(request)
         status_code = response.status_code
         response.headers["X-Request-ID"] = request_id
@@ -165,11 +215,25 @@ async def request_observability(request: Request, call_next):
     finally:
         duration_ms = int((time.perf_counter() - started) * 1000)
         request_finished(status_code, duration_ms)
+        record_http_event(request_id=request_id, method=request.method, path=request.url.path, status_code=status_code, duration_ms=duration_ms)
         logger.info(
             "event=http_request request_id=%s method=%s path=%s status=%s duration_ms=%s",
             request_id, request.method, request.url.path, status_code, duration_ms,
         )
         reset_request_id(token)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+    response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+    response.headers.setdefault("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+    if API_COOKIE_SECURE:
+        response.headers.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+    return response
 
 
 def _error_code(status_code: int) -> str:
@@ -187,6 +251,12 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
     details = exc.detail if isinstance(exc.detail, list) else None
     payload = ApiError(code=_error_code(exc.status_code), message=message, details=details)
     return JSONResponse(status_code=exc.status_code, content=payload.model_dump(exclude_none=True))
+
+
+@app.exception_handler(ServiceError)
+async def service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
+    payload = ApiError(code=exc.code, message=str(exc), retryable=exc.retryable)
+    return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload.model_dump())
 
 
 @app.exception_handler(RequestValidationError)
@@ -338,16 +408,38 @@ def api_status() -> dict[str, Any]:
     return {**_health_payload(), "api_version": "v1"}
 
 
+@app.get("/api/v1/observability/summary", response_model=ObservabilitySummaryResponse)
+def observability_summary_endpoint(user_id: CurrentUser, days: int = Query(default=7, ge=1, le=90)) -> dict[str, Any]:
+    _require_operations_user(user_id)
+    return observability_summary(days=days)
+
+
+@app.get("/api/v1/operations/dashboard", response_model=OperationsDashboardResponse)
+def operations_dashboard_endpoint(user_id: CurrentUser, days: int = Query(default=7, ge=1, le=90)) -> dict[str, Any]:
+    _require_operations_user(user_id)
+    return operations_dashboard(days=days)
+
+
 @app.get("/api/v1/contract", response_model=ContractInfoResponse)
 def contract_info() -> dict[str, str]:
     return {"api_version": "v1", "contract_version": API_CONTRACT_VERSION, "openapi_path": "/openapi.json"}
 
 
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest, response: Response) -> dict[str, Any]:
+def login(request: LoginRequest, response: Response, raw_request: Request) -> dict[str, Any]:
+    client_ip = _client_ip(raw_request)
+    allowed, retry_after = login_allowed(client_ip, request.user_id)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed login attempts. Try again in {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)},
+        )
     user_id, auth_error = authorize(request.user_id, request.access_key)
     if auth_error:
+        record_login_failure(client_ip, request.user_id)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=auth_error)
+    clear_login_failures(client_ip, request.user_id)
     expires_in = _set_session_cookies(response, user_id)
     return {"token_type": "cookie", "expires_in": expires_in, "user_id": user_id}
 
@@ -360,8 +452,13 @@ def logout(response: Response, _: CsrfCurrentUser) -> None:
 
 
 @app.get("/api/v1/auth/session", response_model=SessionResponse)
-def session_info(user_id: CurrentUser) -> dict[str, str]:
-    return {"user_id": user_id, "authentication": "signed_cookie"}
+def session_info(user_id: CurrentUser) -> dict[str, Any]:
+    allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
+    return {
+        "user_id": user_id,
+        "authentication": "signed_cookie",
+        "can_access_operations": user_id in allowed,
+    }
 
 
 def _rollback_short_term_exchange(user_id: str, user_text: str) -> None:
@@ -457,11 +554,17 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(True, duration_ms, streaming=True)
             logger.info("event=chat_completed request_id=%s provider=%s streaming=true duration_ms=%s", request_id, request.provider or DEFAULT_LLM_PROVIDER, duration_ms)
+        except ServiceError as exc:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            chat_finished(False, duration_ms, streaming=True)
+            logger.warning("event=chat_failed request_id=%s code=%s streaming=true", request_id, exc.code)
+            error = ApiError(code=exc.code, message=str(exc), retryable=exc.retryable)
+            yield f"event: error\ndata: {error.model_dump_json()}\n\n"
         except Exception as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(False, duration_ms, streaming=True)
             logger.exception("event=chat_failed request_id=%s provider=%s streaming=true", request_id, request.provider or DEFAULT_LLM_PROVIDER)
-            error = ApiError(code="generation_failed", message=str(exc))
+            error = ApiError(code="generation_failed", message=str(exc), retryable=True)
             yield f"event: error\ndata: {error.model_dump_json()}\n\n"
         finally:
             reset_request_id(token)
@@ -609,12 +712,31 @@ def update_long_term_memory(request: LongTermMemoryUpdateRequest, user_id: CsrfC
 
 @app.get("/api/v1/rag/status", response_model=RagStatusResponse)
 def rag_status(_: CurrentUser) -> dict[str, Any]:
-    return {"status": knowledge_status(), "documents": list_document_details()}
+    return {"status": knowledge_status(), "documents": list_document_details(), "release": release_gate_status()}
 
 
-@app.post("/api/v1/rag/documents", response_model=RagDocumentMutationResponse)
-async def upload_rag_document(file: Annotated[UploadFile, File(...)], _: CsrfCurrentUser) -> dict[str, Any]:
-    """Store one supported document and rebuild the derived RAG index."""
+@app.get("/api/v1/jobs", response_model=BackgroundJobListResponse)
+def background_jobs(user_id: CurrentUser, limit: int = Query(default=30, ge=1, le=100)) -> dict[str, Any]:
+    return {"jobs": list_jobs(user_id, limit)}
+
+
+@app.get("/api/v1/jobs/{job_id}", response_model=BackgroundJobResponse)
+def background_job(job_id: str, user_id: CurrentUser) -> dict[str, Any]:
+    job = get_job(job_id, user_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Background job was not found.")
+    return {"job": job}
+
+
+def _submit_rag_job(user_id: str, kind: str, worker, *, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+    job = job_manager.submit(user_id, kind, worker, payload)
+    logger.info("event=background_job_queued request_id=%s job_id=%s kind=%s", get_request_id(), job["id"], kind)
+    return {"job": job}
+
+
+@app.post("/api/v1/rag/documents", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
+async def upload_rag_document(file: Annotated[UploadFile, File(...)], user_id: CsrfCurrentUser) -> dict[str, Any]:
+    """Stage a document, then copy and rebuild the index in the job queue."""
     filename = (file.filename or "").strip()
     suffix = Path(filename).suffix.lower()
     if not filename or suffix not in SUPPORTED_EXTENSIONS:
@@ -627,38 +749,46 @@ async def upload_rag_document(file: Annotated[UploadFile, File(...)], _: CsrfCur
     if len(contents) > API_MAX_KNOWLEDGE_UPLOAD_BYTES:
         raise HTTPException(status_code=422, detail="The uploaded document exceeds the configured size limit.")
 
-    def _store_and_rebuild() -> dict[str, Any]:
-        with tempfile.TemporaryDirectory(prefix="rag-upload-") as temporary_directory:
-            temporary_path = Path(temporary_directory) / Path(filename).name
-            temporary_path.write_bytes(contents)
-            # copy_document_to_store normalizes the filename and prevents storage outside the RAG directory.
-            stored_path = copy_document_to_store(temporary_path)
-        result = rebuild_knowledge_index()
-        result["uploaded"] = stored_path.name
-        return result
-
+    staging_directory = BASE_DIR / "data" / "job_uploads" / uuid.uuid4().hex
+    temporary_path = staging_directory / Path(filename).name
     try:
-        # Index rebuilding embeds every chunk and can take seconds; keep the
-        # event loop responsive by running the blocking work in a thread.
-        result = await run_in_threadpool(_store_and_rebuild)
-        return {"result": result}
+        staging_directory.mkdir(parents=True, exist_ok=False)
+        temporary_path.write_bytes(contents)
+
+        def _store_and_rebuild(context) -> dict[str, Any]:
+            context.progress(10, "Copying document")
+            try:
+                context.progress(35, "Rebuilding knowledge index")
+                result = rebuild_with_release_gate(mutate=lambda: copy_document_to_store(temporary_path))
+                return {**result, "uploaded": result.get("document", Path(filename).name)}
+            finally:
+                temporary_path.unlink(missing_ok=True)
+                staging_directory.rmdir()
+
+        return _submit_rag_job(user_id, "rag_document_upload", _store_and_rebuild, payload={"document": Path(filename).name})
     except (OSError, ValueError, RuntimeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
         await file.close()
 
 
-@app.post("/api/v1/rag/rebuild", response_model=RagDocumentMutationResponse)
-def rebuild_rag(_: CsrfCurrentUser) -> dict[str, Any]:
-    return {"result": rebuild_knowledge_index()}
+@app.post("/api/v1/rag/rebuild", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
+def rebuild_rag(user_id: CsrfCurrentUser) -> dict[str, Any]:
+    def _rebuild(context) -> dict[str, Any]:
+        context.progress(10, "Preparing knowledge index")
+        context.progress(35, "Embedding knowledge chunks")
+        return rebuild_with_release_gate()
+
+    return _submit_rag_job(user_id, "rag_rebuild", _rebuild)
 
 
-@app.delete("/api/v1/rag/documents/{name}", response_model=RagDocumentMutationResponse)
-def remove_rag_document(name: str, _: CsrfCurrentUser) -> dict[str, Any]:
-    try:
-        return {"result": delete_document(name)}
-    except (FileNotFoundError, ValueError) as exc:
-        raise HTTPException(status_code=404 if isinstance(exc, FileNotFoundError) else 422, detail=str(exc)) from exc
+@app.delete("/api/v1/rag/documents/{name}", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
+def remove_rag_document(name: str, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    def _delete(context) -> dict[str, Any]:
+        context.progress(10, "Removing document")
+        return {**rebuild_with_release_gate(mutate=lambda: delete_document_from_store(name)), "deleted": name}
+
+    return _submit_rag_job(user_id, "rag_document_delete", _delete, payload={"document": name})
 
 
 @app.get("/api/v1/rag/quality", response_model=RagQualityResponse)
@@ -679,15 +809,17 @@ def rag_latest_evaluation(_: CurrentUser) -> dict[str, Any]:
     return {"report": latest_evaluation_report()}
 
 
-@app.post("/api/v1/rag/evaluations/run", response_model=RagEvaluationResponse)
-def rag_run_evaluation(request: RagEvaluationRequest, _: CsrfCurrentUser) -> dict[str, Any]:
-    try:
-        return {"report": run_evaluation(
+@app.post("/api/v1/rag/evaluations/run", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
+def rag_run_evaluation(request: RagEvaluationRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    def _evaluate(context) -> dict[str, Any]:
+        context.progress(10, "Loading evaluation cases")
+        context.progress(30, "Running retrieval evaluation")
+        return run_evaluation(
             top_k=request.top_k, threshold=request.threshold,
             candidate_multiplier=request.candidate_multiplier,
-        )}
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        )
+
+    return _submit_rag_job(user_id, "rag_evaluation", _evaluate)
 
 
 @app.get("/api/v1/usage", response_model=UsageSummaryResponse)

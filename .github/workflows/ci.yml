@@ -5,10 +5,18 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # The smoke-api check only needs /health; skip the background embedding-model
+      # download so CI does not waste time and bandwidth on every run.
+      API_PRELOAD_MODELS: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

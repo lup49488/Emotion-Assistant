@@ -20,6 +20,7 @@ class ContractModel(BaseModel):
 class ApiError(ContractModel):
     code: str
     message: str
+    retryable: bool = False
     details: list[dict[str, Any]] | None = None
 
 
@@ -45,6 +46,26 @@ class StatusResponse(HealthResponse):
     api_version: Literal["v1"] = "v1"
 
 
+class ObservabilitySummaryResponse(ContractModel):
+    days: int
+    retention_days: int
+    requests: int
+    failures: int
+    failure_rate: float
+    average_duration_ms: float
+    top_paths: list[dict[str, Any]]
+    statuses: dict[str, int]
+
+
+class OperationsDashboardResponse(ContractModel):
+    window_days: int
+    generated_at: str
+    http: dict[str, Any]
+    provider_failures: list[dict[str, Any]]
+    jobs: dict[str, Any]
+    alerts: list[dict[str, Any]]
+
+
 class LoginRequest(ContractModel):
     user_id: str = Field(min_length=1, max_length=128)
     access_key: str = Field(min_length=1, max_length=512)
@@ -59,6 +80,7 @@ class LoginResponse(ContractModel):
 class SessionResponse(ContractModel):
     user_id: str
     authentication: Literal["signed_cookie"]
+    can_access_operations: bool
 
 
 class ChatRequest(ContractModel):
@@ -173,6 +195,7 @@ class KnowledgeDocument(ContractModel):
 class RagStatusResponse(ContractModel):
     status: str
     documents: list[KnowledgeDocument]
+    release: dict[str, Any]
 
 
 class RagDocumentMutationResponse(ContractModel):
@@ -206,6 +229,27 @@ class RagEvaluationRequest(ContractModel):
 
 class RagEvaluationResponse(ContractModel):
     report: dict[str, Any] | None
+
+
+class BackgroundJob(ContractModel):
+    id: str
+    kind: str
+    status: Literal["queued", "running", "succeeded", "failed", "cancelled"]
+    progress: int = Field(ge=0, le=100)
+    message: str
+    result: dict[str, Any] | None = None
+    error: str | None = None
+    created_at: str
+    started_at: str | None = None
+    finished_at: str | None = None
+
+
+class BackgroundJobResponse(ContractModel):
+    job: BackgroundJob
+
+
+class BackgroundJobListResponse(ContractModel):
+    jobs: list[BackgroundJob]
 
 
 class UsageSummaryResponse(ContractModel):

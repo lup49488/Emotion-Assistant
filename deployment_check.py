@@ -156,7 +156,13 @@ def smoke_check_api(reporter: CheckReporter, timeout_seconds: int = 45) -> None:
     """Launch the FastAPI adapter, request its health endpoint, then stop it."""
     port = _free_local_port()
     environment = os.environ.copy()
-    environment.update({"API_SERVER_HOST": "127.0.0.1", "API_SERVER_PORT": str(port)})
+    environment.update({
+        "API_SERVER_HOST": "127.0.0.1", "API_SERVER_PORT": str(port),
+        # The smoke server is intentionally loopback-only; do not inherit a
+        # public hostname allowlist that would reject its local health probe.
+        "API_PUBLIC_MODE": "false",
+        "API_TRUSTED_HOSTS": "localhost,127.0.0.1,[::1],testserver",
+    })
     process = subprocess.Popen(
         [sys.executable, "api_server.py"],
         cwd=BASE_DIR,

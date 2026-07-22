@@ -517,7 +517,7 @@ class TestModelRuntimeConfig(unittest.TestCase):
 
     def test_unknown_provider_rejected_by_stream_router(self):
         config = chatbot.make_model_config(provider="unknown")
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(Exception, "未知模型 Provider"):
             list(chatbot._stream_model_response([], config))
 
 

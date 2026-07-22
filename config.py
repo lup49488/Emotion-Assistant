@@ -6,7 +6,12 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 from env_loader import load_project_env
 
-LOADED_ENV_FILES = load_project_env(BASE_DIR)
+# 测试环境通过该开关跳过加载本机 .env，避免开发者的生产配置
+# （如 API_TRUSTED_HOSTS、API_PUBLIC_MODE）泄漏进测试并影响结果。
+if os.getenv("CHATBOT_SKIP_DOTENV", "").strip().lower() in {"1", "true", "yes"}:
+    LOADED_ENV_FILES: list[Path] = []
+else:
+    LOADED_ENV_FILES = load_project_env(BASE_DIR)
 
 _logger = logging.getLogger(__name__)
 
@@ -65,6 +70,9 @@ DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")
 DEFAULT_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.8)
 DEFAULT_TOP_P = _env_float("LLM_TOP_P", 0.9)
 DEFAULT_MAX_NEW_TOKENS = _env_int("LLM_MAX_NEW_TOKENS", 300)
+# JSON array of server-managed API fallback targets. Credentials remain in the
+# provider-specific environment variables and are never accepted here.
+LLM_FALLBACKS_JSON = os.getenv("LLM_FALLBACKS_JSON", "").strip()
 
 # API 稳定性与成本控制。限额默认关闭，单价由实际使用的服务商账单填写。
 API_REQUEST_TIMEOUT_SECONDS = _env_float("API_REQUEST_TIMEOUT_SECONDS", 60.0)
@@ -75,6 +83,35 @@ API_DAILY_BUDGET_USD = max(0.0, _env_float("API_DAILY_BUDGET_USD", 0.0))
 API_MONTHLY_BUDGET_USD = max(0.0, _env_float("API_MONTHLY_BUDGET_USD", 0.0))
 API_INPUT_COST_PER_1M_TOKENS = max(0.0, _env_float("API_INPUT_COST_PER_1M_TOKENS", 0.0))
 API_OUTPUT_COST_PER_1M_TOKENS = max(0.0, _env_float("API_OUTPUT_COST_PER_1M_TOKENS", 0.0))
+
+# RAG release gate. Disabled by default until a representative evaluation set
+# has been prepared; enabling it keeps the last published index on failure.
+RAG_RELEASE_GATE_ENABLED = os.getenv("RAG_RELEASE_GATE_ENABLED", "false").lower() == "true"
+RAG_RELEASE_MIN_CASES = max(1, _env_int("RAG_RELEASE_MIN_CASES", 5))
+RAG_RELEASE_MIN_PASS_RATE = min(100.0, max(0.0, _env_float("RAG_RELEASE_MIN_PASS_RATE", 80.0)))
+RAG_RELEASE_MIN_SOURCE_RECALL = min(100.0, max(0.0, _env_float("RAG_RELEASE_MIN_SOURCE_RECALL", 80.0)))
+RAG_RELEASE_MIN_KEYWORD_COVERAGE = min(100.0, max(0.0, _env_float("RAG_RELEASE_MIN_KEYWORD_COVERAGE", 80.0)))
+
+# Persistent operational telemetry. Event bodies and user content are never stored.
+OBSERVABILITY_RETENTION_DAYS = max(1, _env_int("OBSERVABILITY_RETENTION_DAYS", 90))
+
+# Public deployment hardening. Keep false for local development; set true only
+# behind HTTPS/Tunnel after configuring the matching API_* values.
+API_PUBLIC_MODE = os.getenv("API_PUBLIC_MODE", "false").lower() == "true"
+API_TRUSTED_HOSTS = os.getenv("API_TRUSTED_HOSTS", "localhost,127.0.0.1,[::1],testserver")
+API_ENABLE_DOCS = os.getenv("API_ENABLE_DOCS", "true").lower() == "true"
+API_MAX_REQUEST_BYTES = max(1_024, _env_int("API_MAX_REQUEST_BYTES", 21 * 1024 * 1024))
+API_AUTH_MAX_ATTEMPTS = max(1, _env_int("API_AUTH_MAX_ATTEMPTS", 8))
+API_AUTH_WINDOW_SECONDS = max(60, _env_int("API_AUTH_WINDOW_SECONDS", 900))
+API_TRUST_PROXY_HEADERS = os.getenv("API_TRUST_PROXY_HEADERS", "false").lower() == "true"
+
+# Administrator-only operations dashboard and alert thresholds.
+API_OPERATIONS_USER_IDS = os.getenv("API_OPERATIONS_USER_IDS", "")
+OPS_ALERT_MIN_REQUESTS = max(1, _env_int("OPS_ALERT_MIN_REQUESTS", 10))
+OPS_ALERT_HTTP_FAILURE_RATE = min(100.0, max(0.0, _env_float("OPS_ALERT_HTTP_FAILURE_RATE", 10.0)))
+OPS_ALERT_AVERAGE_LATENCY_MS = max(1, _env_int("OPS_ALERT_AVERAGE_LATENCY_MS", 5000))
+OPS_ALERT_PROVIDER_FAILURES = max(1, _env_int("OPS_ALERT_PROVIDER_FAILURES", 3))
+OPS_ALERT_JOB_FAILURES = max(1, _env_int("OPS_ALERT_JOB_FAILURES", 1))
 
 LOCAL_MODEL_DTYPE = os.getenv("LOCAL_MODEL_DTYPE", "auto").lower()
 LOCAL_MODEL_ATTN_IMPLEMENTATION = os.getenv("LOCAL_MODEL_ATTN_IMPLEMENTATION", "").strip() or None

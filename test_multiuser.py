@@ -13,6 +13,7 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import conftest  # noqa: F401  确保 stub 在导入 chatbot_multiuser 前注册
 
@@ -82,7 +83,9 @@ class TestUserIsolation(MultiUserTestBase):
 
     def test_interest_saved_by_one_user_not_visible_to_another(self):
         with self.cb.session_store.session("alice") as state:
-            self.cb.save_interest({"text": "我喜欢爬山"}, state)
+            # This test covers account isolation; the vector index is covered separately.
+            with patch.object(state.vector_index, "add_one"):
+                self.cb.save_interest({"text": "我喜欢爬山"}, state)
 
         with self.cb.session_store.session("bob") as state:
             self.assertFalse(state.interest_store.exact_exists("我喜欢爬山"))
@@ -119,7 +122,8 @@ class TestPersistenceRoundTrip(MultiUserTestBase):
 
     def test_interest_memory_persists_across_sessions(self):
         with self.cb.session_store.session("alice") as state:
-            self.cb.save_interest({"text": "我喜欢弹吉他"}, state)
+            with patch.object(state.vector_index, "add_one"):
+                self.cb.save_interest({"text": "我喜欢弹吉他"}, state)
 
         self.cb.session_store = self.cb.SessionStore()
         with self.cb.session_store.session("alice") as state:

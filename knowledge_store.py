@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import re
 import shutil
+import tempfile
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
@@ -24,6 +26,11 @@ from config import (
     KNOWLEDGE_MIN_CHUNK_CHARS,
     KNOWLEDGE_RETRIEVAL_THRESHOLD,
     KNOWLEDGE_TOP_K,
+    RAG_RELEASE_GATE_ENABLED,
+    RAG_RELEASE_MIN_CASES,
+    RAG_RELEASE_MIN_KEYWORD_COVERAGE,
+    RAG_RELEASE_MIN_PASS_RATE,
+    RAG_RELEASE_MIN_SOURCE_RECALL,
 )
 from json_utils import load_json, save_json
 from llm_providers import encode_texts, get_embedding_dimension
@@ -42,6 +49,11 @@ from sqlite_store import (
 
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".pdf", ".docx"}
 RAG_COLLECTION = "knowledge"
+_RELEASE_LOCK = threading.RLock()
+
+
+class ReleaseGateRejected(RuntimeError):
+    """Raised after a candidate index is restored because it missed the release gate."""
 
 
 @dataclass
@@ -264,12 +276,18 @@ def _stored_document_path(name: str) -> Path:
 
 def delete_document(name: str) -> dict[str, Any]:
     """Delete one stored source document and rebuild derived RAG data."""
-    ensure_knowledge_dirs()
-    path = _stored_document_path(name)
-    path.unlink()
+    path = delete_document_from_store(name)
     result = rebuild_knowledge_index()
     result["deleted"] = path.name
     return result
+
+
+def delete_document_from_store(name: str) -> Path:
+    """Delete one source document without rebuilding; used by gated publishing."""
+    ensure_knowledge_dirs()
+    path = _stored_document_path(name)
+    path.unlink()
+    return path
 
 
 def clear_documents() -> dict[str, Any]:
@@ -319,6 +337,134 @@ def rebuild_knowledge_index() -> dict[str, Any]:
     save_chunks(all_chunks)
     _write_index(all_chunks)
     return {"chunks": len(all_chunks), "documents": len(list_documents()), "errors": errors}
+
+
+def _release_status_path() -> Path:
+    return KNOWLEDGE_DIR / "release_status.json"
+
+
+def release_gate_status() -> dict[str, Any]:
+    defaults = {
+        "enabled": RAG_RELEASE_GATE_ENABLED,
+        "state": "not_configured" if not RAG_RELEASE_GATE_ENABLED else "awaiting_evaluation",
+        "published_at": None,
+        "last_attempt_at": None,
+        "reason": None,
+        "report": None,
+        "thresholds": _release_thresholds(),
+    }
+    path = _release_status_path()
+    if not path.exists():
+        return defaults
+    try:
+        saved = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return defaults
+    return {**defaults, **saved, "enabled": RAG_RELEASE_GATE_ENABLED, "thresholds": _release_thresholds()}
+
+
+def _save_release_status(status: dict[str, Any]) -> None:
+    ensure_knowledge_dirs()
+    path = _release_status_path()
+    temp_path = path.with_suffix(".tmp")
+    temp_path.write_text(json.dumps(status, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_path.replace(path)
+
+
+def _release_thresholds() -> dict[str, int | float]:
+    return {
+        "min_cases": RAG_RELEASE_MIN_CASES,
+        "min_pass_rate": RAG_RELEASE_MIN_PASS_RATE,
+        "min_source_recall": RAG_RELEASE_MIN_SOURCE_RECALL,
+        "min_keyword_coverage": RAG_RELEASE_MIN_KEYWORD_COVERAGE,
+    }
+
+
+def _evaluate_release_gate(report: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    if int(report.get("total_cases", 0)) < RAG_RELEASE_MIN_CASES:
+        failures.append(f"评估样本不足：需要至少 {RAG_RELEASE_MIN_CASES} 条。")
+    if float(report.get("pass_rate") or 0) < RAG_RELEASE_MIN_PASS_RATE:
+        failures.append(f"通过率低于 {RAG_RELEASE_MIN_PASS_RATE:.0f}%。")
+    if int(report.get("source_cases", 0)) and float(report.get("source_recall_at_k") or 0) < RAG_RELEASE_MIN_SOURCE_RECALL:
+        failures.append(f"来源召回率低于 {RAG_RELEASE_MIN_SOURCE_RECALL:.0f}%。")
+    if int(report.get("keyword_cases", 0)) and float(report.get("keyword_coverage") or 0) < RAG_RELEASE_MIN_KEYWORD_COVERAGE:
+        failures.append(f"关键词覆盖率低于 {RAG_RELEASE_MIN_KEYWORD_COVERAGE:.0f}%。")
+    return failures
+
+
+def _snapshot_release_state(backup_dir: Path) -> list[dict[str, Any]]:
+    backup_docs = backup_dir / "documents"
+    shutil.copytree(KNOWLEDGE_DOCS_DIR, backup_docs)
+    old_chunks = load_chunks()
+    if KNOWLEDGE_INDEX_PATH.exists():
+        shutil.copy2(KNOWLEDGE_INDEX_PATH, backup_dir / "knowledge.index")
+    return old_chunks
+
+
+def _restore_release_state(backup_dir: Path, old_chunks: list[dict[str, Any]]) -> None:
+    backup_docs = backup_dir / "documents"
+    if KNOWLEDGE_DOCS_DIR.exists():
+        shutil.rmtree(KNOWLEDGE_DOCS_DIR)
+    shutil.copytree(backup_docs, KNOWLEDGE_DOCS_DIR)
+    save_chunks(old_chunks)
+    backup_index = backup_dir / "knowledge.index"
+    if backup_index.exists():
+        shutil.copy2(backup_index, KNOWLEDGE_INDEX_PATH)
+    else:
+        KNOWLEDGE_INDEX_PATH.unlink(missing_ok=True)
+
+
+def rebuild_with_release_gate(
+    *, mutate: Any | None = None, top_k: int = KNOWLEDGE_TOP_K,
+    threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
+) -> dict[str, Any]:
+    """Publish a candidate rebuild only after the configured retrieval evaluation passes."""
+    if not RAG_RELEASE_GATE_ENABLED:
+        mutation_result = mutate() if mutate else None
+        result = rebuild_knowledge_index()
+        if isinstance(mutation_result, Path):
+            result["document"] = mutation_result.name
+        return {**result, "published": True, "gate": {"enabled": False}}
+
+    ensure_knowledge_dirs()
+    with _RELEASE_LOCK, tempfile.TemporaryDirectory(prefix="rag-release-", dir=KNOWLEDGE_DIR) as temp_dir:
+        backup_dir = Path(temp_dir)
+        old_chunks = _snapshot_release_state(backup_dir)
+        attempted_at = datetime.now().isoformat(timespec="seconds")
+        try:
+            mutation_result = mutate() if mutate else None
+            result = rebuild_knowledge_index()
+            from rag_evaluation_store import run_evaluation
+
+            report = run_evaluation(
+                top_k=int(top_k), threshold=float(threshold),
+                candidate_multiplier=int(candidate_multiplier),
+            )
+            reasons = _evaluate_release_gate(report)
+            if reasons:
+                _restore_release_state(backup_dir, old_chunks)
+                status = {
+                    "state": "rejected", "published_at": release_gate_status().get("published_at"),
+                    "last_attempt_at": attempted_at, "reason": " ".join(reasons),
+                    "report": report,
+                }
+                _save_release_status(status)
+                raise ReleaseGateRejected("知识库候选版本未发布：" + " ".join(reasons))
+            status = {
+                "state": "published", "published_at": datetime.now().isoformat(timespec="seconds"),
+                "last_attempt_at": attempted_at, "reason": None, "report": report,
+            }
+            _save_release_status(status)
+            if isinstance(mutation_result, Path):
+                result["document"] = mutation_result.name
+            return {**result, "published": True, "gate": status}
+        except ReleaseGateRejected:
+            raise
+        except Exception:
+            _restore_release_state(backup_dir, old_chunks)
+            raise
 
 
 def import_documents(paths: list[str | Path]) -> dict[str, Any]:

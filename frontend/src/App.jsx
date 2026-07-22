@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Activity,
   BookOpen,
   Brain,
   Bot,
@@ -24,8 +25,8 @@ import {
   SunMoon,
   X,
 } from 'lucide-react'
-import { API_BASE_URL, apiFetch, csrfHeaders } from './api'
-import { KnowledgePage, MemoryPage, MoodPage, PrivacyPage } from './FeaturePages'
+import { API_BASE_URL, ApiRequestError, apiFetch, csrfHeaders } from './api'
+import { KnowledgePage, MemoryPage, MoodPage, OperationsPage, PrivacyPage } from './FeaturePages'
 import { translate } from './i18n'
 import './App.css'
 
@@ -34,6 +35,7 @@ const NAVIGATION = [
   { id: 'memory', label: 'personalData', icon: Brain },
   { id: 'mood', label: 'mood', icon: HeartPulse },
   { id: 'knowledge', label: 'knowledge', icon: BookOpen },
+  { id: 'operations', label: 'operations', icon: Activity, requiresOperationsAccess: true },
   { id: 'privacy', label: 'privacy', icon: ShieldCheck },
 ]
 
@@ -61,6 +63,8 @@ function App() {
   const messageEndRef = useRef(null)
   const activeRequestRef = useRef(null)
   const t = (key) => translate(locale, key)
+  const errorText = (code) => t(`error_${code}`) === `error_${code}` ? t('replyFailed') : t(`error_${code}`)
+  const visibleNavigation = NAVIGATION.filter((item) => !item.requiresOperationsAccess || session?.can_access_operations)
 
   const hasMessages = messages.length > 0
   const activeTitle = activeConversation?.title || t('newConversation')
@@ -86,6 +90,10 @@ function App() {
   }, [theme])
 
   useEffect(() => { document.documentElement.lang = locale === 'zh' ? 'zh-CN' : 'en'; localStorage.setItem('mindful-locale', locale) }, [locale])
+
+  useEffect(() => {
+    if (activeView === 'operations' && !session?.can_access_operations) setActiveView('chat')
+  }, [activeView, session])
 
   async function refreshConversations() {
     const response = await apiFetch('/api/v1/conversations')
@@ -175,9 +183,10 @@ function App() {
   }
 
   async function sendMessage(retryIndex = null) {
-    const text = retryIndex === null ? draft.trim() : String(messages[retryIndex - 1]?.content || '').trim()
+    const retryMessageIndex = Number.isInteger(retryIndex) ? retryIndex : null
+    const text = retryMessageIndex === null ? draft.trim() : String(messages[retryMessageIndex - 1]?.content || '').trim()
     if (!text || isSending) return
-    if (retryIndex === null) setDraft('')
+    if (retryMessageIndex === null) setDraft('')
     setNotice('')
     setIsSending(true)
     const controller = new AbortController()
@@ -194,10 +203,10 @@ function App() {
         setActiveConversation({ ...data.conversation, messages: [] })
       }
 
-      if (retryIndex === null) {
+      if (retryMessageIndex === null) {
         setMessages((current) => [...current, { role: 'user', content: text }, { role: 'assistant', content: '', pending: true }])
       } else {
-        setMessages((current) => current.map((item, index) => index === retryIndex
+        setMessages((current) => current.map((item, index) => index === retryMessageIndex
           ? { ...item, content: '', pending: true, failed: false }
           : item))
       }
@@ -216,7 +225,7 @@ function App() {
           use_knowledge: options.useKnowledge,
           use_style: options.useStyle,
           show_memory_receipt: false,
-          retry_last_response: retryIndex !== null,
+          retry_last_response: retryMessageIndex !== null,
         }),
       })
       const reader = response.body.getReader()
@@ -242,19 +251,21 @@ function App() {
               ? { ...item, content: item.content + payload.text, pending: false }
               : item))
           }
-          if (eventName === 'error') receivedError = payload.message || 'The model could not complete this reply.'
+          if (eventName === 'error') receivedError = { code: payload.code || 'generation_failed', retryable: Boolean(payload.retryable), message: payload.message }
         }
       }
-      if (receivedError) throw new Error(receivedError)
+      if (receivedError) throw new ApiRequestError(receivedError.message || receivedError.code, receivedError)
       if (!receivedText) throw new Error(t('emptyResponse'))
       await refreshConversations()
     } catch (error) {
       const cancelled = error.name === 'AbortError'
-      setNotice(cancelled ? t('requestCancelled') : error.message)
+      const errorCode = error.code || 'generation_failed'
+      const retryable = Boolean(error.retryable) || errorCode === 'generation_failed'
+      setNotice(cancelled ? t('requestCancelled') : errorText(errorCode))
       setMessages((current) => {
-        const responseIndex = retryIndex ?? current.length - 1
+        const responseIndex = retryMessageIndex ?? current.length - 1
         return current.map((item, index) => index === responseIndex
-          ? { ...item, content: item.content || (cancelled ? '' : t('replyFailed')), pending: false, failed: !cancelled }
+          ? { ...item, content: item.content || (cancelled ? '' : errorText(errorCode)), pending: false, failed: !cancelled, retryable: !cancelled && retryable, errorCode }
           : item).filter((item, index) => !(cancelled && index === responseIndex && item.role === 'assistant' && !item.content))
       })
     } finally {
@@ -292,7 +303,7 @@ function App() {
     <main className={`app-shell ${settingsOpen ? 'settings-open' : 'settings-closed'}`}>
       <aside className="sidebar" aria-label="Workspace navigation">
         <div className="brand"><Sparkles size={18} aria-hidden="true" /><span>{ASSISTANT_NAME}</span></div>
-        <nav className="workspace-nav">{NAVIGATION.map(({ id, label, icon: Icon }) => <button key={id} className={`workspace-link ${activeView === id ? 'selected' : ''}`} onClick={() => setActiveView(id)}><Icon size={16} />{t(label)}</button>)}</nav>
+        <nav className="workspace-nav">{visibleNavigation.map(({ id, label, icon: Icon }) => <button key={id} className={`workspace-link ${activeView === id ? 'selected' : ''}`} onClick={() => setActiveView(id)}><Icon size={16} />{t(label)}</button>)}</nav>
         {activeView === 'chat' && <><button className="new-chat" onClick={createConversation}><CirclePlus size={18} />{t('newChat')}</button><div className="conversation-list"><p className="section-label">{t('conversations')}</p>{conversations.length === 0 && <p className="empty-list">{t('noChats')}</p>}{conversations.map((conversation) => editingConversationId === conversation.id ? (
           <form className="conversation-edit" key={conversation.id} onSubmit={(event) => renameConversation(event, conversation)}><input value={conversationTitleDraft} onChange={(event) => setConversationTitleDraft(event.target.value)} aria-label={t('conversationTitle')} autoFocus /><button className="conversation-action" title={t('saveTitle')}><Check size={15} /></button><button className="conversation-action" type="button" title={t('cancel')} onClick={() => setEditingConversationId(null)}><X size={15} /></button></form>
         ) : <div className={`conversation-row ${conversation.id === activeConversation?.id ? 'selected' : ''}`} key={conversation.id}><button className="conversation" onClick={() => selectConversation(conversation)}><MessageSquare size={15} /><span>{conversation.title}</span></button><div className="conversation-actions"><button className="conversation-action" title={t('renameConversation')} onClick={(event) => beginConversationRename(event, conversation)}><Pencil size={14} /></button><button className="conversation-action delete-conversation" title={t('deleteConversation')} onClick={(event) => removeConversation(event, conversation)} disabled={isSending}><Trash2 size={14} /></button></div></div>
@@ -305,7 +316,7 @@ function App() {
         </div>
       </aside>
 
-      <nav className="mobile-workspace-nav" aria-label="Workspace navigation">{NAVIGATION.map(({ id, label, icon: Icon }) => <button key={id} className={activeView === id ? 'selected' : ''} onClick={() => setActiveView(id)}><Icon size={15} />{t(label)}</button>)}<select className="mobile-preference" aria-label={t('theme')} value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select><select className="mobile-preference" aria-label={t('language')} value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">EN</option><option value="zh">中文</option></select></nav>
+      <nav className="mobile-workspace-nav" aria-label="Workspace navigation"><div className="mobile-tab-list">{visibleNavigation.map(({ id, label, icon: Icon }) => <button key={id} className={activeView === id ? 'selected' : ''} onClick={() => setActiveView(id)}><Icon size={15} /><span>{t(label)}</span></button>)}</div><div className="mobile-preference-row"><select className="mobile-preference" aria-label={t('theme')} value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select><select className="mobile-preference" aria-label={t('language')} value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">EN</option><option value="zh">中文</option></select></div></nav>
       {activeView === 'chat' ? <><section className="chat-panel">
         <header className="chat-header"><div><h1>{activeTitle}</h1><p>{t('connected')} {apiLabel}</p></div><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('preferences')} onClick={() => setSettingsOpen((open) => !open)}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></header>
         <div className="messages" aria-live="polite">
@@ -329,7 +340,7 @@ function App() {
         <Toggle label={t('styleReference')} description={t('styleHint')} checked={options.useStyle} onChange={(useStyle) => setOptions((current) => ({ ...current, useStyle }))} />
         <label className="range-control"><span>{t('temperature')} <b>{options.temperature.toFixed(1)}</b></span><input type="range" min="0" max="2" step="0.1" value={options.temperature} onChange={(event) => setOptions((current) => ({ ...current, temperature: Number(event.target.value) }))} /></label>
         <div className="contract-note"><span>API v1</span><p>Cookie session and CSRF protection are active.</p></div>
-      </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} />}{activeView === 'knowledge' && <KnowledgePage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
+      </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} />}{activeView === 'knowledge' && <KnowledgePage t={t} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
     </main>
   )
 }
@@ -354,9 +365,9 @@ function LoginScreen({ onSuccess, t }) {
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt('我今天有一点焦虑，能陪我理一理吗？')}>{t('talkPrompt')}</button><button onClick={() => onPrompt('我想为未来做一点准备，可以从哪里开始？')}>{t('planPrompt')}</button></div></div> }
 
-function Message({ message, index, onCopy, onRetry, isSending, t }) { return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div><div><div className="message-body">{message.pending && !message.content ? <span className="typing"><i /><i /><i /></span> : message.content}</div>{message.role === 'assistant' && !message.pending && <div className="message-actions">{message.content && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(message.content)}><Copy size={14} /></button>}{message.failed && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</div>}</div></article> }
+function Message({ message, index, onCopy, onRetry, isSending, t }) { return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div><div><div className="message-body">{message.pending && !message.content ? <span className="typing"><i /><i /><i /></span> : message.content}</div>{message.role === 'assistant' && !message.pending && <div className="message-actions">{message.content && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(message.content)}><Copy size={14} /></button>}{message.failed && message.retryable && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</div>}</div></article> }
 
-function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, t }) { return <div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={sendMessage}><SendHorizontal size={18} /></button>}</div> }
+function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, t }) { return <div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div> }
 
 function PreferencesControls({ theme, setTheme, locale, setLocale, t }) { return <div className="preferences-controls"><label><SunMoon size={15} /><span>{t('theme')}</span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select></label><label><Languages size={15} /><span>{t('language')}</span><select value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">{t('english')}</option><option value="zh">{t('chinese')}</option></select></label></div> }
 

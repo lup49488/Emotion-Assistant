@@ -14,6 +14,8 @@ exports/
 data/*.db
 data/*.db-shm
 data/*.db-wal
+data/observability_events.json
+data/job_uploads/
 data/model_offload/
 logs/
 knowledge_base/

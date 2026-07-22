@@ -193,3 +193,28 @@ def test_read_index_rebuilds_when_vector_count_is_stale():
 
     assert result is healthy_index
     write_index.assert_called_once_with(chunks)
+
+
+def test_release_gate_restores_candidate_when_evaluation_misses_thresholds(tmp_path):
+    report = {"total_cases": 2, "pass_rate": 50.0, "source_cases": 1, "source_recall_at_k": 0.0, "keyword_cases": 0}
+    restored = []
+    with patch.object(knowledge_store, "KNOWLEDGE_DIR", tmp_path), \
+         patch.object(knowledge_store, "RAG_RELEASE_GATE_ENABLED", True), \
+         patch.object(knowledge_store, "RAG_RELEASE_MIN_CASES", 3), \
+         patch.object(knowledge_store, "_snapshot_release_state", return_value=[]), \
+         patch.object(knowledge_store, "_restore_release_state", side_effect=lambda *_: restored.append(True)), \
+         patch.object(knowledge_store, "rebuild_knowledge_index", return_value={"documents": 1, "chunks": 2, "errors": []}), \
+         patch("rag_evaluation_store.run_evaluation", return_value=report):
+        with patch.object(knowledge_store, "ensure_knowledge_dirs"):
+            try:
+                knowledge_store.rebuild_with_release_gate()
+            except knowledge_store.ReleaseGateRejected as exc:
+                assert "未发布" in str(exc)
+            else:
+                raise AssertionError("Expected the release gate to reject the candidate")
+
+        status = knowledge_store.release_gate_status()
+        assert status["state"] == "rejected"
+        assert status["report"]["pass_rate"] == 50.0
+
+    assert restored == [True]

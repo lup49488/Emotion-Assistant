@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("API_PRELOAD_MODELS", "false")
 
 import api_server
+from service_errors import ServiceError
 import model_warmup
 import session_store
 from auth_store import change_access_key
@@ -132,6 +133,22 @@ def test_chat_stream_emits_chunks_receipt_and_done(monkeypatch, tmp_path):
     assert "在的" in body
     assert "event: receipt" in body
     assert body.rstrip().endswith("event: done\ndata: {}")
+
+
+def test_chat_stream_emits_structured_retryable_service_error(monkeypatch, tmp_path):
+    def failing_chunks(*_):
+        raise ServiceError("provider_timeout", "provider timed out", retryable=True)
+        yield "unreachable"
+
+    monkeypatch.setattr(api_server, "_chat_chunks", failing_chunks)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "hi"}, headers=headers) as response:
+            body = "".join(response.iter_text())
+
+    assert 'event: error' in body
+    assert '"code":"provider_timeout"' in body
+    assert '"retryable":true' in body
 
 
 def test_chat_retry_replaces_the_last_saved_exchange(monkeypatch, tmp_path):
@@ -271,8 +288,23 @@ def test_rag_api_exposes_status_quality_and_protected_search(monkeypatch, tmp_pa
 
 def test_rag_document_management_uses_csrf_and_supported_uploads(monkeypatch, tmp_path):
     monkeypatch.setattr(api_server, "copy_document_to_store", lambda _: Path("notes.md"))
-    monkeypatch.setattr(api_server, "rebuild_knowledge_index", lambda: {"documents": 1, "chunks": 2, "errors": []})
-    monkeypatch.setattr(api_server, "delete_document", lambda name: {"deleted": name, "documents": 0, "chunks": 0, "errors": []})
+    def rebuild_gate(*, mutate=None):
+        document = mutate() if mutate else None
+        return {"documents": 1, "chunks": 2, "errors": [], "published": True, "document": getattr(document, "name", None)}
+
+    monkeypatch.setattr(api_server, "rebuild_with_release_gate", rebuild_gate)
+    monkeypatch.setattr(api_server, "delete_document_from_store", lambda name: Path(name))
+    submitted = []
+
+    class Context:
+        def progress(self, *_):
+            pass
+
+    def submit(user_id, kind, worker, *, payload=None):
+        submitted.append((user_id, kind, payload, worker(Context())))
+        return {"job": {"id": f"job-{len(submitted)}", "kind": kind, "status": "succeeded", "progress": 100, "message": "Completed", "result": submitted[-1][3], "error": None, "created_at": "2026-07-21T00:00:00", "started_at": None, "finished_at": "2026-07-21T00:00:01"}}
+
+    monkeypatch.setattr(api_server, "_submit_rag_job", submit)
 
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
@@ -283,10 +315,83 @@ def test_rag_document_management_uses_csrf_and_supported_uploads(monkeypatch, tm
         )
         remove = client.delete("/api/v1/rag/documents/notes.md", headers=headers)
 
-    assert upload.status_code == 200
-    assert upload.json()["result"]["uploaded"] == "notes.md"
-    assert remove.status_code == 200
-    assert remove.json()["result"]["deleted"] == "notes.md"
+    assert upload.status_code == 202
+    assert upload.json()["job"]["kind"] == "rag_document_upload"
+    assert remove.status_code == 202
+    assert remove.json()["job"]["kind"] == "rag_document_delete"
+    assert submitted[0][3]["uploaded"] == "notes.md"
+    assert submitted[1][3]["deleted"] == "notes.md"
+
+
+def test_rag_rebuild_and_evaluation_return_background_jobs(monkeypatch, tmp_path):
+    def submit(user_id, kind, worker, *, payload=None):
+        return {"job": {"id": "job-1", "kind": kind, "status": "queued", "progress": 0, "message": "Queued", "result": None, "error": None, "created_at": "2026-07-21T00:00:00", "started_at": None, "finished_at": None}}
+
+    monkeypatch.setattr(api_server, "_submit_rag_job", submit)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        rebuild = client.post("/api/v1/rag/rebuild", headers=headers)
+        evaluation = client.post("/api/v1/rag/evaluations/run", json={}, headers=headers)
+
+    assert rebuild.status_code == 202
+    assert rebuild.json()["job"]["kind"] == "rag_rebuild"
+    assert evaluation.status_code == 202
+    assert evaluation.json()["job"]["kind"] == "rag_evaluation"
+
+
+def test_observability_summary_requires_session_and_returns_persistent_metrics(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_OPERATIONS_USER_IDS", "api-alice")
+    monkeypatch.setattr(api_server, "observability_summary", lambda *, days: {
+        "days": days, "retention_days": 90, "requests": 12, "failures": 1,
+        "failure_rate": 8.3, "average_duration_ms": 42.0,
+        "top_paths": [{"path": "/api/v1/chat", "requests": 5}], "statuses": {"200": 11, "500": 1},
+    })
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        unauthenticated = client.get("/api/v1/observability/summary")
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.get("/api/v1/observability/summary?days=30", headers=headers)
+
+    assert unauthenticated.status_code == 401
+    assert response.status_code == 200
+    assert response.json()["days"] == 30
+    assert response.json()["top_paths"][0]["path"] == "/api/v1/chat"
+
+
+def test_operations_dashboard_is_restricted_to_configured_users(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_OPERATIONS_USER_IDS", "api-alice")
+    monkeypatch.setattr(api_server, "operations_dashboard", lambda *, days: {
+        "window_days": days, "generated_at": "2026-07-21T12:00:00",
+        "http": {"requests": 8}, "provider_failures": [],
+        "jobs": {"counts": {}}, "alerts": [],
+    })
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.get("/api/v1/operations/dashboard?days=14", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["window_days"] == 14
+
+
+def test_session_reports_operations_access_from_server_whitelist(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_OPERATIONS_USER_IDS", "api-alice, api-operator")
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.get("/api/v1/auth/session", headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["can_access_operations"] is True
+
+
+def test_public_api_sets_security_headers_and_rejects_oversized_body(monkeypatch):
+    monkeypatch.setattr(api_server, "API_MAX_REQUEST_BYTES", 10)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        health = client.get("/health")
+        oversized = client.post("/api/v1/auth/login", content="x" * 20, headers={"content-length": "20"})
+
+    assert health.headers["x-content-type-options"] == "nosniff"
+    assert health.headers["x-frame-options"] == "DENY"
+    assert health.headers["content-security-policy"] == "default-src 'none'; frame-ancestors 'none'"
+    assert oversized.status_code == 413
 
 
 def test_memory_and_export_return_dict_interest_memory(monkeypatch, tmp_path):

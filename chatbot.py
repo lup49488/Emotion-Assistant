@@ -180,11 +180,7 @@ def chat(
                 yield chunk
     except Exception as exc:
         logger.exception("模型回复生成失败。provider=%s model=%s", config.provider, config.model)
-        error_reply = f"模型调用失败：{exc}"
-        update_short_term(state, user_text, error_reply)
-        _archive_exchange(state.user_id, conversation_id, user_text, error_reply)
-        yield error_reply
-        return
+        raise
 
     full_reply = "".join(collected_chunks).strip()
     if not full_reply:
@@ -293,9 +289,13 @@ def main() -> None:
             break
 
         print("助手：", end="", flush=True)
-        for chunk in handle_user_message_stream(user_id, user_text):
-            print(chunk, end="", flush=True)
-        print()
+        try:
+            for chunk in handle_user_message_stream(user_id, user_text):
+                print(chunk, end="", flush=True)
+            print()
+        except Exception as exc:
+            # 单次模型调用失败不应终止整个交互式会话；打印错误后继续。
+            print(f"\n[模型调用失败：{exc}]")
 
 
 if __name__ == "__main__":

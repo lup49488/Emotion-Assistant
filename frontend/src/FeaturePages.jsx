@@ -79,22 +79,61 @@ export function KnowledgePage({ t }) {
   const [status, setStatus] = useState(null)
   const [quality, setQuality] = useState(null)
   const [latest, setLatest] = useState(null)
+  const [jobs, setJobs] = useState([])
   const [query, setQuery] = useState('')
   const [results, setResults] = useState(null)
   const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
   const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
-  const refresh = async () => { setLoading(true); setError(''); try { const [ragStatus, ragQuality, evaluation] = await Promise.all([readJson('/api/v1/rag/status'), readJson('/api/v1/rag/quality'), readJson('/api/v1/rag/evaluations/latest')]); setStatus(ragStatus); setQuality(ragQuality); setLatest(evaluation.report) } catch (requestError) { setError(requestError.message) } finally { setLoading(false) } }
-  useEffect(() => { refresh() }, [])
+  const refresh = async (showLoading = true) => { if (showLoading) setLoading(true); try { const [ragStatus, ragQuality, evaluation, jobData] = await Promise.all([readJson('/api/v1/rag/status'), readJson('/api/v1/rag/quality'), readJson('/api/v1/rag/evaluations/latest'), readJson('/api/v1/jobs?limit=20')]); setStatus(ragStatus); setQuality(ragQuality); setLatest(evaluation.report); setJobs(jobData.jobs) } catch (requestError) { setError(requestError.message) } finally { if (showLoading) setLoading(false) } }
+  useEffect(() => { refresh(); const timer = window.setInterval(() => refresh(false), 2500); return () => window.clearInterval(timer) }, [])
   const search = async (event) => { event.preventDefault(); if (!query.trim()) return; setError(''); try { setResults(await readJson('/api/v1/rag/search', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ query, top_k: 4, threshold: 0.35, candidate_multiplier: 4 }) })) } catch (requestError) { setError(requestError.message) } }
-  const runEvaluation = async () => { setError(''); try { const response = await readJson('/api/v1/rag/evaluations/run', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ top_k: 4, threshold: 0.35, candidate_multiplier: 4 }) }); setLatest(response.report) } catch (requestError) { setError(requestError.message) } }
-  const upload = async (event) => { event.preventDefault(); const file = event.currentTarget.file.files[0]; if (!file) return; setBusy(true); setError(''); try { const form = new FormData(); form.append('file', file); await readJson('/api/v1/rag/documents', { method: 'POST', headers: csrfHeaders(), body: form }); event.currentTarget.reset(); await refresh() } catch (requestError) { setError(requestError.message) } finally { setBusy(false) } }
-  const rebuild = async () => { setBusy(true); setError(''); try { await readJson('/api/v1/rag/rebuild', { method: 'POST', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } finally { setBusy(false) } }
-  const removeDocument = async (name) => { if (!window.confirm(`Delete ${name} and rebuild the knowledge index?`)) return; setBusy(true); setError(''); try { await readJson(`/api/v1/rag/documents/${encodeURIComponent(name)}`, { method: 'DELETE', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } finally { setBusy(false) } }
-  return <section className="feature-page"><PageHeader title={t('knowledgeTitle')} description={t('knowledgeDescription')} action={<button className="secondary-button" onClick={refresh}><RefreshCw size={16} />{t('refresh')}</button>} /><ErrorText error={error} /><Loading loading={loading} t={t} />
-    <div className="stat-grid">{[[t('status'), status?.status || 'Unknown'], [t('documents'), status?.documents?.length || 0], [t('quality'), quality?.level || 'Unknown'], [t('chunks'), quality?.chunks ?? 0]].map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong className="small-stat">{value}</strong></div>)}</div>
-    <div className="two-column"><section className="data-panel"><div className="panel-title-row"><h2>{t('indexedDocuments')}</h2><button className="secondary-button" disabled={busy} onClick={rebuild}><RefreshCw size={16} />{t('rebuild')}</button></div><form className="upload-form" onSubmit={upload}><input name="file" type="file" accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx" /><button className="primary-button" disabled={busy}><Upload size={16} />{t('upload')}</button></form>{status?.documents?.length ? <div className="document-list">{status.documents.map((document) => <div className="document-row" key={document.name}><div><strong>{document.name}</strong><span>{document.chunks ?? 0} {t('chunks')} · {formatBytes(document.size_bytes)}</span></div><button className="danger-icon" title={`${t('delete')} ${document.name}`} disabled={busy} onClick={() => removeDocument(document.name)}><Trash2 size={16} /></button></div>)}</div> : <p className="empty-state">{t('noDocuments')}</p>}</section><section className="data-panel"><h2>{t('qualityReport')}</h2><JsonPreview value={quality} empty={t('noQualityResult')} /></section></div>
-    <div className="two-column"><section className="data-panel"><h2>{t('retrievalCheck')}</h2><form className="inline-form" onSubmit={search}><input value={query} placeholder={t('retrievalPlaceholder')} onChange={(event) => setQuery(event.target.value)} /><button className="primary-button"><Search size={16} />{t('search')}</button></form>{results && <JsonPreview value={results.results || results} empty={t('noMatchingChunks')} />}</section><section className="data-panel"><div className="panel-title-row"><h2>{t('ragEvaluation')}</h2><button className="secondary-button" onClick={runEvaluation}><Sparkles size={16} />{t('runEvaluation')}</button></div><JsonPreview value={latest} empty={t('noEvaluation')} /></section></div>
+  const submitJob = async (path, options) => { setError(''); setMessage(''); try { const response = await readJson(path, options); setJobs((current) => [response.job, ...current.filter((job) => job.id !== response.job.id)]); setMessage(t('jobQueued')) } catch (requestError) { setError(requestError.message) } }
+  const runEvaluation = async () => { await submitJob('/api/v1/rag/evaluations/run', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ top_k: 4, threshold: 0.35, candidate_multiplier: 4 }) }) }
+  const upload = async (event) => { event.preventDefault(); const file = event.currentTarget.file.files[0]; if (!file) return; const form = new FormData(); form.append('file', file); await submitJob('/api/v1/rag/documents', { method: 'POST', headers: csrfHeaders(), body: form }); event.currentTarget.reset() }
+  const rebuild = async () => { await submitJob('/api/v1/rag/rebuild', { method: 'POST', headers: csrfHeaders() }) }
+  const removeDocument = async (name) => { if (!window.confirm(`Delete ${name} and rebuild the knowledge index?`)) return; await submitJob(`/api/v1/rag/documents/${encodeURIComponent(name)}`, { method: 'DELETE', headers: csrfHeaders() }) }
+  const hasActiveJob = jobs.some((job) => job.status === 'queued' || job.status === 'running')
+  return <section className="feature-page"><PageHeader title={t('knowledgeTitle')} description={t('knowledgeDescription')} action={<button className="secondary-button" onClick={() => refresh()}><RefreshCw size={16} />{t('refresh')}</button>} /><ErrorText error={error} />{message && <p className="success-text">{message}</p>}<Loading loading={loading} t={t} />
+    <div className="stat-grid">{[[t('status'), status?.status || 'Unknown'], [t('documents'), status?.documents?.length || 0], [t('quality'), quality?.level || 'Unknown'], [t('chunks'), quality?.chunks ?? 0], [t('release'), status?.release?.enabled ? status.release.state : 'Off']].map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong className="small-stat">{value}</strong></div>)}</div>
+    {status?.release?.enabled && <section className="data-panel"><h2>{t('releaseGate')}</h2><p className="report-text">{status.release.reason || status.release.state}</p><JsonPreview value={{ thresholds: status.release.thresholds, report: status.release.report }} empty={t('noEvaluation')} /></section>}
+    <section className="data-panel"><div className="panel-title-row"><h2>{t('jobs')}</h2><span className="job-count">{jobs.length}</span></div>{jobs.length ? <div className="job-list">{jobs.map((job) => <article className={`job-row ${job.status}`} key={job.id}><div><strong>{job.kind.replaceAll('_', ' ')}</strong><span>{t(job.status)} · {job.progress}%</span><p>{job.error || job.message}</p></div><i aria-label={`${job.progress}%`}><b style={{ width: `${job.progress}%` }} /></i></article>)}</div> : <p className="empty-state">{t('noJobs')}</p>}</section>
+    <div className="two-column"><section className="data-panel"><div className="panel-title-row"><h2>{t('indexedDocuments')}</h2><button className="secondary-button" disabled={hasActiveJob} onClick={rebuild}><RefreshCw size={16} />{t('rebuild')}</button></div><form className="upload-form" onSubmit={upload}><input name="file" type="file" accept=".txt,.md,.markdown,.csv,.json,.pdf,.docx" /><button className="primary-button" disabled={hasActiveJob}><Upload size={16} />{t('upload')}</button></form>{status?.documents?.length ? <div className="document-list">{status.documents.map((document) => <div className="document-row" key={document.name}><div><strong>{document.name}</strong><span>{document.chunks ?? 0} {t('chunks')} · {formatBytes(document.size_bytes)}</span></div><button className="danger-icon" title={`${t('delete')} ${document.name}`} disabled={hasActiveJob} onClick={() => removeDocument(document.name)}><Trash2 size={16} /></button></div>)}</div> : <p className="empty-state">{t('noDocuments')}</p>}</section><section className="data-panel"><h2>{t('qualityReport')}</h2><JsonPreview value={quality} empty={t('noQualityResult')} /></section></div>
+    <div className="two-column"><section className="data-panel"><h2>{t('retrievalCheck')}</h2><form className="inline-form" onSubmit={search}><input value={query} placeholder={t('retrievalPlaceholder')} onChange={(event) => setQuery(event.target.value)} /><button className="primary-button"><Search size={16} />{t('search')}</button></form>{results && <JsonPreview value={results.results || results} empty={t('noMatchingChunks')} />}</section><section className="data-panel"><div className="panel-title-row"><h2>{t('ragEvaluation')}</h2><button className="secondary-button" disabled={hasActiveJob} onClick={runEvaluation}><Sparkles size={16} />{t('runEvaluation')}</button></div><JsonPreview value={latest} empty={t('noEvaluation')} /></section></div>
+  </section>
+}
+
+export function OperationsPage({ t }) {
+  const [days, setDays] = useState(7)
+  const [dashboard, setDashboard] = useState(null)
+  const [error, setError] = useState('')
+  const [loading, setLoading] = useState(true)
+  const refresh = async (showLoading = true) => {
+    if (showLoading) setLoading(true)
+    setError('')
+    try {
+      setDashboard(await readJson(`/api/v1/operations/dashboard?days=${days}`))
+    } catch (requestError) {
+      setError(requestError.status === 403 ? t('accessDenied') : requestError.message)
+    } finally {
+      if (showLoading) setLoading(false)
+    }
+  }
+  useEffect(() => {
+    refresh()
+    const timer = window.setInterval(() => refresh(false), 30_000)
+    return () => window.clearInterval(timer)
+  }, [days])
+  const activeAlerts = dashboard?.alerts?.filter((alert) => alert.status === 'active') || []
+  const stats = dashboard ? [
+    [t('selectedWindow'), `${dashboard.window_days}d`],
+    [t('requests'), dashboard.http.requests || 0],
+    [t('failureRate'), `${Number(dashboard.http.failure_rate || 0).toFixed(1)}%`],
+    [t('averageLatency'), `${Math.round(dashboard.http.average_duration_ms || 0)} ms`],
+    [t('activeAlerts'), activeAlerts.length],
+  ] : []
+  return <section className="feature-page"><PageHeader title={t('operationsTitle')} description={t('operationsDescription')} action={<div className="operations-actions"><select aria-label={t('selectedWindow')} value={days} onChange={(event) => setDays(Number(event.target.value))}><option value="1">1d</option><option value="7">7d</option><option value="30">30d</option><option value="90">90d</option></select><button className="secondary-button" onClick={() => refresh()}><RefreshCw size={16} />{t('refresh')}</button></div>} /><ErrorText error={error} /><Loading loading={loading} t={t} />
+    {dashboard && <><div className="stat-grid">{stats.map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong className="small-stat">{value}</strong></div>)}</div><section className="data-panel"><h2>{t('alerts')}</h2>{dashboard.alerts.length ? <div className="alert-list">{dashboard.alerts.map((alert) => <article className={`alert-row ${alert.severity} ${alert.status}`} key={alert.fingerprint}><div><strong>{alert.message}</strong><span>{alert.severity} · {alert.status} · {alert.last_seen_at || dashboard.generated_at}</span></div></article>)}</div> : <p className="empty-state">{t('noAlerts')}</p>}</section><div className="two-column"><section className="data-panel"><h2>{t('providerFailures')}</h2><JsonPreview value={dashboard.provider_failures} empty={t('noProviderFailures')} /></section><section className="data-panel"><h2>{t('jobFailures')}</h2>{dashboard.jobs.recent_failures?.length ? <JsonPreview value={dashboard.jobs.recent_failures} empty={t('noJobFailures')} /> : <p className="empty-state">{t('noJobFailures')}</p>}<JsonPreview value={dashboard.jobs.counts} empty={t('noJobFailures')} /></section></div><section className="data-panel"><h2>{t('requests')}</h2><JsonPreview value={{ top_paths: dashboard.http.top_paths, statuses: dashboard.http.statuses }} empty={t('noQualityResult')} /></section></>}
   </section>
 }
 

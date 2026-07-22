@@ -1,4 +1,5 @@
 import os
+import json
 import threading
 import logging
 import time
@@ -20,6 +21,7 @@ from config import (
     CHAT_MODEL_NAME,
     DEFAULT_API_MODEL,
     DEFAULT_API_BASE_URL,
+    LLM_FALLBACKS_JSON,
     HF_TOKEN,
     EMBEDDING_MODEL_NAME,
     LOCAL_MODEL_ATTN_IMPLEMENTATION,
@@ -39,8 +41,20 @@ from config import (
 )
 from api_usage_store import check_request_allowed, estimate_input_tokens, estimate_tokens, record_usage
 from observability import get_request_id
+from service_errors import ServiceError
 
 logger = logging.getLogger(__name__)
+
+_API_PROVIDERS = {"deepseek", "openai", "openrouter", "openai_compatible", "custom"}
+
+
+class ProviderRequestError(ServiceError):
+    """A provider failure with enough context to decide whether to fail over."""
+
+    def __init__(self, message: str, *, kind: str, retryable: bool, emitted_content: bool = False) -> None:
+        super().__init__(f"provider_{kind}", message, retryable=retryable)
+        self.kind = kind
+        self.emitted_content = emitted_content
 
 _embedding_model: Any | None = None
 _tokenizer: Any | None = None
@@ -234,6 +248,60 @@ def make_model_config(
     )
 
 
+def _fallback_configs(config: ModelRuntimeConfig) -> list[ModelRuntimeConfig]:
+    """Build server-managed fallback targets without exposing their credentials."""
+    if config.api_key and config.api_key.strip():
+        return []
+    if not LLM_FALLBACKS_JSON:
+        return []
+    try:
+        raw_targets = json.loads(LLM_FALLBACKS_JSON)
+    except json.JSONDecodeError:
+        logger.error("event=provider_failover_config_invalid reason=invalid_json")
+        return []
+    if not isinstance(raw_targets, list):
+        logger.error("event=provider_failover_config_invalid reason=not_a_list")
+        return []
+
+    primary_fingerprint = (config.normalized_provider(), config.resolved_model(), config.resolved_base_url())
+    candidates: list[ModelRuntimeConfig] = []
+    for index, target in enumerate(raw_targets):
+        if not isinstance(target, dict):
+            logger.warning("event=provider_failover_target_skipped index=%s reason=not_an_object", index)
+            continue
+        if "api_key" in target:
+            logger.warning("event=provider_failover_target_skipped index=%s reason=api_key_not_allowed", index)
+            continue
+        provider = str(target.get("provider", "")).strip().lower()
+        if provider not in _API_PROVIDERS:
+            logger.warning("event=provider_failover_target_skipped index=%s reason=unsupported_provider", index)
+            continue
+        model = str(target.get("model", "")).strip() or None
+        base_url = str(target.get("base_url", "")).strip() or None
+        candidate = make_model_config(
+            provider=provider,
+            model=model,
+            base_url=base_url,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            max_new_tokens=config.max_new_tokens,
+            user_id=config.user_id,
+        )
+        try:
+            fingerprint = (candidate.normalized_provider(), candidate.resolved_model(), candidate.resolved_base_url())
+        except ValueError:
+            logger.warning("event=provider_failover_target_skipped index=%s reason=invalid_base_url", index)
+            continue
+        if fingerprint == primary_fingerprint or any(
+            fingerprint == (item.normalized_provider(), item.resolved_model(), item.resolved_base_url())
+            for item in candidates
+        ):
+            logger.warning("event=provider_failover_target_skipped index=%s reason=duplicate", index)
+            continue
+        candidates.append(candidate)
+    return candidates
+
+
 def require_transformers():
     try:
         from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
@@ -394,9 +462,9 @@ def _stream_openai_compatible(
 ) -> Generator[str, None, None]:
     api_key = config.resolved_api_key()
     if not api_key:
-        raise RuntimeError(
-            "当前 API Provider 缺少 API Key。请在 GUI 中填写 API Key，"
-            "或设置 DEEPSEEK_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / LLM_API_KEY。"
+        raise ServiceError(
+            "provider_api_key_missing",
+            "当前 API Provider 缺少 API Key。请在 GUI 中填写 API Key，或设置服务端 API Key。",
         )
 
     input_tokens = estimate_input_tokens(full_messages)
@@ -464,7 +532,12 @@ def _stream_openai_compatible(
                     success=False,
                     error_kind=error_kind,
                 )
-                raise RuntimeError(f"API 请求失败（{error_kind}）：{exc}") from exc
+                raise ProviderRequestError(
+                    f"API 请求失败（{error_kind}）：{exc}",
+                    kind=error_kind,
+                    retryable=retryable,
+                    emitted_content=emitted_content,
+                ) from exc
             delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
             logger.warning(
                 "event=provider_retry request_id=%s provider=%s model=%s attempt=%s/%s delay_seconds=%.1f error=%s",
@@ -509,11 +582,39 @@ def stream_model_response(
 ) -> Generator[str, None, None]:
     provider = config.normalized_provider()
     if provider == "local_hf":
-        yield from _stream_local_hf(full_messages, config)
-    elif provider in {"deepseek", "openai", "openrouter", "openai_compatible", "custom"}:
-        yield from _stream_openai_compatible(full_messages, config)
+        try:
+            yield from _stream_local_hf(full_messages, config)
+        except ServiceError:
+            raise
+        except Exception as exc:
+            raise ServiceError("local_model_failed", f"本地模型运行失败：{exc}", retryable=True) from exc
+    elif provider in _API_PROVIDERS:
+        try:
+            yield from _stream_openai_compatible(full_messages, config)
+            return
+        except ProviderRequestError as primary_error:
+            if not primary_error.retryable or primary_error.emitted_content:
+                raise
+            fallbacks = _fallback_configs(config)
+            if not fallbacks:
+                raise
+            primary_model = config.resolved_model()
+            for fallback in fallbacks:
+                logger.warning(
+                    "event=provider_failover request_id=%s from_provider=%s from_model=%s to_provider=%s to_model=%s error_kind=%s",
+                    get_request_id(), provider, primary_model, fallback.normalized_provider(),
+                    fallback.resolved_model(), primary_error.kind,
+                )
+                try:
+                    yield from _stream_openai_compatible(full_messages, fallback)
+                    return
+                except ProviderRequestError as fallback_error:
+                    if not fallback_error.retryable or fallback_error.emitted_content:
+                        raise
+                    primary_error = fallback_error
+            raise primary_error
     else:
-        raise ValueError(f"未知模型 Provider: {config.provider!r}")
+        raise ServiceError("provider_not_supported", f"未知模型 Provider: {config.provider!r}")
     
     
 def _run_generate_locked(model: Any, generate_kwargs: dict[str, Any]) -> None:

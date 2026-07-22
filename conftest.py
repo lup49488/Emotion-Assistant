@@ -10,10 +10,15 @@ numpy 等重依赖替换为轻量 stub，注入到 sys.modules。
 直接用真实库，不影响正确性。
 """
 
+import os
 import sys
 import types
 
 import pytest
+
+# 必须在任何项目模块（尤其是 config）被导入之前设置：让测试忽略本机 .env，
+# 使测试在干净的默认配置下运行，不受开发者部署配置影响。
+os.environ.setdefault("CHATBOT_SKIP_DOTENV", "1")
 
 
 @pytest.fixture(autouse=True)

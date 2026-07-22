@@ -4,7 +4,7 @@
     "title": "Emotion-Aware Chat API",
     "description": "Versioned API contract for the Emotion-Aware Chat application.",
     "version": "1.0.0",
-    "x-contract-version": "2026-07-20.1",
+    "x-contract-version": "2026-07-21.6",
     "x-api-version": "v1"
   },
   "paths": {
@@ -39,6 +39,122 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/StatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/observability/summary": {
+      "get": {
+        "summary": "Observability Summary Endpoint",
+        "operationId": "observability_summary_endpoint_api_v1_observability_summary_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 90,
+              "minimum": 1,
+              "default": 7,
+              "title": "Days"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ObservabilitySummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/operations/dashboard": {
+      "get": {
+        "summary": "Operations Dashboard Endpoint",
+        "operationId": "operations_dashboard_endpoint_api_v1_operations_dashboard_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 90,
+              "minimum": 1,
+              "default": 7,
+              "title": "Days"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OperationsDashboardResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1263,10 +1379,123 @@
         }
       }
     },
+    "/api/v1/jobs": {
+      "get": {
+        "summary": "Background Jobs",
+        "operationId": "background_jobs_api_v1_jobs_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "default": 30,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundJobListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/jobs/{job_id}": {
+      "get": {
+        "summary": "Background Job",
+        "operationId": "background_job_api_v1_jobs__job_id__get",
+        "parameters": [
+          {
+            "name": "job_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Job Id"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BackgroundJobResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/rag/documents": {
       "post": {
         "summary": "Upload Rag Document",
-        "description": "Store one supported document and rebuild the derived RAG index.",
+        "description": "Stage a document, then copy and rebuild the index in the job queue.",
         "operationId": "upload_rag_document_api_v1_rag_documents_post",
         "parameters": [
           {
@@ -1329,12 +1558,12 @@
           }
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RagDocumentMutationResponse"
+                  "$ref": "#/components/schemas/BackgroundJobResponse"
                 }
               }
             }
@@ -1407,12 +1636,12 @@
           }
         ],
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RagDocumentMutationResponse"
+                  "$ref": "#/components/schemas/BackgroundJobResponse"
                 }
               }
             }
@@ -1494,12 +1723,12 @@
           }
         ],
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RagDocumentMutationResponse"
+                  "$ref": "#/components/schemas/BackgroundJobResponse"
                 }
               }
             }
@@ -1762,12 +1991,12 @@
           }
         },
         "responses": {
-          "200": {
+          "202": {
             "description": "Successful Response",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/RagEvaluationResponse"
+                  "$ref": "#/components/schemas/BackgroundJobResponse"
                 }
               }
             }
@@ -2072,6 +2301,129 @@
   },
   "components": {
     "schemas": {
+      "BackgroundJob": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "kind": {
+            "type": "string",
+            "title": "Kind"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "succeeded",
+              "failed",
+              "cancelled"
+            ],
+            "title": "Status"
+          },
+          "progress": {
+            "type": "integer",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "title": "Progress"
+          },
+          "message": {
+            "type": "string",
+            "title": "Message"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "started_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Started At"
+          },
+          "finished_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Finished At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "kind",
+          "status",
+          "progress",
+          "message",
+          "created_at"
+        ],
+        "title": "BackgroundJob"
+      },
+      "BackgroundJobListResponse": {
+        "properties": {
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/BackgroundJob"
+            },
+            "type": "array",
+            "title": "Jobs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "jobs"
+        ],
+        "title": "BackgroundJobListResponse"
+      },
+      "BackgroundJobResponse": {
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/BackgroundJob"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "job"
+        ],
+        "title": "BackgroundJobResponse"
+      },
       "Body_upload_rag_document_api_v1_rag_documents_post": {
         "properties": {
           "file": {
@@ -2910,6 +3262,111 @@
         ],
         "title": "MoodCheckinResponse"
       },
+      "ObservabilitySummaryResponse": {
+        "properties": {
+          "days": {
+            "type": "integer",
+            "title": "Days"
+          },
+          "retention_days": {
+            "type": "integer",
+            "title": "Retention Days"
+          },
+          "requests": {
+            "type": "integer",
+            "title": "Requests"
+          },
+          "failures": {
+            "type": "integer",
+            "title": "Failures"
+          },
+          "failure_rate": {
+            "type": "number",
+            "title": "Failure Rate"
+          },
+          "average_duration_ms": {
+            "type": "number",
+            "title": "Average Duration Ms"
+          },
+          "top_paths": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Top Paths"
+          },
+          "statuses": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "type": "object",
+            "title": "Statuses"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "days",
+          "retention_days",
+          "requests",
+          "failures",
+          "failure_rate",
+          "average_duration_ms",
+          "top_paths",
+          "statuses"
+        ],
+        "title": "ObservabilitySummaryResponse"
+      },
+      "OperationsDashboardResponse": {
+        "properties": {
+          "window_days": {
+            "type": "integer",
+            "title": "Window Days"
+          },
+          "generated_at": {
+            "type": "string",
+            "title": "Generated At"
+          },
+          "http": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Http"
+          },
+          "provider_failures": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Provider Failures"
+          },
+          "jobs": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Jobs"
+          },
+          "alerts": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Alerts"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "window_days",
+          "generated_at",
+          "http",
+          "provider_failures",
+          "jobs",
+          "alerts"
+        ],
+        "title": "OperationsDashboardResponse"
+      },
       "PrivacyDeleteRequest": {
         "properties": {
           "confirmation": {
@@ -2988,21 +3445,6 @@
           "api_request_count"
         ],
         "title": "PrivacyResponse"
-      },
-      "RagDocumentMutationResponse": {
-        "properties": {
-          "result": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Result"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "result"
-        ],
-        "title": "RagDocumentMutationResponse"
       },
       "RagEvaluationRequest": {
         "properties": {
@@ -3117,13 +3559,19 @@
             },
             "type": "array",
             "title": "Documents"
+          },
+          "release": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Release"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "status",
-          "documents"
+          "documents",
+          "release"
         ],
         "title": "RagStatusResponse"
       },
@@ -3137,13 +3585,18 @@
             "type": "string",
             "const": "signed_cookie",
             "title": "Authentication"
+          },
+          "can_access_operations": {
+            "type": "boolean",
+            "title": "Can Access Operations"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
           "user_id",
-          "authentication"
+          "authentication",
+          "can_access_operations"
         ],
         "title": "SessionResponse"
       },

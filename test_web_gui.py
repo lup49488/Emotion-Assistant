@@ -753,12 +753,14 @@ def test_style_import_prompt_and_preview_are_english_under_english_locale():
     assert preview_message == "Enter a retrieval question or the current conversation intent."
 
 
-def test_chat_error_bubble_is_localized_under_english_locale(tmp_path, monkeypatch):
+def test_chat_error_is_localized_under_english_locale(tmp_path, monkeypatch):
     monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
     Web_GUI.save_access_key_from_gui("i18n-chat-err", "alice-secret")
 
     def fake_stream(*args, **kwargs):
-        yield "模型调用失败：API 请求频率已达到本机限制：5 次/分钟"
+        # chatbot.chat 现在会把模型/限额失败作为异常抛出，而不是产出错误文本。
+        raise RuntimeError("boom")
+        yield  # pragma: no cover  (makes this a generator)
 
     with patch.object(Web_GUI, "handle_user_message_stream", fake_stream), \
          patch.object(Web_GUI, "ensure_conversation", return_value={"id": "conv-1"}), \
@@ -768,6 +770,6 @@ def test_chat_error_bubble_is_localized_under_english_locale(tmp_path, monkeypat
             "deepseek", "deepseek-chat", "", "key", 0.8, 0.9, 64, "en",
         )]
 
-    assert outputs[-1] == (
-        "Model call failed: API request rate reached the local limit: 5 requests per minute"
-    )
+    # 界面把抛出的异常本地化为英文的“请求失败”提示。
+    assert outputs[-1].startswith("Request failed: ")
+    assert "请求失败" not in outputs[-1]

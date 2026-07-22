@@ -1,3 +1,4 @@
+import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -119,3 +120,74 @@ def test_openai_stream_retries_timeout_before_first_chunk():
     assert fake_client.chat.completions.create.call_count == 2
     assert fake_openai.call_args.kwargs["timeout"] == llm_providers.API_REQUEST_TIMEOUT_SECONDS
     assert fake_openai.call_args.kwargs["max_retries"] == 0
+
+
+def test_retryable_provider_failure_fails_over_to_server_configured_provider():
+    calls = []
+    config = llm_providers.ModelRuntimeConfig(
+        provider="deepseek", model="primary-model", api_key=None, max_new_tokens=8,
+    )
+
+    def stream(_, candidate):
+        calls.append(candidate)
+        if candidate.normalized_provider() == "deepseek":
+            raise llm_providers.ProviderRequestError(
+                "primary timed out", kind="timeout", retryable=True,
+            )
+        yield "fallback reply"
+
+    with patch.object(llm_providers, "LLM_FALLBACKS_JSON", json.dumps([
+        {"provider": "openai", "model": "fallback-model"},
+    ])), patch.object(llm_providers, "_stream_openai_compatible", side_effect=stream):
+        chunks = list(llm_providers.stream_model_response([
+            {"role": "user", "content": "hello"},
+        ], config))
+
+    assert chunks == ["fallback reply"]
+    assert [item.normalized_provider() for item in calls] == ["deepseek", "openai"]
+    assert calls[1].resolved_model() == "fallback-model"
+    assert calls[1].max_new_tokens == config.max_new_tokens
+
+
+def test_provider_failover_does_not_switch_after_streaming_has_started():
+    config = llm_providers.ModelRuntimeConfig(provider="deepseek", model="primary-model", max_new_tokens=8)
+
+    def stream(_, __):
+        raise llm_providers.ProviderRequestError(
+            "connection dropped", kind="network", retryable=True, emitted_content=True,
+        )
+        yield "unreachable"
+
+    with patch.object(llm_providers, "LLM_FALLBACKS_JSON", '[{"provider":"openai"}]'), \
+        patch.object(llm_providers, "_stream_openai_compatible", side_effect=stream) as mocked:
+        with pytest.raises(llm_providers.ProviderRequestError, match="connection dropped"):
+            list(llm_providers.stream_model_response([], config))
+
+    assert mocked.call_count == 1
+
+
+def test_request_scoped_api_key_disables_server_failover():
+    config = llm_providers.ModelRuntimeConfig(
+        provider="deepseek", model="primary-model", api_key="temporary-key", max_new_tokens=8,
+    )
+
+    def stream(_, __):
+        raise llm_providers.ProviderRequestError("timed out", kind="timeout", retryable=True)
+        yield "unreachable"
+
+    with patch.object(llm_providers, "LLM_FALLBACKS_JSON", '[{"provider":"openai"}]'), \
+        patch.object(llm_providers, "_stream_openai_compatible", side_effect=stream) as mocked:
+        with pytest.raises(llm_providers.ProviderRequestError, match="timed out"):
+            list(llm_providers.stream_model_response([], config))
+
+    assert mocked.call_count == 1
+
+
+def test_missing_provider_key_uses_stable_service_error_code():
+    config = llm_providers.ModelRuntimeConfig(provider="deepseek", api_key="")
+    with patch.object(llm_providers.ModelRuntimeConfig, "resolved_api_key", return_value=None), \
+         pytest.raises(Exception) as captured:
+        list(llm_providers._stream_openai_compatible([], config))
+
+    assert getattr(captured.value, "code", None) == "provider_api_key_missing"
+    assert not getattr(captured.value, "retryable", True)
