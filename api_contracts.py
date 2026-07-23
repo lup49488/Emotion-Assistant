@@ -83,6 +83,7 @@ class SessionResponse(ContractModel):
     user_id: str
     authentication: Literal["signed_cookie"]
     can_access_operations: bool
+    can_manage_knowledge: bool
 
 
 class ChatRequest(ContractModel):
@@ -106,6 +107,28 @@ class ChatRequest(ContractModel):
 class ChatResponse(ContractModel):
     reply: str
     memory_receipt: str | None = None
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+    citation_trace_id: str | None = None
+
+
+class RagFeedbackRequest(ContractModel):
+    trace_id: str = Field(min_length=1, max_length=64)
+    helpful: bool
+    comment: str = Field(default="", max_length=1_000)
+
+
+class RagFeedbackResponse(ContractModel):
+    trace_id: str
+    helpful: bool
+    comment: str
+    created_at: str
+
+
+class RagFeedbackSummaryResponse(ContractModel):
+    total: int
+    helpful: int
+    helpful_rate: float | None = None
+    sources: list[dict[str, Any]]
 
 
 class MemoryQualityResponse(ContractModel):

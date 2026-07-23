@@ -18,6 +18,7 @@ from memory_store import (
     VectorIndexManager,
     clean_long_term,
     compact_long_memory,
+    reconcile_memory_ownership,
 )
 from sqlite_store import (
     connection as sqlite_connection,
@@ -180,6 +181,7 @@ def _hydrate_state(state: SessionState, sections: dict[str, list[dict[str, Any]]
     ]
     state.long_memory = compact_long_memory(clean_long_term(raw_long_memory))
     state.interest_store.load(list(sections["interest_memory"]))
+    reconcile_memory_ownership(state)
 
 
 def _state_sections(state: SessionState) -> dict[str, list[dict[str, Any]]]:
@@ -223,6 +225,7 @@ def _load_json_state(user_id: str) -> SessionState:
         paths = user_paths(user_id)
         save_json(paths["long_memory"], state.long_memory)
         save_json(paths["stable_profile"], state.stable_profile)
+        save_json(paths["interest_memory"], state.interest_store.items)
         save_json(paths["memory_events"], state.memory_events)
     return state
 

@@ -20,6 +20,8 @@ import {
   ShieldCheck,
   Square,
   Sparkles,
+  ThumbsDown,
+  ThumbsUp,
   Trash2,
   Languages,
   SunMoon,
@@ -42,6 +44,11 @@ const NAVIGATION = [
 ]
 
 const ASSISTANT_NAME = 'Serenova'
+const MODEL_PROFILES = {
+  fast: { temperature: 0.4, maxNewTokens: 500 },
+  balanced: { temperature: 0.7, maxNewTokens: 900 },
+  detailed: { temperature: 0.6, maxNewTokens: 1400 },
+}
 
 function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('mindful-theme') || 'system')
@@ -60,7 +67,7 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(() => window.innerWidth > 1060)
   const [options, setOptions] = useState({
     provider: '', model: '', baseUrl: '', apiKey: '',
-    useKnowledge: false, useStyle: false, temperature: 0.8,
+    useKnowledge: false, useStyle: false, profile: 'balanced',
   })
   const [editableModelField, setEditableModelField] = useState({ baseUrl: false, apiKey: false })
   const messageEndRef = useRef(null)
@@ -240,7 +247,8 @@ function App() {
           model: options.model || null,
           base_url: options.baseUrl || null,
           api_key: options.apiKey || null,
-          temperature: options.temperature,
+          temperature: MODEL_PROFILES[options.profile].temperature,
+          max_new_tokens: MODEL_PROFILES[options.profile].maxNewTokens,
           use_knowledge: options.useKnowledge,
           use_style: options.useStyle,
           show_memory_receipt: false,
@@ -268,6 +276,11 @@ function App() {
             receivedText ||= Boolean(payload.text)
             setMessages((current) => current.map((item, index) => index === current.length - 1
               ? { ...item, content: item.content + payload.text, pending: false }
+              : item))
+          }
+          if (eventName === 'citations') {
+            setMessages((current) => current.map((item, index) => index === current.length - 1
+              ? { ...item, citations: payload.citations || [], citationTraceId: payload.trace_id || null }
               : item))
           }
           if (eventName === 'error') receivedError = { code: payload.code || 'generation_failed', retryable: Boolean(payload.retryable), message: payload.message }
@@ -304,6 +317,21 @@ function App() {
     }
   }
 
+  async function submitRagFeedback(index, helpful) {
+    const message = messages[index]
+    if (!message?.citationTraceId) return
+    try {
+      const response = await apiFetch('/api/v1/rag/feedback', {
+        method: 'POST', headers: csrfHeaders(),
+        body: JSON.stringify({ trace_id: message.citationTraceId, helpful }),
+      })
+      if (!response.ok) throw new Error('feedback failed')
+      setMessages((current) => current.map((item, itemIndex) => itemIndex === index ? { ...item, ragFeedback: helpful } : item))
+    } catch {
+      setNotice(t('feedbackFailed'))
+    }
+  }
+
   async function logout() {
     try {
       await apiFetch('/api/v1/auth/logout', { method: 'POST', headers: csrfHeaders() })
@@ -325,7 +353,7 @@ function App() {
         <nav className="workspace-nav">{visibleNavigation.map(({ id, label, icon: Icon }) => <button key={id} className={`workspace-link ${activeView === id ? 'selected' : ''}`} onClick={() => setActiveView(id)}><Icon size={16} />{t(label)}</button>)}</nav>
         {activeView === 'chat' && <><button className="new-chat" onClick={createConversation}><CirclePlus size={18} />{t('newChat')}</button><div className="conversation-list"><p className="section-label">{t('conversations')}</p>{conversations.length === 0 && <p className="empty-list">{t('noChats')}</p>}{conversations.map((conversation) => editingConversationId === conversation.id ? (
           <form className="conversation-edit" key={conversation.id} onSubmit={(event) => renameConversation(event, conversation)}><input value={conversationTitleDraft} onChange={(event) => setConversationTitleDraft(event.target.value)} aria-label={t('conversationTitle')} autoFocus /><button className="conversation-action" title={t('saveTitle')}><Check size={15} /></button><button className="conversation-action" type="button" title={t('cancel')} onClick={() => setEditingConversationId(null)}><X size={15} /></button></form>
-        ) : <div className={`conversation-row ${conversation.id === activeConversation?.id ? 'selected' : ''}`} key={conversation.id}><button className="conversation" onClick={() => selectConversation(conversation)}><MessageSquare size={15} /><span>{conversation.title}</span></button><div className="conversation-actions"><button className="conversation-action" title={t('renameConversation')} onClick={(event) => beginConversationRename(event, conversation)}><Pencil size={14} /></button><button className="conversation-action delete-conversation" title={t('deleteConversation')} onClick={(event) => removeConversation(event, conversation)} disabled={isSending}><Trash2 size={14} /></button></div></div>
+        ) : <div className={`conversation-row ${conversation.id === activeConversation?.id ? 'selected' : ''}`} key={conversation.id}><button className="conversation" onClick={() => selectConversation(conversation)}><MessageSquare size={15} /><span>{conversation.title}</span></button><div className="conversation-actions"><button className="conversation-action" title={t('renameConversation')} onClick={(event) => beginConversationRename(event, conversation)}><Pencil size={15} /></button><button className="conversation-action delete-conversation" title={t('deleteConversation')} onClick={(event) => removeConversation(event, conversation)} disabled={isSending}><Trash2 size={15} /></button></div></div>
         )}</div></>}
         {activeView !== 'chat' && <div className="sidebar-space" />}
         <PreferencesControls theme={theme} setTheme={setTheme} locale={locale} setLocale={setLocale} t={t} />
@@ -340,7 +368,7 @@ function App() {
         <header className="chat-header"><div><h1>{activeTitle}</h1><p>{t('connected')} {apiLabel}</p></div><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('preferences')} onClick={() => setSettingsOpen((open) => !open)}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></header>
         <div className="messages" aria-live="polite">
           {!hasMessages && <Welcome onPrompt={setDraft} t={t} />}
-          {messages.map((message, index) => <Message key={`${message.role}-${index}`} message={message} index={index} onCopy={copyReply} onRetry={sendMessage} isSending={isSending} t={t} />)}
+          {messages.map((message, index) => <Message key={`${message.role}-${index}`} message={message} index={index} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onRetry={sendMessage} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
           <div ref={messageEndRef} />
         </div>
         {notice && <div className="notice" role="alert">{notice}<button onClick={() => setNotice('')} title="Dismiss"><X size={15} /></button></div>}
@@ -357,9 +385,9 @@ function App() {
         <label className="model-field">{t('apiKey')}<input name="llm-api-key" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.apiKey} value={options.apiKey} placeholder={t('tabOnly')} onFocus={() => setEditableModelField((current) => ({ ...current, apiKey: true }))} onChange={(event) => setOptions((current) => ({ ...current, apiKey: event.target.value }))} /></label>
         <Toggle label={t('knowledgeRetrieval')} description={t('knowledgeHint')} checked={options.useKnowledge} onChange={(useKnowledge) => setOptions((current) => ({ ...current, useKnowledge }))} />
         <Toggle label={t('styleReference')} description={t('styleHint')} checked={options.useStyle} onChange={(useStyle) => setOptions((current) => ({ ...current, useStyle }))} />
-        <label className="range-control"><span>{t('temperature')} <b>{options.temperature.toFixed(1)}</b></span><input type="range" min="0" max="2" step="0.1" value={options.temperature} onChange={(event) => setOptions((current) => ({ ...current, temperature: Number(event.target.value) }))} /></label>
+        <label className="model-field">{t('responseProfile')}<select value={options.profile} onChange={(event) => setOptions((current) => ({ ...current, profile: event.target.value }))}><option value="fast">{t('profileFast')}</option><option value="balanced">{t('profileBalanced')}</option><option value="detailed">{t('profileDetailed')}</option></select><small>{t('profileHint')}</small></label>
         <div className="contract-note"><span>API v1</span><p>Cookie session and CSRF protection are active.</p></div>
-      </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} />}{activeView === 'knowledge' && <KnowledgePage t={t} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
+      </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
     </main>
   )
 }
@@ -384,7 +412,7 @@ function LoginScreen({ onSuccess, t }) {
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt('我今天有一点焦虑，能陪我理一理吗？')}>{t('talkPrompt')}</button><button onClick={() => onPrompt('我想为未来做一点准备，可以从哪里开始？')}>{t('planPrompt')}</button></div></div> }
 
-function Message({ message, index, onCopy, onRetry, isSending, t }) { return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div><div><div className={`message-body ${message.role === 'assistant' && !message.failed ? 'assistant-markdown' : ''}`}>{message.pending && !message.content ? <span className="typing"><i /><i /><i /></span> : message.role === 'assistant' && !message.failed ? <Suspense fallback={message.content}><AssistantMarkdown content={message.content} /></Suspense> : message.content}</div>{message.role === 'assistant' && !message.pending && <div className="message-actions">{message.content && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(message.content)}><Copy size={14} /></button>}{message.failed && message.retryable && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</div>}</div></article> }
+function Message({ message, index, canRegenerate, onCopy, onRetry, onRagFeedback, isSending, t }) { const canRetry = message.failed ? message.retryable : canRegenerate && Boolean(message.content); return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div><div><div className={`message-body ${message.role === 'assistant' && !message.failed ? 'assistant-markdown' : ''}`}>{message.pending && !message.content ? <span className="typing"><i /><i /><i /></span> : message.role === 'assistant' && !message.failed ? <Suspense fallback={message.content}><AssistantMarkdown content={message.content} /></Suspense> : message.content}</div>{message.role === 'assistant' && message.citations?.length > 0 && <div className="rag-citations"><span>{t('sources')}</span>{message.citations.map((citation) => <span className="rag-citation" title={citation.excerpt} key={`${citation.source}-${citation.chunk_index}`}>{citation.source}</span>)}</div>}{message.role === 'assistant' && !message.pending && <div className="message-actions">{message.content && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(message.content)}><Copy size={14} /></button>}{message.citationTraceId && <><button className={`message-action ${message.ragFeedback === true ? 'selected' : ''}`} title={t('ragHelpful')} onClick={() => onRagFeedback(index, true)}><ThumbsUp size={14} /></button><button className={`message-action ${message.ragFeedback === false ? 'selected' : ''}`} title={t('ragUnhelpful')} onClick={() => onRagFeedback(index, false)}><ThumbsDown size={14} /></button></>}{canRetry && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</div>}</div></article> }
 
 function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, t }) { return <div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div> }
 

@@ -172,6 +172,23 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             imported_at TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS rag_citation_traces (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            conversation_id TEXT NOT NULL DEFAULT '',
+            citations_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_rag_citation_traces_user_created
+            ON rag_citation_traces(user_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS rag_feedback (
+            trace_id TEXT PRIMARY KEY REFERENCES rag_citation_traces(id) ON DELETE CASCADE,
+            helpful INTEGER NOT NULL CHECK (helpful IN (0, 1)),
+            comment TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS api_usage_events (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,

@@ -636,10 +636,24 @@ def build_knowledge_context(
     threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
     max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
 ) -> str:
+    return build_knowledge_bundle(
+        query, top_k=top_k, threshold=threshold, max_context_chars=max_context_chars,
+    )["context"]
+
+
+def build_knowledge_bundle(
+    query: str,
+    *,
+    top_k: int = KNOWLEDGE_TOP_K,
+    threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
+) -> dict[str, Any]:
+    """Build prompt context and the matching, display-safe citation metadata."""
     results = retrieve_knowledge(query, top_k=top_k, threshold=threshold)
     if not results:
-        return ""
+        return {"context": "", "citations": []}
     lines: list[str] = []
+    citations: list[dict[str, Any]] = []
     used_chars = 0
     max_context_chars = max(200, int(max_context_chars))
     for index, item in enumerate(results, start=1):
@@ -655,8 +669,14 @@ def build_knowledge_context(
             break
         block = header + excerpt
         lines.append(block)
+        citations.append({
+            "source": str(source),
+            "chunk_index": int(item.get("chunk_index", index - 1)),
+            "score": round(score, 3),
+            "excerpt": excerpt[:280],
+        })
         used_chars += len(block) + 2
-    return "\n\n".join(lines)
+    return {"context": "\n\n".join(lines), "citations": citations}
 
 
 def assess_knowledge_quality() -> dict[str, Any]:

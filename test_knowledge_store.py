@@ -154,6 +154,20 @@ def test_build_context_enforces_character_budget_and_shows_scores():
     assert "相关度 0.800" in context
 
 
+def test_knowledge_bundle_only_cites_chunks_that_fit_the_context_budget():
+    results = [
+        {"source": "a.txt", "chunk_index": 2, "text": "A" * 300, "score": 0.8},
+        {"source": "b.txt", "chunk_index": 3, "text": "B" * 300, "score": 0.7},
+    ]
+    with patch.object(knowledge_store, "retrieve_knowledge", return_value=results):
+        bundle = knowledge_store.build_knowledge_bundle("question", max_context_chars=200)
+
+    assert bundle["citations"]
+    assert bundle["citations"][0]["source"] == "a.txt"
+    assert bundle["citations"][0]["chunk_index"] == 2
+    assert len(bundle["context"]) <= 200
+
+
 def test_quality_report_detects_duplicate_short_and_stale_index():
     chunks = [
         {"source": "a.txt", "text": "短"},

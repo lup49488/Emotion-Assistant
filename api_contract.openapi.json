@@ -553,6 +553,94 @@
         }
       }
     },
+    "/api/v1/rag/feedback": {
+      "post": {
+        "summary": "Rag Feedback",
+        "operationId": "rag_feedback_api_v1_rag_feedback_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RagFeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagFeedbackResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/mood/checkins": {
       "post": {
         "summary": "Create Mood Checkin",
@@ -1792,6 +1880,52 @@
         }
       }
     },
+    "/api/v1/rag/feedback/summary": {
+      "get": {
+        "summary": "Rag Feedback Summary",
+        "operationId": "rag_feedback_summary_api_v1_rag_feedback_summary_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RagFeedbackSummaryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/rag/search": {
       "post": {
         "summary": "Rag Search",
@@ -2567,6 +2701,25 @@
               }
             ],
             "title": "Memory Receipt"
+          },
+          "citations": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Citations"
+          },
+          "citation_trace_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Citation Trace Id"
           }
         },
         "additionalProperties": false,
@@ -3496,6 +3649,101 @@
         ],
         "title": "RagEvaluationResponse"
       },
+      "RagFeedbackRequest": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Trace Id"
+          },
+          "helpful": {
+            "type": "boolean",
+            "title": "Helpful"
+          },
+          "comment": {
+            "type": "string",
+            "maxLength": 1000,
+            "title": "Comment",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trace_id",
+          "helpful"
+        ],
+        "title": "RagFeedbackRequest"
+      },
+      "RagFeedbackResponse": {
+        "properties": {
+          "trace_id": {
+            "type": "string",
+            "title": "Trace Id"
+          },
+          "helpful": {
+            "type": "boolean",
+            "title": "Helpful"
+          },
+          "comment": {
+            "type": "string",
+            "title": "Comment"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "trace_id",
+          "helpful",
+          "comment",
+          "created_at"
+        ],
+        "title": "RagFeedbackResponse"
+      },
+      "RagFeedbackSummaryResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "helpful": {
+            "type": "integer",
+            "title": "Helpful"
+          },
+          "helpful_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Helpful Rate"
+          },
+          "sources": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Sources"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "total",
+          "helpful",
+          "sources"
+        ],
+        "title": "RagFeedbackSummaryResponse"
+      },
       "RagQualityResponse": {
         "properties": {},
         "additionalProperties": true,
@@ -3589,6 +3837,10 @@
           "can_access_operations": {
             "type": "boolean",
             "title": "Can Access Operations"
+          },
+          "can_manage_knowledge": {
+            "type": "boolean",
+            "title": "Can Manage Knowledge"
           }
         },
         "additionalProperties": false,
@@ -3596,7 +3848,8 @@
         "required": [
           "user_id",
           "authentication",
-          "can_access_operations"
+          "can_access_operations",
+          "can_manage_knowledge"
         ],
         "title": "SessionResponse"
       },

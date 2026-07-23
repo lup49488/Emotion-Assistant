@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -9,6 +10,8 @@ from fastapi.testclient import TestClient
 os.environ.setdefault("API_PRELOAD_MODELS", "false")
 
 import api_server
+import job_store
+import rag_feedback_store
 from service_errors import ServiceError
 import model_warmup
 import session_store
@@ -117,7 +120,7 @@ def test_password_change_invalidates_existing_signed_cookie(monkeypatch, tmp_pat
 
 
 def test_chat_stream_emits_chunks_receipt_and_done(monkeypatch, tmp_path):
-    monkeypatch.setattr(api_server, "_chat_chunks", lambda user_id, request: iter(["你好", "，", "在的"]))
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda user_id, request, knowledge_context=None: iter(["你好", "，", "在的"]))
 
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
@@ -133,6 +136,27 @@ def test_chat_stream_emits_chunks_receipt_and_done(monkeypatch, tmp_path):
     assert "在的" in body
     assert "event: receipt" in body
     assert body.rstrip().endswith("event: done\ndata: {}")
+
+
+def test_chat_stream_emits_real_rag_citations_and_accepts_owned_feedback(monkeypatch, tmp_path):
+    monkeypatch.setattr(rag_feedback_store, "_JSON_PATH", tmp_path / "rag_feedback.json")
+    monkeypatch.setattr(api_server, "build_knowledge_bundle", lambda _: {
+        "context": "[source 1 | guide.md]\nDeployment guide",
+        "citations": [{"source": "guide.md", "chunk_index": 0, "score": 0.91, "excerpt": "Deployment guide"}],
+    })
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda user_id, request, knowledge_context=None: iter(["Answer"]))
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "How to deploy?", "use_knowledge": True}, headers=headers) as response:
+            body = "".join(response.iter_text())
+        citation_data = next(line[6:] for line in body.splitlines() if line.startswith("data: {") and "trace_id" in line)
+        trace_id = json.loads(citation_data)["trace_id"]
+        feedback = client.post("/api/v1/rag/feedback", json={"trace_id": trace_id, "helpful": True}, headers=headers)
+
+    assert "event: citations" in body
+    assert '"source": "guide.md"' in body
+    assert feedback.status_code == 200
+    assert feedback.json()["helpful"] is True
 
 
 def test_chat_stream_emits_structured_retryable_service_error(monkeypatch, tmp_path):
@@ -288,6 +312,7 @@ def test_usage_export_and_privacy_api_are_authenticated(monkeypatch, tmp_path):
 
 
 def test_rag_api_exposes_status_quality_and_protected_search(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_RAG_ADMIN_USER_IDS", "api-alice")
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
         status_response = client.get("/api/v1/rag/status")
@@ -302,6 +327,7 @@ def test_rag_api_exposes_status_quality_and_protected_search(monkeypatch, tmp_pa
 
 
 def test_rag_document_management_uses_csrf_and_supported_uploads(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_RAG_ADMIN_USER_IDS", "api-alice")
     monkeypatch.setattr(api_server, "copy_document_to_store", lambda _: Path("notes.md"))
     def rebuild_gate(*, mutate=None):
         document = mutate() if mutate else None
@@ -339,6 +365,7 @@ def test_rag_document_management_uses_csrf_and_supported_uploads(monkeypatch, tm
 
 
 def test_rag_rebuild_and_evaluation_return_background_jobs(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_RAG_ADMIN_USER_IDS", "api-alice")
     def submit(user_id, kind, worker, *, payload=None):
         return {"job": {"id": "job-1", "kind": kind, "status": "queued", "progress": 0, "message": "Queued", "result": None, "error": None, "created_at": "2026-07-21T00:00:00", "started_at": None, "finished_at": None}}
 
@@ -352,6 +379,31 @@ def test_rag_rebuild_and_evaluation_return_background_jobs(monkeypatch, tmp_path
     assert rebuild.json()["job"]["kind"] == "rag_rebuild"
     assert evaluation.status_code == 202
     assert evaluation.json()["job"]["kind"] == "rag_evaluation"
+
+
+def test_rag_management_requires_knowledge_administrator(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_RAG_ADMIN_USER_IDS", "rag-admin")
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        session = client.get("/api/v1/auth/session")
+        rebuild = client.post("/api/v1/rag/rebuild", headers=headers)
+        evaluation = client.get("/api/v1/rag/evaluations/latest")
+
+    assert session.status_code == 200
+    assert session.json()["can_manage_knowledge"] is False
+    assert rebuild.status_code == 403
+    assert evaluation.status_code == 403
+
+
+def test_background_jobs_hide_internal_user_id_and_match_contract(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        _login(client, monkeypatch, tmp_path)
+        job_store.create_job("api-alice", "rag_rebuild")
+        response = client.get("/api/v1/jobs")
+
+    assert response.status_code == 200
+    assert response.json()["jobs"][0]["kind"] == "rag_rebuild"
+    assert "user_id" not in response.json()["jobs"][0]
 
 
 def test_observability_summary_requires_session_and_returns_persistent_metrics(monkeypatch, tmp_path):

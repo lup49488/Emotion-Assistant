@@ -137,6 +137,7 @@ def chat(
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
     conversation_id: str | None = None,
+    knowledge_context: str | None = None,
 ) -> Generator[str, None, None]:
     user_text = user_text.strip()
     if not user_text:
@@ -161,7 +162,7 @@ def chat(
     config.user_id = state.user_id
     should_use_knowledge = KNOWLEDGE_ENABLED if use_knowledge is None else bool(use_knowledge)
     should_use_style = STYLE_ENABLED if use_style is None else bool(use_style)
-    knowledge_context = build_knowledge_context(user_text) if should_use_knowledge else ""
+    knowledge_context = knowledge_context if knowledge_context is not None else (build_knowledge_context(user_text) if should_use_knowledge else "")
     style_context = build_style_context(user_text) if should_use_style else ""
     messages = build_messages(
         state,
@@ -220,6 +221,7 @@ def chat_sync(
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
     conversation_id: str | None = None,
+    knowledge_context: str | None = None,
 ) -> str:
     return "".join(chat(
         state,
@@ -228,6 +230,7 @@ def chat_sync(
         use_knowledge=use_knowledge,
         use_style=use_style,
         conversation_id=conversation_id,
+        knowledge_context=knowledge_context,
     ))
 
 
@@ -241,6 +244,7 @@ def handle_user_message(
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
     conversation_id: str | None = None,
+    knowledge_context: str | None = None,
 ) -> str:
     with session_store.session(user_id) as state:
         return chat_sync(
@@ -250,6 +254,7 @@ def handle_user_message(
             use_knowledge=use_knowledge,
             use_style=use_style,
             conversation_id=conversation_id,
+            knowledge_context=knowledge_context,
         )
 
 
@@ -260,6 +265,7 @@ def handle_user_message_stream(
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
     conversation_id: str | None = None,
+    knowledge_context: str | None = None,
 ) -> Generator[str, None, None]:
     with session_store.session(user_id) as state:
         yield from chat(
@@ -269,6 +275,7 @@ def handle_user_message_stream(
             use_knowledge=use_knowledge,
             use_style=use_style,
             conversation_id=conversation_id,
+            knowledge_context=knowledge_context,
         )
 
 

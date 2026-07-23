@@ -33,3 +33,5 @@ imdb_reviews/
 
 .agents
 .claude
+frontend/test-results/
+frontend/playwright-report/

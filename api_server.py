@@ -55,6 +55,9 @@ from api_contracts import (
     PrivacyResponse,
     RagEvaluationRequest,
     RagEvaluationResponse,
+    RagFeedbackRequest,
+    RagFeedbackResponse,
+    RagFeedbackSummaryResponse,
     RagQualityResponse,
     RagSearchRequest,
     RagSearchResponse,
@@ -67,7 +70,7 @@ from api_contracts import (
 )
 from chatbot import handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from auth_store import access_key_version
-from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER
+from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_RAG_ADMIN_USER_IDS, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER
 from auth_rate_limit import clear_login_failures, login_allowed, record_login_failure
 from api_usage_store import list_usage_events, usage_summary
 from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations, remove_last_exchange, rename_conversation
@@ -81,18 +84,20 @@ from knowledge_store import (
     diagnose_knowledge_search,
     knowledge_status,
     list_document_details,
+    build_knowledge_bundle,
     rebuild_with_release_gate,
     release_gate_status,
 )
 from job_store import get_job, job_manager, list_jobs, mark_interrupted_jobs
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
-from memory_store import record_memory_event
+from memory_store import reconcile_memory_ownership, record_memory_event
 from model_warmup import start_api_background_warmup, warmup_status
 from observability import chat_finished, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
 from observability_store import observability_summary, record_http_event
 from operations_store import operations_dashboard
 from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
+from rag_feedback_store import create_citation_trace, feedback_summary, submit_feedback
 from service_errors import ServiceError
 from sqlite_store import connection, storage_backend
 
@@ -186,6 +191,22 @@ def _require_operations_user(user_id: str) -> str:
     allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
     if user_id not in allowed:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Operations dashboard access is not permitted.")
+    return user_id
+
+
+def _rag_admin_users() -> set[str]:
+    """Use a dedicated RAG allowlist, falling back to operations administrators."""
+    configured = API_RAG_ADMIN_USER_IDS or API_OPERATIONS_USER_IDS
+    return {item.strip() for item in configured.split(",") if item.strip()}
+
+
+def _can_manage_knowledge(user_id: str) -> bool:
+    return user_id in _rag_admin_users()
+
+
+def _require_knowledge_admin(user_id: str) -> str:
+    if not _can_manage_knowledge(user_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Knowledge-base management access is not permitted.")
     return user_id
 
 
@@ -458,6 +479,7 @@ def session_info(user_id: CurrentUser) -> dict[str, Any]:
         "user_id": user_id,
         "authentication": "signed_cookie",
         "can_access_operations": user_id in allowed,
+        "can_manage_knowledge": _can_manage_knowledge(user_id),
     }
 
 
@@ -477,7 +499,7 @@ def _rollback_short_term_exchange(user_id: str, user_text: str) -> None:
             del state.history[-2:]
 
 
-def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, None]:
+def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | None = None) -> Generator[str, None, None]:
     if request.retry_last_response:
         remove_last_exchange(user_id, request.conversation_id, request.message)
         _rollback_short_term_exchange(user_id, request.message)
@@ -498,14 +520,20 @@ def _chat_chunks(user_id: str, request: ChatRequest) -> Generator[str, None, Non
         use_knowledge=request.use_knowledge,
         use_style=request.use_style,
         conversation_id=request.conversation_id,
+        knowledge_context=knowledge_context,
     )
+
+
+def _knowledge_bundle(request: ChatRequest) -> dict[str, Any]:
+    return build_knowledge_bundle(request.message) if request.use_knowledge else {"context": "", "citations": []}
 
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, str]:
+    bundle = _knowledge_bundle(request)
     started = time.perf_counter()
     try:
-        reply = "".join(_chat_chunks(user_id, request))
+        reply = "".join(_chat_chunks(user_id, request, bundle["context"]))
     except Exception:
         duration_ms = int((time.perf_counter() - started) * 1000)
         chat_finished(False, duration_ms, streaming=False)
@@ -514,7 +542,8 @@ def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, str]:
     duration_ms = int((time.perf_counter() - started) * 1000)
     chat_finished(True, duration_ms, streaming=False)
     logger.info("event=chat_completed request_id=%s provider=%s streaming=false duration_ms=%s reply_chars=%s", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER, duration_ms, len(reply))
-    payload = {"reply": reply}
+    trace_id = create_citation_trace(user_id, request.conversation_id, bundle["citations"])
+    payload = {"reply": reply, "citations": bundle["citations"], "citation_trace_id": trace_id}
     if request.show_memory_receipt:
         with session_store.session(user_id) as state:
             payload["memory_receipt"] = latest_memory_receipt(state)
@@ -545,8 +574,15 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
         try:
             # The chat generator does blocking model inference; iterate it in a
             # worker thread so the async event loop stays responsive.
-            async for chunk in iterate_in_threadpool(_chat_chunks(user_id, request)):
+            bundle = await run_in_threadpool(_knowledge_bundle, request)
+            # 始终复用 bundle 已检索出的上下文（与非流式 /chat 一致），
+            # 避免 use_knowledge=True 但检索为空时在 chatbot 内部重复检索。
+            generator = _chat_chunks(user_id, request, bundle["context"])
+            async for chunk in iterate_in_threadpool(generator):
                 yield f"event: chunk\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
+            trace_id = await run_in_threadpool(create_citation_trace, user_id, request.conversation_id, bundle["citations"])
+            if bundle["citations"]:
+                yield f"event: citations\ndata: {json.dumps({'trace_id': trace_id, 'citations': bundle['citations']}, ensure_ascii=False)}\n\n"
             if request.show_memory_receipt:
                 receipt = await run_in_threadpool(_memory_receipt, user_id)
                 yield f"event: receipt\ndata: {json.dumps({'text': receipt}, ensure_ascii=False)}\n\n"
@@ -579,6 +615,14 @@ def memory_quality(user_id: CurrentUser) -> dict[str, str]:
         from gui_memory import build_memory_quality_report
 
         return {"report": build_memory_quality_report(user_id, state)}
+
+
+@app.post("/api/v1/rag/feedback", response_model=RagFeedbackResponse)
+def rag_feedback(request: RagFeedbackRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    try:
+        return submit_feedback(user_id, request.trace_id, request.helpful, request.comment)
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.post("/api/v1/mood/checkins", response_model=MoodCheckinResponse)
@@ -693,6 +737,7 @@ def update_long_term_memory(request: LongTermMemoryUpdateRequest, user_id: CsrfC
 
     with session_store.session(user_id) as state:
         state.long_memory = normalized_items
+        reconcile_memory_ownership(state)
         record_memory_event(
             state,
             section="long",
@@ -711,8 +756,9 @@ def update_long_term_memory(request: LongTermMemoryUpdateRequest, user_id: CsrfC
 
 
 @app.get("/api/v1/rag/status", response_model=RagStatusResponse)
-def rag_status(_: CurrentUser) -> dict[str, Any]:
-    return {"status": knowledge_status(), "documents": list_document_details(), "release": release_gate_status()}
+def rag_status(user_id: CurrentUser) -> dict[str, Any]:
+    documents = list_document_details() if _can_manage_knowledge(user_id) else []
+    return {"status": knowledge_status(), "documents": documents, "release": release_gate_status()}
 
 
 @app.get("/api/v1/jobs", response_model=BackgroundJobListResponse)
@@ -737,6 +783,7 @@ def _submit_rag_job(user_id: str, kind: str, worker, *, payload: dict[str, Any] 
 @app.post("/api/v1/rag/documents", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_rag_document(file: Annotated[UploadFile, File(...)], user_id: CsrfCurrentUser) -> dict[str, Any]:
     """Stage a document, then copy and rebuild the index in the job queue."""
+    _require_knowledge_admin(user_id)
     filename = (file.filename or "").strip()
     suffix = Path(filename).suffix.lower()
     if not filename or suffix not in SUPPORTED_EXTENSIONS:
@@ -774,6 +821,7 @@ async def upload_rag_document(file: Annotated[UploadFile, File(...)], user_id: C
 
 @app.post("/api/v1/rag/rebuild", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def rebuild_rag(user_id: CsrfCurrentUser) -> dict[str, Any]:
+    _require_knowledge_admin(user_id)
     def _rebuild(context) -> dict[str, Any]:
         context.progress(10, "Preparing knowledge index")
         context.progress(35, "Embedding knowledge chunks")
@@ -784,6 +832,7 @@ def rebuild_rag(user_id: CsrfCurrentUser) -> dict[str, Any]:
 
 @app.delete("/api/v1/rag/documents/{name}", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def remove_rag_document(name: str, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    _require_knowledge_admin(user_id)
     def _delete(context) -> dict[str, Any]:
         context.progress(10, "Removing document")
         return {**rebuild_with_release_gate(mutate=lambda: delete_document_from_store(name)), "deleted": name}
@@ -796,6 +845,12 @@ def rag_quality(_: CurrentUser) -> dict[str, Any]:
     return assess_knowledge_quality()
 
 
+@app.get("/api/v1/rag/feedback/summary", response_model=RagFeedbackSummaryResponse)
+def rag_feedback_summary(user_id: CurrentUser) -> dict[str, Any]:
+    _require_knowledge_admin(user_id)
+    return feedback_summary()
+
+
 @app.post("/api/v1/rag/search", response_model=RagSearchResponse)
 def rag_search(request: RagSearchRequest, _: CsrfCurrentUser) -> dict[str, Any]:
     return diagnose_knowledge_search(
@@ -805,12 +860,14 @@ def rag_search(request: RagSearchRequest, _: CsrfCurrentUser) -> dict[str, Any]:
 
 
 @app.get("/api/v1/rag/evaluations/latest", response_model=RagEvaluationResponse)
-def rag_latest_evaluation(_: CurrentUser) -> dict[str, Any]:
+def rag_latest_evaluation(user_id: CurrentUser) -> dict[str, Any]:
+    _require_knowledge_admin(user_id)
     return {"report": latest_evaluation_report()}
 
 
 @app.post("/api/v1/rag/evaluations/run", response_model=BackgroundJobResponse, status_code=status.HTTP_202_ACCEPTED)
 def rag_run_evaluation(request: RagEvaluationRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    _require_knowledge_admin(user_id)
     def _evaluate(context) -> dict[str, Any]:
         context.progress(10, "Loading evaluation cases")
         context.progress(30, "Running retrieval evaluation")

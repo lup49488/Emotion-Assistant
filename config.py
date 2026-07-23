@@ -107,6 +107,9 @@ API_TRUST_PROXY_HEADERS = os.getenv("API_TRUST_PROXY_HEADERS", "false").lower() 
 
 # Administrator-only operations dashboard and alert thresholds.
 API_OPERATIONS_USER_IDS = os.getenv("API_OPERATIONS_USER_IDS", "")
+# Comma-separated user IDs allowed to publish and manage the shared RAG corpus.
+# When omitted, the operations allowlist is used as the secure default.
+API_RAG_ADMIN_USER_IDS = os.getenv("API_RAG_ADMIN_USER_IDS", "")
 OPS_ALERT_MIN_REQUESTS = max(1, _env_int("OPS_ALERT_MIN_REQUESTS", 10))
 OPS_ALERT_HTTP_FAILURE_RATE = min(100.0, max(0.0, _env_float("OPS_ALERT_HTTP_FAILURE_RATE", 10.0)))
 OPS_ALERT_AVERAGE_LATENCY_MS = max(1, _env_int("OPS_ALERT_AVERAGE_LATENCY_MS", 5000))

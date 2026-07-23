@@ -432,6 +432,52 @@ def update_long_term(state: Any, info: dict[str, Any]) -> bool:
     return False
 
 
+def _normalized_memory_text(item: dict[str, Any]) -> str:
+    """Normalize a memory item's text for exact cross-section ownership checks."""
+    return " ".join(str(item.get("text", "")).split()).casefold()
+
+
+def reconcile_memory_ownership(state: Any) -> dict[str, int]:
+    """Keep each exact personal fact in one durable memory section.
+
+    Stable profile values are authoritative for identity facts, followed by
+    interests for preferences, then general long-term memory.  This also
+    repairs historical data produced while interests were mirrored into the
+    long-term store.
+    """
+    claimed: set[str] = set()
+    removed = {"stable": 0, "interest": 0, "long": 0}
+
+    def keep_unique(items: list[dict[str, Any]], section: str) -> list[dict[str, Any]]:
+        kept: list[dict[str, Any]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                kept.append(item)
+                continue
+            normalized = _normalized_memory_text(item)
+            if normalized and normalized in claimed:
+                removed[section] += 1
+                continue
+            if normalized:
+                claimed.add(normalized)
+            kept.append(item)
+        return kept
+
+    stable_profile = keep_unique(list(state.stable_profile), "stable")
+    interest_items = keep_unique(list(state.interest_store.items), "interest")
+    long_memory = keep_unique(list(state.long_memory), "long")
+
+    if stable_profile != state.stable_profile:
+        state.stable_profile = stable_profile
+    if interest_items != state.interest_store.items:
+        state.interest_store.replace_all(interest_items)
+        if state.vector_index is not None:
+            state.vector_index.mark_dirty_for_rebuild()
+    if long_memory != state.long_memory:
+        state.long_memory = long_memory
+    return removed
+
+
 def update_stable_profile(state: Any, info: dict[str, Any]) -> str:
     """Save a durable personal fact, replacing an older value in the same profile field."""
     text = str(info.get("text", "")).strip()
@@ -533,8 +579,6 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
             )
             return "discard"
         outcome = save_interest(interest, state)
-        if outcome == "added":
-            update_long_term(state, {**interest, "kind": "interest"})
         record_memory_event(
             state,
             section="interest",
@@ -547,7 +591,7 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
             ),
             score=score,
         )
-        return "long"
+        return "interest"
     if score >= SCORE_LONG_TERM_THRESHOLD:
         added = update_long_term(state, {
             "text": user_text, "emotion": emo_label,

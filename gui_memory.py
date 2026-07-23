@@ -9,7 +9,7 @@ from config import LONG_TERM_EXPIRY_DAYS
 from gui_auth import authorize_or_message
 from gui_i18n import localize_status_text
 from memory_backup import create_memory_backup, load_memory_backup, restore_memory_payload
-from memory_store import record_memory_event, update_stable_profile
+from memory_store import reconcile_memory_ownership, record_memory_event, update_stable_profile
 
 
 MEMORY_SECTION_LABELS = {
@@ -176,6 +176,7 @@ def save_memory_editor(
 
         with session_store.session(user_id) as state:
             _replace_memory_section(state, section, data)
+            reconcile_memory_ownership(state)
             record_memory_event(
                 state,
                 section=section,

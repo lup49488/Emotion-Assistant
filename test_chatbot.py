@@ -457,7 +457,7 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
         self.assertEqual(outcome, "discard")
         self.assertEqual(state.stable_profile, [])
 
-    def test_interest_fact_before_question_is_saved_without_question(self):
+    def test_interest_fact_before_question_is_saved_only_in_interest_memory(self):
         state = chatbot.SessionState()
         text = "我喜欢编程，请问我应该学习哪些方向？"
 
@@ -465,9 +465,24 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
              patch.object(memory_store, "save_interest", return_value="added"):
             outcome = chatbot.smart_memory_filter(state, text, "neutral", 0.0)
 
-        self.assertEqual(outcome, "long")
-        self.assertEqual(state.long_memory[0]["text"], "我喜欢编程")
+        self.assertEqual(outcome, "interest")
+        self.assertEqual(state.long_memory, [])
         self.assertEqual(state.memory_events[-1]["text"], "我喜欢编程")
+
+    def test_reconcile_memory_ownership_removes_legacy_interest_mirror(self):
+        state = chatbot.SessionState()
+        state.stable_profile = [{"text": "我是学生", "kind": "profile"}]
+        state.interest_store.append({"text": "我喜欢编程"})
+        state.long_memory = [
+            {"text": "我是学生", "kind": "profile"},
+            {"text": "我喜欢编程", "kind": "interest"},
+            {"text": "我正在准备毕业项目"},
+        ]
+
+        removed = memory_store.reconcile_memory_ownership(state)
+
+        self.assertEqual(removed, {"stable": 0, "interest": 0, "long": 2})
+        self.assertEqual([item["text"] for item in state.long_memory], ["我正在准备毕业项目"])
 
     def test_english_profile_fact_before_question_is_saved(self):
         profile = memory_store.extract_personal_profile(

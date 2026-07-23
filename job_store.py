@@ -26,7 +26,7 @@ def _now() -> str:
 
 
 def _public_job(record: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in record.items() if key != "payload"}
+    return {key: value for key, value in record.items() if key not in {"payload", "user_id"}}
 
 
 def _row_to_job(row: Any) -> dict[str, Any]:
