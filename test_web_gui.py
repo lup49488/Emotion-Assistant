@@ -722,7 +722,17 @@ def test_knowledge_search_diagnostics_prompt_is_english():
     assert message == "Enter a retrieval question."
 
 
-def test_rag_status_panels_are_english_under_english_locale():
+def _isolate_rag_evaluation_report(tmp_path, monkeypatch):
+    # 评估报告路径指向空的临时文件，避免受本机真实评估结果污染。
+    import rag_evaluation_store
+
+    monkeypatch.setattr(
+        rag_evaluation_store, "RAG_EVALUATION_REPORTS_PATH", tmp_path / "reports.json"
+    )
+
+
+def test_rag_status_panels_are_english_under_english_locale(tmp_path, monkeypatch):
+    _isolate_rag_evaluation_report(tmp_path, monkeypatch)
     knowledge, style, evaluation = Web_GUI.load_rag_status_panels("en")
 
     assert "Documents: " in knowledge
@@ -735,7 +745,8 @@ def test_rag_status_panels_are_english_under_english_locale():
     assert evaluation == "No RAG evaluation has been run."
 
 
-def test_rag_status_panels_stay_chinese_by_default():
+def test_rag_status_panels_stay_chinese_by_default(tmp_path, monkeypatch):
+    _isolate_rag_evaluation_report(tmp_path, monkeypatch)
     knowledge, style, evaluation = Web_GUI.load_rag_status_panels("zh-CN")
 
     assert "文档数：" in knowledge

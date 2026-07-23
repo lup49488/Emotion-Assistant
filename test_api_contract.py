@@ -11,6 +11,8 @@ from pathlib import Path
 from fastapi.testclient import TestClient
 
 import api_server
+from api_contracts import ChatRequest
+from config import DEFAULT_MAX_NEW_TOKENS
 
 
 SNAPSHOT_PATH = Path(__file__).with_name("api_contract.openapi.json")
@@ -50,3 +52,7 @@ def test_v1_request_models_reject_unknown_fields():
 
     assert response.status_code == 422
     assert response.json()["code"] == "request_validation_error"
+
+
+def test_chat_request_uses_server_output_limit_when_client_omits_it():
+    assert ChatRequest(message="hello").max_new_tokens == DEFAULT_MAX_NEW_TOKENS

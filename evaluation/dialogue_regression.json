@@ -1,0 +1,91 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "identity_serenova",
+      "category": "identity",
+      "input": "What is your name?",
+      "live": true,
+      "checks": {
+        "reply_language": "en",
+        "must_contain": ["Serenova"]
+      }
+    },
+    {
+      "id": "english_short_greeting",
+      "category": "language",
+      "input": "Hello",
+      "live": true,
+      "checks": {
+        "reply_language": "en",
+        "min_characters": 3
+      }
+    },
+    {
+      "id": "chinese_short_greeting",
+      "category": "language",
+      "input": "你好",
+      "live": true,
+      "checks": {
+        "reply_language": "zh",
+        "min_characters": 2
+      }
+    },
+    {
+      "id": "english_profile_fact",
+      "category": "memory",
+      "input": "I am a student, how should I prepare for my future?",
+      "deterministic": "profile_extraction",
+      "checks": {
+        "profile_contains": "I am a student"
+      }
+    },
+    {
+      "id": "chinese_profile_fact",
+      "category": "memory",
+      "input": "我是一名学生，请问我应该如何为未来做准备？",
+      "deterministic": "profile_extraction",
+      "checks": {
+        "profile_contains": "学生"
+      }
+    },
+    {
+      "id": "empty_model_stream",
+      "category": "reliability",
+      "deterministic": "empty_stream",
+      "checks": {
+        "error_code": "empty_model_response",
+        "retryable": true,
+        "not_saved_to_history": true
+      }
+    },
+    {
+      "id": "style_rag_reference",
+      "category": "rag_style",
+      "input": "请用温和、清晰的方式帮我梳理今天的焦虑。",
+      "live": true,
+      "optional": true,
+      "request": {
+        "use_style": true
+      },
+      "checks": {
+        "reply_language": "zh",
+        "min_characters": 20
+      }
+    },
+    {
+      "id": "knowledge_rag_reference",
+      "category": "rag_knowledge",
+      "input": "请根据知识库说明当前可用的文档主题。",
+      "live": true,
+      "optional": true,
+      "request": {
+        "use_knowledge": true
+      },
+      "checks": {
+        "reply_language": "zh",
+        "min_characters": 20
+      }
+    }
+  ]
+}

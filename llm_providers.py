@@ -490,6 +490,7 @@ def _stream_openai_compatible(
 
     for attempt in range(API_MAX_RETRIES + 1):
         emitted_content = False
+        finish_reason: str | None = None
         try:
             response = client.chat.completions.create(
                 model=model,
@@ -502,12 +503,20 @@ def _stream_openai_compatible(
             for event in response:
                 if not event.choices:
                     continue
-                delta = event.choices[0].delta
+                choice = event.choices[0]
+                if getattr(choice, "finish_reason", None):
+                    finish_reason = str(choice.finish_reason)
+                delta = choice.delta
                 content = getattr(delta, "content", None)
                 if content:
                     emitted_content = True
                     chunks.append(content)
                     yield content
+            if finish_reason == "length":
+                logger.warning(
+                    "event=model_output_truncated request_id=%s provider=%s model=%s max_new_tokens=%s",
+                    get_request_id(), provider, model, config.max_new_tokens,
+                )
             record_usage(
                 config.user_id,
                 provider=provider,

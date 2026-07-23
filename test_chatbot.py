@@ -79,16 +79,17 @@ class TestSafeExtractJsonObject(unittest.TestCase):
 
 class TestChatStreamingFallback(unittest.TestCase):
 
-    def test_empty_model_stream_yields_a_fallback_message(self):
+    def test_empty_model_stream_raises_retryable_error_without_saving_exchange(self):
         state = chatbot.SessionState()
         with patch.object(chatbot, "safe_analyze", return_value=("neutral", 0.0)), \
             patch.object(chatbot, "smart_memory_filter", return_value="discard"), \
             patch.object(chatbot, "stream_model_response", return_value=iter(())):
-            chunks = list(chatbot.chat(state, "test message"))
+            with self.assertRaises(chatbot.ServiceError) as captured:
+                list(chatbot.chat(state, "test message"))
 
-        self.assertEqual(len(chunks), 1)
-        self.assertIn("没有返回可显示的文本", chunks[0])
-        self.assertEqual(state.history[-1]["content"], chunks[0])
+        self.assertEqual(captured.exception.code, "empty_model_response")
+        self.assertTrue(captured.exception.retryable)
+        self.assertFalse(state.history)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -497,6 +498,17 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
 
         assert "稳定资料" in messages[0]["content"]
         assert "我是学生" in messages[0]["content"]
+
+    def test_prompt_requires_short_english_greetings_to_receive_english_reply(self):
+        messages = build_messages(chatbot.SessionState(), "Hello", "neutral", 0.0)
+
+        assert '"Hi"、"Hello" 或 "Hey"' in messages[0]["content"]
+        assert "英文消息必须用英文回复" in messages[0]["content"]
+
+    def test_prompt_sets_serenova_as_assistant_name(self):
+        messages = build_messages(chatbot.SessionState(), "你叫什么名字？", "neutral", 0.0)
+
+        assert "你的名字是 Serenova" in messages[0]["content"]
 
 
 class TestModelRuntimeConfig(unittest.TestCase):

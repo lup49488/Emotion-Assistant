@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   BookOpen,
@@ -30,6 +30,8 @@ import { KnowledgePage, MemoryPage, MoodPage, OperationsPage, PrivacyPage } from
 import { translate } from './i18n'
 import './App.css'
 
+const AssistantMarkdown = lazy(() => import('./AssistantMarkdown'))
+
 const NAVIGATION = [
   { id: 'chat', label: 'chat', icon: MessageSquare },
   { id: 'memory', label: 'personalData', icon: Brain },
@@ -60,6 +62,7 @@ function App() {
     provider: '', model: '', baseUrl: '', apiKey: '',
     useKnowledge: false, useStyle: false, temperature: 0.8,
   })
+  const [editableModelField, setEditableModelField] = useState({ baseUrl: false, apiKey: false })
   const messageEndRef = useRef(null)
   const activeRequestRef = useRef(null)
   const t = (key) => translate(locale, key)
@@ -69,6 +72,17 @@ function App() {
   const hasMessages = messages.length > 0
   const activeTitle = activeConversation?.title || t('newConversation')
   const apiLabel = useMemo(() => (API_BASE_URL || window.location.host).replace(/^https?:\/\//, ''), [])
+
+  function isLikelyBaseUrl(value) {
+    const candidate = value.trim()
+    if (!candidate) return true
+    try {
+      const url = new URL(candidate.includes('://') ? candidate : `https://${candidate}`)
+      return Boolean(url.hostname) && (url.hostname.includes('.') || url.hostname === 'localhost' || url.hostname.includes(':') || Boolean(url.port))
+    } catch {
+      return false
+    }
+  }
 
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -186,6 +200,11 @@ function App() {
     const retryMessageIndex = Number.isInteger(retryIndex) ? retryIndex : null
     const text = retryMessageIndex === null ? draft.trim() : String(messages[retryMessageIndex - 1]?.content || '').trim()
     if (!text || isSending) return
+    if (!isLikelyBaseUrl(options.baseUrl)) {
+      setOptions((current) => ({ ...current, baseUrl: '', apiKey: '' }))
+      setNotice(t('invalidModelCredentials'))
+      return
+    }
     if (retryMessageIndex === null) setDraft('')
     setNotice('')
     setIsSending(true)
@@ -334,8 +353,8 @@ function App() {
         <p className="settings-copy">{t('settingsCopy')}</p>
         <label className="model-field">{t('provider')}<select value={options.provider} onChange={(event) => setOptions((current) => ({ ...current, provider: event.target.value }))}><option value="">{t('serverDefault')}</option><option value="openai_compatible">OpenAI-compatible</option><option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="custom">Custom endpoint</option></select></label>
         <label className="model-field">{t('model')}<input value={options.model} placeholder={t('serverDefault')} onChange={(event) => setOptions((current) => ({ ...current, model: event.target.value }))} /></label>
-        <label className="model-field">{t('baseUrl')}<input value={options.baseUrl} placeholder={t('optionalEndpoint')} onChange={(event) => setOptions((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
-        <label className="model-field">{t('apiKey')}<input type="password" value={options.apiKey} placeholder={t('tabOnly')} onChange={(event) => setOptions((current) => ({ ...current, apiKey: event.target.value }))} /></label>
+        <label className="model-field">{t('baseUrl')}<input name="llm-base-url" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.baseUrl} value={options.baseUrl} placeholder={t('optionalEndpoint')} onFocus={() => setEditableModelField((current) => ({ ...current, baseUrl: true }))} onChange={(event) => setOptions((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
+        <label className="model-field">{t('apiKey')}<input name="llm-api-key" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.apiKey} value={options.apiKey} placeholder={t('tabOnly')} onFocus={() => setEditableModelField((current) => ({ ...current, apiKey: true }))} onChange={(event) => setOptions((current) => ({ ...current, apiKey: event.target.value }))} /></label>
         <Toggle label={t('knowledgeRetrieval')} description={t('knowledgeHint')} checked={options.useKnowledge} onChange={(useKnowledge) => setOptions((current) => ({ ...current, useKnowledge }))} />
         <Toggle label={t('styleReference')} description={t('styleHint')} checked={options.useStyle} onChange={(useStyle) => setOptions((current) => ({ ...current, useStyle }))} />
         <label className="range-control"><span>{t('temperature')} <b>{options.temperature.toFixed(1)}</b></span><input type="range" min="0" max="2" step="0.1" value={options.temperature} onChange={(event) => setOptions((current) => ({ ...current, temperature: Number(event.target.value) }))} /></label>
@@ -365,7 +384,7 @@ function LoginScreen({ onSuccess, t }) {
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt('我今天有一点焦虑，能陪我理一理吗？')}>{t('talkPrompt')}</button><button onClick={() => onPrompt('我想为未来做一点准备，可以从哪里开始？')}>{t('planPrompt')}</button></div></div> }
 
-function Message({ message, index, onCopy, onRetry, isSending, t }) { return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div><div><div className="message-body">{message.pending && !message.content ? <span className="typing"><i /><i /><i /></span> : message.content}</div>{message.role === 'assistant' && !message.pending && <div className="message-actions">{message.content && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(message.content)}><Copy size={14} /></button>}{message.failed && message.retryable && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</div>}</div></article> }
+function Message({ message, index, onCopy, onRetry, isSending, t }) { return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div><div><div className={`message-body ${message.role === 'assistant' && !message.failed ? 'assistant-markdown' : ''}`}>{message.pending && !message.content ? <span className="typing"><i /><i /><i /></span> : message.role === 'assistant' && !message.failed ? <Suspense fallback={message.content}><AssistantMarkdown content={message.content} /></Suspense> : message.content}</div>{message.role === 'assistant' && !message.pending && <div className="message-actions">{message.content && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(message.content)}><Copy size={14} /></button>}{message.failed && message.retryable && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</div>}</div></article> }
 
 function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, t }) { return <div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div> }
 

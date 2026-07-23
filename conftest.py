@@ -29,6 +29,23 @@ def _isolate_storage_backend(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_data_dir_stores(tmp_path, monkeypatch):
+    """把基于 data/ 目录的 JSON 存储重定向到临时路径。
+
+    observability_store 和 job_store 的 JSON 后端默认写入真实的
+    data/observability_events.json 等文件。若不隔离，API 测试会把请求事件
+    写进真实数据目录，并因跨测试并发写同一文件在 Windows 上偶发 PermissionError。
+    """
+    for module_name, attribute, filename in (
+        ("observability_store", "_JSON_PATH", "observability_events.json"),
+        ("job_store", "_JSON_PATH", "background_jobs.json"),
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None and hasattr(module, attribute):
+            monkeypatch.setattr(module, attribute, tmp_path / filename)
+
+
+@pytest.fixture(autouse=True)
 def _reset_session_cache():
     """chatbot.session_store 是进程级单例，会把每个用户的 SessionState 缓存在内存里。
 

@@ -10,6 +10,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from config import DEFAULT_MAX_NEW_TOKENS
+
 
 class ContractModel(BaseModel):
     """Base class for stable request and response payloads."""
@@ -92,7 +94,8 @@ class ChatRequest(ContractModel):
     api_key: str | None = None
     temperature: float = Field(default=0.8, ge=0, le=2)
     top_p: float = Field(default=0.9, ge=0, le=1)
-    max_new_tokens: int = Field(default=300, ge=1, le=8_192)
+    # Omitted by the React client: honor the server's LLM_MAX_NEW_TOKENS value.
+    max_new_tokens: int = Field(default=DEFAULT_MAX_NEW_TOKENS, ge=1, le=8_192)
     use_knowledge: bool = False
     use_style: bool = False
     show_memory_receipt: bool = True

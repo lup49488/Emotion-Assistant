@@ -151,6 +151,21 @@ def test_chat_stream_emits_structured_retryable_service_error(monkeypatch, tmp_p
     assert '"retryable":true' in body
 
 
+def test_chat_stream_emits_retryable_empty_model_response(monkeypatch, tmp_path):
+    def empty_response(*_):
+        raise ServiceError("empty_model_response", "no displayable text", retryable=True)
+        yield "unreachable"
+
+    monkeypatch.setattr(api_server, "_chat_chunks", empty_response)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "hi"}, headers=headers) as response:
+            body = "".join(response.iter_text())
+
+    assert '"code":"empty_model_response"' in body
+    assert '"retryable":true' in body
+
+
 def test_chat_retry_replaces_the_last_saved_exchange(monkeypatch, tmp_path):
     def fake_stream(user_id, message, **kwargs):
         reply = "Retried reply"
