@@ -1,5 +1,7 @@
 # Serenova
 
+[中文说明](README.zh-CN.md)
+
 Serenova is an emotion-aware chatbot project with three main surfaces:
 
 - a Gradio desktop-style GUI in `Web_GUI.py`
@@ -13,6 +15,35 @@ The application combines provider-backed or local Hugging Face chat models, emot
 The deployed app is available at:
 
 [https://chat.serenova.dev](https://chat.serenova.dev)
+
+## Architecture
+
+```mermaid
+flowchart LR
+    User["User"] --> Browser["React frontend<br/>frontend/"]
+    User --> Gradio["Gradio GUI<br/>Web_GUI.py"]
+
+    Browser --> API["FastAPI service<br/>api_server.py"]
+    Gradio --> Chatbot["Chat engine<br/>chatbot.py"]
+    API --> Auth["Auth, sessions, CSRF<br/>gui_auth.py / auth_store.py"]
+    API --> Chatbot
+    API --> Ops["Operations, usage, privacy<br/>observability_store.py / api_usage_store.py / privacy_store.py"]
+
+    Chatbot --> Safety["Emotion and safety layer<br/>emotion.py / safety.py"]
+    Chatbot --> Prompt["Prompt builder<br/>prompt_builder.py"]
+    Chatbot --> Memory["User memory and conversations<br/>memory_store.py / conversation_store.py"]
+    Chatbot --> Knowledge["Knowledge RAG<br/>knowledge_store.py"]
+    Chatbot --> Style["Style RAG<br/>style_store.py"]
+    Chatbot --> Providers["Model providers<br/>llm_providers.py"]
+
+    Knowledge --> KnowledgeFiles["knowledge_base/documents<br/>knowledge.index + chunks"]
+    Style --> StyleFiles["style_base/documents<br/>style.index + chunks"]
+    Memory --> Storage["users/ JSON or SQLite<br/>sqlite_store.py"]
+    Providers --> RemoteLLM["OpenAI-compatible APIs<br/>DeepSeek / OpenAI / OpenRouter"]
+    Providers --> LocalLLM["Local Hugging Face model"]
+```
+
+The React frontend and FastAPI API are the public web path. The Gradio GUI can also call the same chat engine directly for local use. Both chat paths eventually build a prompt from emotion/safety analysis, user memory, optional knowledge RAG, optional style RAG, and then stream the response from either an API provider or a local Hugging Face model.
 
 ## Repository Layout
 
