@@ -268,3 +268,18 @@ This avoids terminal mojibake that can make valid UTF-8 text look corrupted.
 - Do not expose the GUI/API publicly without HTTPS, secure cookies, host allowlisting, and a stable session secret.
 - Keep browser-facing Vite variables free of secrets.
 - RAG and style libraries are shared application data; deleting a user account does not delete shared corpus files.
+
+## Crisis Support
+
+Serenova includes a code-level crisis fallback in `safety.py`. When the chat engine detects direct self-harm keywords or repeated severe negative-emotion trends, it bypasses normal generation and returns a short supportive message that encourages immediate real-world help.
+
+This is a safety backstop, not a clinical assessment system. Serenova is an AI assistant and is not a replacement for professional mental health care, emergency services, or a trusted person who can stay with someone in immediate danger.
+
+For users in the United States:
+
+- Call or text [988](tel:988?oai_link_source=model_response_hotline)
+- Use 988 Lifeline chat: [https://988lifeline.org/chat/](https://988lifeline.org/chat/?oai_link_source=model_response_hotline)
+- 988 Lifeline website: [https://988lifeline.org](https://988lifeline.org?oai_link_source=model_response_hotline)
+
+If you are outside the United States, use the emergency or crisis service available in your location.
+
