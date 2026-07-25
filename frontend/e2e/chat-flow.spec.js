@@ -19,3 +19,15 @@ test('login, cited reply, feedback, and regeneration work together', async ({ pa
   await page.getByTitle('Regenerate').click()
   await expect(page.getByText('Regenerated answer')).toBeVisible()
 })
+
+test('assistant replies render HTML line breaks and LaTeX delimiters safely', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByPlaceholder('Message Serenova')).toBeVisible()
+  await page.getByPlaceholder('Message Serenova').fill('Show markdown')
+  await page.getByTitle('Message Serenova').click()
+
+  await expect(page.getByText('First line')).toBeVisible()
+  await expect(page.getByText('Second line')).toBeVisible()
+  await expect(page.locator('.katex-display')).toHaveCount(1)
+  await expect(page.getByText('<br>', { exact: true })).toHaveCount(0)
+})

@@ -45,7 +45,9 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {
     const item = conversation(body.conversation_id)
-    const reply = body.retry_last_response ? 'Regenerated answer' : 'Grounded answer from the knowledge base.'
+    const reply = body.retry_last_response ? 'Regenerated answer' : body.message === 'Show markdown'
+      ? 'First line<br>Second line\n\n\\[ P(C \\mid \\mathbf{x}) = \\frac{P(\\mathbf{x} \\mid C)P(C)}{P(\\mathbf{x})} \\]'
+      : 'Grounded answer from the knowledge base.'
     item.messages = [{ role: 'user', content: body.message }, { role: 'assistant', content: reply }]
     item.message_count = 2
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })

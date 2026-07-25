@@ -113,7 +113,7 @@ export function OperationsPage({ t }) {
   const [dashboard, setDashboard] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
-  const refresh = async (showLoading = true) => {
+  const refresh = useCallback(async (showLoading = true) => {
     if (showLoading) setLoading(true)
     setError('')
     try {
@@ -123,12 +123,12 @@ export function OperationsPage({ t }) {
     } finally {
       if (showLoading) setLoading(false)
     }
-  }
+  }, [days, t])
   useEffect(() => {
     refresh()
     const timer = window.setInterval(() => refresh(false), 30_000)
     return () => window.clearInterval(timer)
-  }, [days])
+  }, [refresh])
   const activeAlerts = dashboard?.alerts?.filter((alert) => alert.status === 'active') || []
   const stats = dashboard ? [
     [t('selectedWindow'), `${dashboard.window_days}d`],
