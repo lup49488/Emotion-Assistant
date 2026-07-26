@@ -89,3 +89,68 @@ def test_build_messages_includes_style_context():
 
     assert "回复风格参考" in messages[0]["content"]
     assert "我先帮你拆开看" in messages[0]["content"]
+
+
+def test_style_prefixes_are_derived_from_filename_prefix(monkeypatch):
+    monkeypatch.setattr(
+        style_store, "list_documents",
+        lambda: ["温柔型.md", "温柔型_日常陪聊.md", "专业型_高质量样例.md", "简洁型.md"],
+    )
+
+    # 去重后按码点排序，重复文件名前缀只出现一次。
+    assert style_store.style_prefixes() == sorted({"专业型", "温柔型", "简洁型"})
+
+
+def _prefix_chunks():
+    return [
+        {"source": "温柔型_日常陪聊.md", "text": "温柔样例一", "chunk_index": 0},
+        {"source": "专业型_高质量样例.md", "text": "专业样例一", "chunk_index": 0},
+        {"source": "温柔型.md", "text": "温柔样例二", "chunk_index": 0},
+    ]
+
+
+class _FakeIndex:
+    """Return every chunk in order so prefix filtering is what gets exercised."""
+
+    def __init__(self, count):
+        self.count = count
+
+    def search(self, _vector, k):
+        import numpy as np
+
+        limit = min(int(k), self.count)
+        return (
+            np.array([[0.9] * limit], dtype="float32"),
+            np.array([list(range(limit))], dtype="int64"),
+        )
+
+
+def test_retrieve_style_filters_by_source_prefix(monkeypatch):
+    chunks = _prefix_chunks()
+    monkeypatch.setattr(style_store, "load_chunks", lambda: chunks)
+    monkeypatch.setattr(style_store, "_read_index", lambda _chunks: _FakeIndex(len(chunks)))
+    monkeypatch.setattr(style_store, "encode_texts", lambda _texts: [[0.0]])
+
+    results = style_store.retrieve_style("你好", top_k=3, threshold=0.0, source_prefix="温柔型")
+
+    assert [item["source"] for item in results] == ["温柔型_日常陪聊.md", "温柔型.md"]
+
+
+def test_retrieve_style_without_prefix_keeps_every_family(monkeypatch):
+    chunks = _prefix_chunks()
+    monkeypatch.setattr(style_store, "load_chunks", lambda: chunks)
+    monkeypatch.setattr(style_store, "_read_index", lambda _chunks: _FakeIndex(len(chunks)))
+    monkeypatch.setattr(style_store, "encode_texts", lambda _texts: [[0.0]])
+
+    results = style_store.retrieve_style("你好", top_k=3, threshold=0.0)
+
+    assert len(results) == 3
+
+
+def test_unknown_prefix_returns_no_style_samples(monkeypatch):
+    chunks = _prefix_chunks()
+    monkeypatch.setattr(style_store, "load_chunks", lambda: chunks)
+    monkeypatch.setattr(style_store, "_read_index", lambda _chunks: _FakeIndex(len(chunks)))
+    monkeypatch.setattr(style_store, "encode_texts", lambda _texts: [[0.0]])
+
+    assert style_store.retrieve_style("你好", top_k=3, threshold=0.0, source_prefix="不存在型") == []

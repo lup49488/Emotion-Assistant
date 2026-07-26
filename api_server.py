@@ -63,6 +63,8 @@ from api_contracts import (
     RagSearchResponse,
     RagStatusResponse,
     SessionResponse,
+    StylePreferenceRequest,
+    StylePreferenceResponse,
     StatusResponse,
     UsageEventsResponse,
     UsageSummaryResponse,
@@ -98,6 +100,8 @@ from operations_store import operations_dashboard
 from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from rag_feedback_store import create_citation_trace, feedback_summary, submit_feedback
+from style_preference_store import get_style_prefix, set_style_prefix
+from style_store import style_prefixes
 from service_errors import ServiceError
 from sqlite_store import connection, storage_backend
 
@@ -472,6 +476,23 @@ def logout(response: Response, _: CsrfCurrentUser) -> None:
     response.delete_cookie(API_CSRF_COOKIE_NAME, **cookie_settings)
 
 
+def _resolved_style_prefix(user_id: str, request: ChatRequest) -> str:
+    """Per-request style wins; otherwise fall back to the saved user preference."""
+    if request.style_prefix is not None:
+        return request.style_prefix.strip()
+    return get_style_prefix(user_id)
+
+
+@app.get("/api/v1/style/preference", response_model=StylePreferenceResponse)
+def read_style_preference(user_id: CurrentUser) -> dict[str, Any]:
+    return {"style_prefix": get_style_prefix(user_id), "available": style_prefixes()}
+
+
+@app.put("/api/v1/style/preference", response_model=StylePreferenceResponse)
+def update_style_preference(request: StylePreferenceRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    return {"style_prefix": set_style_prefix(user_id, request.style_prefix), "available": style_prefixes()}
+
+
 @app.get("/api/v1/auth/session", response_model=SessionResponse)
 def session_info(user_id: CurrentUser) -> dict[str, Any]:
     allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
@@ -519,6 +540,7 @@ def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | No
         model_config=config,
         use_knowledge=request.use_knowledge,
         use_style=request.use_style,
+        style_prefix=_resolved_style_prefix(user_id, request),
         conversation_id=request.conversation_id,
         knowledge_context=knowledge_context,
     )

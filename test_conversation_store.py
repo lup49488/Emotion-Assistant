@@ -48,7 +48,7 @@ def test_chat_archives_normal_reply_to_selected_conversation(tmp_path, monkeypat
     with patch.object(chatbot, "safe_analyze", return_value=("neutral", 0.0)), \
         patch.object(chatbot, "smart_memory_filter", return_value="discard"), \
         patch.object(chatbot, "stream_model_response", return_value=iter(["archive reply"])):
-        assert "".join(chatbot.chat(state, "archive prompt", conversation_id=conversation["id"])) == "archive reply"
+        assert "".join(chatbot.chat(state, "archive prompt", conversation_id=conversation["id"], use_style=False)) == "archive reply"
 
     stored = conversation_store.get_conversation("archive-user", conversation["id"])
     assert [item["content"] for item in stored["messages"]] == ["archive prompt", "archive reply"]

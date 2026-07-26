@@ -85,7 +85,8 @@ class TestChatStreamingFallback(unittest.TestCase):
             patch.object(chatbot, "smart_memory_filter", return_value="discard"), \
             patch.object(chatbot, "stream_model_response", return_value=iter(())):
             with self.assertRaises(chatbot.ServiceError) as captured:
-                list(chatbot.chat(state, "test message"))
+                # 该用例只验证空响应处理，显式关闭风格检索以免加载嵌入模型。
+                list(chatbot.chat(state, "test message", use_style=False))
 
         self.assertEqual(captured.exception.code, "empty_model_response")
         self.assertTrue(captured.exception.retryable)

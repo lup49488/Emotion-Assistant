@@ -63,19 +63,32 @@ export function MoodPage({ t }) {
 function MoodCheckinContent({ t }) {
   const [records, setRecords] = useState([])
   const [weekly, setWeekly] = useState(null)
-  const [form, setForm] = useState({ mood: '', intensity: 3, note: '' })
+  const emptyForm = { date: null, mood: '', intensity: 3, note: '' }
+  const [form, setForm] = useState(emptyForm)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const isEditing = Boolean(form.date)
   const refresh = async () => {
     setLoading(true); setError('')
     try { const [all, trend] = await Promise.all([readJson('/api/v1/mood/checkins'), readJson('/api/v1/mood/weekly')]); setRecords(all.records); setWeekly(trend) } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [])
-  const submit = async (event) => { event.preventDefault(); setError(''); try { await readJson('/api/v1/mood/checkins', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify(form) }); setForm({ mood: '', intensity: 3, note: '' }); await refresh() } catch (requestError) { setError(requestError.message) } }
-  const remove = async (date) => { if (!window.confirm(`Delete the Mood Check-in for ${date}?`)) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } }
+  const submit = async (event) => {
+    event.preventDefault(); setError('')
+    try {
+      // 后端按日期 upsert：带原日期提交即更新该天的记录，不带则记录今天。
+      const payload = { mood: form.mood, intensity: form.intensity, note: form.note, ...(form.date ? { checkin_date: form.date } : {}) }
+      await readJson('/api/v1/mood/checkins', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify(payload) })
+      setForm(emptyForm)
+      await refresh()
+    } catch (requestError) { setError(requestError.message) }
+  }
+  const startEdit = (record) => { setError(''); setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
+  const cancelEdit = () => { setForm(emptyForm) }
+  const remove = async (date) => { if (!window.confirm(`Delete the Mood Check-in for ${date}?`)) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) setForm(emptyForm); await refresh() } catch (requestError) { setError(requestError.message) } }
   return <><div className="mood-page-actions"><button className="secondary-button" onClick={refresh}><RefreshCw size={16} />{t('refresh')}</button></div><ErrorText error={error} />
-    <div className="two-column mood-top"><form className="data-panel checkin-form" onSubmit={submit}><h2>{t('todayCheckin')}</h2><label>{t('moodLabel')}<input required value={form.mood} placeholder={t('moodPlaceholder')} onChange={(event) => setForm((current) => ({ ...current, mood: event.target.value }))} /></label><label>{t('intensity')} <b>{form.intensity}/5</b><input type="range" min="1" max="5" value={form.intensity} onChange={(event) => setForm((current) => ({ ...current, intensity: Number(event.target.value) }))} /></label><label>{t('note')}<textarea rows="3" value={form.note} placeholder={t('notePlaceholder')} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label><button className="primary-button">{t('save')}</button></form><section className="data-panel trend-panel"><h2>{t('weeklyTrend')}</h2><MoodChart points={weekly?.points || []} /><p className="report-text">{weekly?.summary || t('noWeeklySummary')}</p><p className="report-text muted-report">{weekly?.analysis}</p></section></div>
-    <section className="data-panel"><h2>{t('recentCheckins')}</h2><Loading loading={loading} t={t} />{records.length === 0 && !loading ? <p className="empty-state">{t('noCheckins')}</p> : <div className="record-list">{[...records].reverse().map((record) => <article className="record-row" key={record.date}><div><strong>{record.mood}</strong><span>{record.date} · {record.intensity}/5</span>{record.note && <p>{record.note}</p>}</div><button className="danger-icon" title={`${t('delete')} ${record.date}`} onClick={() => remove(record.date)}><Trash2 size={16} /></button></article>)}</div>}</section>
+    <div className="two-column mood-top"><form className="data-panel checkin-form" onSubmit={submit}><h2>{isEditing ? `${t('editingCheckinFor')} ${form.date}` : t('todayCheckin')}</h2><label>{t('moodLabel')}<input required value={form.mood} placeholder={t('moodPlaceholder')} onChange={(event) => setForm((current) => ({ ...current, mood: event.target.value }))} /></label><label>{t('intensity')} <b>{form.intensity}/5</b><input type="range" min="1" max="5" value={form.intensity} onChange={(event) => setForm((current) => ({ ...current, intensity: Number(event.target.value) }))} /></label><label>{t('note')}<textarea rows="3" value={form.note} placeholder={t('notePlaceholder')} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label><div className="checkin-form-actions"><button className="primary-button">{isEditing ? t('updateCheckin') : t('save')}</button>{isEditing && <button type="button" className="secondary-button" onClick={cancelEdit}><X size={16} />{t('cancelEdit')}</button>}</div></form><section className="data-panel trend-panel"><h2>{t('weeklyTrend')}</h2><MoodChart points={weekly?.points || []} /><p className="report-text">{weekly?.summary || t('noWeeklySummary')}</p><p className="report-text muted-report">{weekly?.analysis}</p></section></div>
+    <section className="data-panel"><h2>{t('recentCheckins')}</h2><Loading loading={loading} t={t} />{records.length === 0 && !loading ? <p className="empty-state">{t('noCheckins')}</p> : <div className="record-list">{[...records].reverse().map((record) => <article className={`record-row ${form.date === record.date ? 'editing' : ''}`} key={record.date}><div><strong>{record.mood}</strong><span>{record.date} · {record.intensity}/5</span>{record.note && <p>{record.note}</p>}</div><div className="record-actions"><button className="icon-button" title={`${t('editCheckin')} ${record.date}`} onClick={() => startEdit(record)}><Pencil size={16} /></button><button className="danger-icon" title={`${t('delete')} ${record.date}`} onClick={() => remove(record.date)}><Trash2 size={16} /></button></div></article>)}</div>}</section>
   </>
 }
 

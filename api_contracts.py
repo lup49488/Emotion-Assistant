@@ -98,10 +98,22 @@ class ChatRequest(ContractModel):
     # Omitted by the React client: honor the server's LLM_MAX_NEW_TOKENS value.
     max_new_tokens: int = Field(default=DEFAULT_MAX_NEW_TOKENS, ge=1, le=8_192)
     use_knowledge: bool = False
-    use_style: bool = False
+    use_style: bool = True
+    # Empty means "use the whole style corpus"; otherwise filter documents whose
+    # filename starts with this style family (e.g. 温柔型).
+    style_prefix: str | None = Field(default=None, max_length=64)
     show_memory_receipt: bool = True
     conversation_id: str | None = Field(default=None, max_length=64)
     retry_last_response: bool = False
+
+
+class StylePreferenceRequest(ContractModel):
+    style_prefix: str = Field(default="", max_length=64)
+
+
+class StylePreferenceResponse(ContractModel):
+    style_prefix: str
+    available: list[str]
 
 
 class ChatResponse(ContractModel):

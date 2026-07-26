@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test:e2e": "powershell -ExecutionPolicy Bypass -File e2e/run-e2e.ps1",
+    "test:e2e": "node e2e/run-e2e.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

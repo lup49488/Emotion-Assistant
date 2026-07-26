@@ -12,6 +12,7 @@ os.environ.setdefault("API_PRELOAD_MODELS", "false")
 import api_server
 import job_store
 import rag_feedback_store
+import style_store
 from service_errors import ServiceError
 import model_warmup
 import session_store
@@ -559,3 +560,48 @@ def test_retry_rolls_back_short_term_memory(monkeypatch, tmp_path):
     assert response.status_code == 200
     # 失败的一轮已从短期记忆移除，重试上下文不再包含旧的错误回复。
     assert {"role": "assistant", "content": "模型调用失败：boom"} not in history_after
+
+
+def test_style_preference_round_trip_and_chat_fallback(monkeypatch, tmp_path):
+    import style_preference_store
+
+    monkeypatch.setattr(style_store, "list_documents", lambda: ["温柔型.md", "专业型.md"])
+    captured = {}
+
+    def fake_stream(user_id, message, **kwargs):
+        captured.update(kwargs)
+        yield "ok"
+
+    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        initial = client.get("/api/v1/style/preference")
+        saved = client.put("/api/v1/style/preference", json={"style_prefix": "温柔型"}, headers=headers)
+        rejected = client.put("/api/v1/style/preference", json={"style_prefix": "不存在型"}, headers=headers)
+        client.put("/api/v1/style/preference", json={"style_prefix": "温柔型"}, headers=headers)
+        # 请求未指定 style_prefix 时应回落到已保存的偏好。
+        client.post("/api/v1/chat", json={"message": "hi", "show_memory_receipt": False}, headers=headers)
+        fallback_prefix = captured.get("style_prefix")
+        # 请求显式指定时以请求为准。
+        client.post(
+            "/api/v1/chat",
+            json={"message": "hi", "style_prefix": "专业型", "show_memory_receipt": False},
+            headers=headers,
+        )
+        explicit_prefix = captured.get("style_prefix")
+
+    assert initial.json() == {"style_prefix": "", "available": ["专业型", "温柔型"]}
+    assert saved.json()["style_prefix"] == "温柔型"
+    # 未知风格被规范化为空，避免检索出零结果。
+    assert rejected.json()["style_prefix"] == ""
+    assert fallback_prefix == "温柔型"
+    assert explicit_prefix == "专业型"
+
+
+def test_style_preference_update_requires_csrf(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        _login(client, monkeypatch, tmp_path)
+        response = client.put("/api/v1/style/preference", json={"style_prefix": "温柔型"})
+
+    assert response.status_code == 403

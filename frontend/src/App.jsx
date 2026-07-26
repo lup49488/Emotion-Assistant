@@ -27,7 +27,7 @@ import {
   SunMoon,
   X,
 } from 'lucide-react'
-import { API_BASE_URL, ApiRequestError, apiFetch, csrfHeaders } from './api'
+import { API_BASE_URL, ApiRequestError, apiFetch, csrfHeaders, readJson } from './api'
 import { KnowledgePage, MemoryPage, MoodPage, OperationsPage, PrivacyPage } from './FeaturePages'
 import { translate } from './i18n'
 import './App.css'
@@ -67,12 +67,15 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(() => window.innerWidth > 1060)
   const [options, setOptions] = useState({
     provider: '', model: '', baseUrl: '', apiKey: '',
-    useKnowledge: false, useStyle: false, profile: 'balanced',
+    useKnowledge: false, useStyle: true, stylePrefix: '', profile: 'balanced',
   })
   const [editableModelField, setEditableModelField] = useState({ baseUrl: false, apiKey: false })
+  const [stylePrefixes, setStylePrefixes] = useState([])
   const messageEndRef = useRef(null)
   const activeRequestRef = useRef(null)
   const t = (key) => translate(locale, key)
+  // 下拉框只翻译显示名；option 的 value 仍是文件名前缀，检索过滤依赖它。
+  const styleName = (prefix) => t(`style_${prefix}`) === `style_${prefix}` ? prefix : t(`style_${prefix}`)
   const errorText = (code) => t(`error_${code}`) === `error_${code}` ? t('replyFailed') : t(`error_${code}`)
   const visibleNavigation = NAVIGATION.filter((item) => !item.requiresOperationsAccess || session?.can_access_operations)
 
@@ -128,6 +131,13 @@ function App() {
       const response = await apiFetch('/api/v1/auth/session')
       const data = await response.json()
       setSession(data)
+      try {
+        const preference = await readJson('/api/v1/style/preference')
+        setStylePrefixes(preference.available || [])
+        setOptions((current) => ({ ...current, stylePrefix: preference.style_prefix || '' }))
+      } catch {
+        // A missing style preference must not block sign-in.
+      }
       await refreshConversations()
     } catch {
       setSession(null)
@@ -251,6 +261,7 @@ function App() {
           max_new_tokens: MODEL_PROFILES[options.profile].maxNewTokens,
           use_knowledge: options.useKnowledge,
           use_style: options.useStyle,
+          style_prefix: options.stylePrefix,
           show_memory_receipt: false,
           retry_last_response: retryMessageIndex !== null,
         }),
@@ -303,6 +314,18 @@ function App() {
     } finally {
       setIsSending(false)
       activeRequestRef.current = null
+    }
+  }
+
+  async function saveStylePrefix(stylePrefix) {
+    // Update the UI immediately, then persist so the choice survives a reload.
+    setOptions((current) => ({ ...current, stylePrefix }))
+    try {
+      await readJson('/api/v1/style/preference', {
+        method: 'PUT', headers: csrfHeaders(), body: JSON.stringify({ style_prefix: stylePrefix }),
+      })
+    } catch (error) {
+      setNotice(error.message)
     }
   }
 
@@ -386,6 +409,7 @@ function App() {
         <Toggle label={t('knowledgeRetrieval')} description={t('knowledgeHint')} checked={options.useKnowledge} onChange={(useKnowledge) => setOptions((current) => ({ ...current, useKnowledge }))} />
         <Toggle label={t('styleReference')} description={t('styleHint')} checked={options.useStyle} onChange={(useStyle) => setOptions((current) => ({ ...current, useStyle }))} />
         <label className="model-field">{t('responseProfile')}<select value={options.profile} onChange={(event) => setOptions((current) => ({ ...current, profile: event.target.value }))}><option value="fast">{t('profileFast')}</option><option value="balanced">{t('profileBalanced')}</option><option value="detailed">{t('profileDetailed')}</option></select><small>{t('profileHint')}</small></label>
+        {stylePrefixes.length > 0 && <label className="model-field">{t('styleFamily')}<select value={options.stylePrefix} onChange={(event) => saveStylePrefix(event.target.value)}><option value="">{t('allStyles')}</option>{stylePrefixes.map((prefix) => <option key={prefix} value={prefix}>{styleName(prefix)}</option>)}</select><small>{t('styleFamilyHint')}</small></label>}
         <div className="contract-note"><span>API v1</span><p>Cookie session and CSRF protection are active.</p></div>
       </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
     </main>

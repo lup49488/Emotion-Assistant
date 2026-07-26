@@ -1,4 +1,4 @@
-name: Test and deploy checks
+name: CI
 
 on:
   push:
@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  python-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -23,17 +23,65 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install Python dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Run Python test suite
+        run: python -m pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
-      - name: Install dependencies
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Run lint
+        run: npm run lint
+      - name: Build production frontend
+        run: npm run build
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+      - name: Run end-to-end tests
+        run: npm run test:e2e
+      - name: Upload Playwright artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-artifacts
+          path: |
+            frontend/playwright-report
+            frontend/test-results
+          if-no-files-found: ignore
+
+  deployment-check:
+    needs: [python-tests, frontend]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      API_PRELOAD_MODELS: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install Python dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
-      - name: Run tests
-        run: python -m pytest -q
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
-      - name: Run deployment checks
+      - name: Run API smoke and deployment checks
         run: python deployment_check.py --skip-dependencies --smoke-api --frontend-build

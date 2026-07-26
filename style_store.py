@@ -17,6 +17,7 @@ from config import (
     STYLE_DOCS_DIR,
     STYLE_INDEX_PATH,
     STYLE_RETRIEVAL_THRESHOLD,
+    STYLE_PREFIX_CANDIDATE_MULTIPLIER,
     STYLE_TOP_K,
 )
 from json_utils import load_json, save_json
@@ -274,30 +275,60 @@ def _read_index(chunks: list[dict[str, Any]]) -> Any:
     return faiss.read_index(str(STYLE_INDEX_PATH))
 
 
+def _normalized_prefix(source_prefix: str | None) -> str:
+    return (source_prefix or "").strip().casefold()
+
+
+def style_prefixes() -> list[str]:
+    """List selectable style families derived from the document filename prefix.
+
+    Documents are named ``<style>.md`` or ``<style>_<variant>.md``, so the text
+    before the first underscore identifies the style family.
+    """
+    prefixes = {Path(name).stem.split("_", 1)[0].strip() for name in list_documents()}
+    return sorted(prefix for prefix in prefixes if prefix)
+
+
+def _matches_prefix(source: str, prefix: str) -> bool:
+    return Path(str(source)).stem.casefold().startswith(prefix)
+
+
 def retrieve_style(
     query: str,
     *,
     top_k: int = STYLE_TOP_K,
     threshold: float = STYLE_RETRIEVAL_THRESHOLD,
+    source_prefix: str | None = None,
 ) -> list[dict[str, Any]]:
     chunks = load_chunks()
     if not query.strip() or not chunks:
         return []
+    prefix = _normalized_prefix(source_prefix)
     index = _read_index(chunks)
     top_k = max(1, min(int(top_k), len(chunks)))
-    similarities, indices = index.search(encode_texts([query]), top_k)
+    # The FAISS index covers every style document, so a prefix filter must search
+    # a wider candidate pool; otherwise the nearest neighbours may all belong to
+    # other style families and the filtered result would be empty.
+    search_k = min(len(chunks), top_k * STYLE_PREFIX_CANDIDATE_MULTIPLIER) if prefix else top_k
+    similarities, indices = index.search(encode_texts([query]), search_k)
     results: list[dict[str, Any]] = []
     for score, i in zip(similarities[0], indices[0]):
         if i < 0 or i >= len(chunks) or float(score) < threshold:
             continue
         item = dict(chunks[int(i)])
+        if prefix and not _matches_prefix(item.get("source", ""), prefix):
+            continue
         item["score"] = float(score)
         results.append(item)
+        if len(results) >= top_k:
+            break
     return results
 
 
-def build_style_context(query: str, *, top_k: int = STYLE_TOP_K) -> str:
-    results = retrieve_style(query, top_k=top_k)
+def build_style_context(
+    query: str, *, top_k: int = STYLE_TOP_K, source_prefix: str | None = None
+) -> str:
+    results = retrieve_style(query, top_k=top_k, source_prefix=source_prefix)
     if not results:
         return ""
     lines = [

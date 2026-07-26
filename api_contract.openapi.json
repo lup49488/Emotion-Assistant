@@ -289,6 +289,138 @@
         }
       }
     },
+    "/api/v1/style/preference": {
+      "get": {
+        "summary": "Read Style Preference",
+        "operationId": "read_style_preference_api_v1_style_preference_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StylePreferenceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Style Preference",
+        "operationId": "update_style_preference_api_v1_style_preference_put",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StylePreferenceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StylePreferenceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/session": {
       "get": {
         "summary": "Session Info",
@@ -2653,7 +2785,19 @@
           "use_style": {
             "type": "boolean",
             "title": "Use Style",
-            "default": false
+            "default": true
+          },
+          "style_prefix": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Style Prefix"
           },
           "show_memory_receipt": {
             "type": "boolean",
@@ -3908,6 +4052,41 @@
           "metrics"
         ],
         "title": "StatusResponse"
+      },
+      "StylePreferenceRequest": {
+        "properties": {
+          "style_prefix": {
+            "type": "string",
+            "maxLength": 64,
+            "title": "Style Prefix",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "StylePreferenceRequest"
+      },
+      "StylePreferenceResponse": {
+        "properties": {
+          "style_prefix": {
+            "type": "string",
+            "title": "Style Prefix"
+          },
+          "available": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Available"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "style_prefix",
+          "available"
+        ],
+        "title": "StylePreferenceResponse"
       },
       "UsageEventsResponse": {
         "properties": {

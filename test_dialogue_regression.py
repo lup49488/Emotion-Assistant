@@ -40,7 +40,7 @@ def test_empty_stream_regression_case_is_retryable_and_not_archived():
         patch.object(chatbot, "smart_memory_filter", return_value="discard"), \
         patch.object(chatbot, "stream_model_response", return_value=iter(())):
         with pytest.raises(chatbot.ServiceError) as captured:
-            list(chatbot.chat(state, "regression empty stream"))
+            list(chatbot.chat(state, "regression empty stream", use_style=False))
 
     checks = next(case["checks"] for case in dialogue_regression.load_cases() if case["id"] == "empty_model_stream")
     assert captured.value.code == checks["error_code"]

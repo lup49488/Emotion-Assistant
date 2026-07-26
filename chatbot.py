@@ -136,6 +136,7 @@ def chat(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
 ) -> Generator[str, None, None]:
@@ -163,7 +164,7 @@ def chat(
     should_use_knowledge = KNOWLEDGE_ENABLED if use_knowledge is None else bool(use_knowledge)
     should_use_style = STYLE_ENABLED if use_style is None else bool(use_style)
     knowledge_context = knowledge_context if knowledge_context is not None else (build_knowledge_context(user_text) if should_use_knowledge else "")
-    style_context = build_style_context(user_text) if should_use_style else ""
+    style_context = build_style_context(user_text, source_prefix=style_prefix) if should_use_style else ""
     messages = build_messages(
         state,
         user_text,
@@ -220,6 +221,7 @@ def chat_sync(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
 ) -> str:
@@ -229,6 +231,7 @@ def chat_sync(
         model_config=model_config,
         use_knowledge=use_knowledge,
         use_style=use_style,
+        style_prefix=style_prefix,
         conversation_id=conversation_id,
         knowledge_context=knowledge_context,
     ))
@@ -243,6 +246,7 @@ def handle_user_message(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
 ) -> str:
@@ -253,6 +257,7 @@ def handle_user_message(
             model_config=model_config,
             use_knowledge=use_knowledge,
             use_style=use_style,
+            style_prefix=style_prefix,
             conversation_id=conversation_id,
             knowledge_context=knowledge_context,
         )
@@ -264,6 +269,7 @@ def handle_user_message_stream(
     model_config: ModelRuntimeConfig | None = None,
     use_knowledge: bool | None = None,
     use_style: bool | None = None,
+    style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
 ) -> Generator[str, None, None]:
@@ -274,6 +280,7 @@ def handle_user_message_stream(
             model_config=model_config,
             use_knowledge=use_knowledge,
             use_style=use_style,
+            style_prefix=style_prefix,
             conversation_id=conversation_id,
             knowledge_context=knowledge_context,
         )
