@@ -46,7 +46,7 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {
     const item = conversation(body.conversation_id)
     const reply = body.retry_last_response ? 'Regenerated answer' : body.message === 'Show markdown'
-      ? 'First line<br>Second line\n\n\\[ P(C \\mid \\mathbf{x}) = \\frac{P(\\mathbf{x} \\mid C)P(C)}{P(\\mathbf{x})} \\]'
+      ? 'First line<br>Second line\n\n\\[ P(C \\mid \\mathbf{x}) = \\frac{P(\\mathbf{x} \\mid C)P(C)}{P(\\mathbf{x})} \\]\n\n| 后验分布 | 公式 |\n| --- | --- |\n| Posterior | $$P(\\theta | x)=\\frac{P(x | \\theta)P(\\theta)}{P(x)}$$ |'
       : 'Grounded answer from the knowledge base.'
     item.messages = [{ role: 'user', content: body.message }, { role: 'assistant', content: reply }]
     item.message_count = 2

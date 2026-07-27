@@ -20,7 +20,8 @@ def build_messages(
     knowledge_context: str = "",
     style_context: str = "",
 ) -> list[dict[str, str]]:
-    level = intensity_to_level(emo_score)
+    has_reliable_emotion = emo_label != "uncertain"
+    level = intensity_to_level(emo_score) if has_reliable_emotion else "unknown"
     style = emotion_to_style(emo_label, level)
     trend = summarize_emotion_trend(state.emotion_memory)
     fluct_level, fluct_direction = detect_emotion_fluctuation(state.emotion_memory, emo_label, emo_score)
@@ -54,7 +55,7 @@ def build_messages(
 只有当用户明确要求翻译、总结或解释代码时，才严格返回工具 JSON，例如：
 {{"tool": "translate", "args": {{"text": "你好", "target_lang": "en"}}}}
 
-当前情绪估计：{emo_label}，强度 {emo_score:.2f}，程度 {level}
+当前情绪估计：{"未能可靠判断（不作为情绪标签）" if not has_reliable_emotion else f"{emo_label}，强度 {emo_score:.2f}，程度 {level}"}
 近期情绪趋势：{trend}
 情绪波动：{fluct_level}，方向：{fluct_direction}
 回复风格：{style}

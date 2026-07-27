@@ -27,7 +27,7 @@ def _api_preload_enabled() -> bool:
 def warmup_api_models() -> None:
     """Load support models without loading the local LLM."""
     for label, loader in (
-        ("emotion", lambda: goemotions.predict_emotion_zh("hello")),
+        ("emotion", lambda: goemotions.predict_emotion("hello")),
         ("embedding", get_embedding_model),
     ):
         with _warmup_lock:

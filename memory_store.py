@@ -9,6 +9,7 @@ from typing import Any
 import torch
 
 from config import (
+    EMOTION_CONFIDENCE_THRESHOLD,
     INTEREST_PATTERNS,
     INTEREST_RETRIEVAL_THRESHOLD,
     INTEREST_SIMILARITY_THRESHOLD,
@@ -550,6 +551,25 @@ def latest_memory_receipt(state: Any) -> str:
 
 def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: float) -> str:
     score = score_memory(user_text, emo_label, emo_score)
+    emotion_recorded = (
+        emo_label != "uncertain"
+        and float(emo_score) >= EMOTION_CONFIDENCE_THRESHOLD
+    )
+    if emotion_recorded:
+        # Emotion history has its own confidence gate. It should not depend on
+        # personal-fact keywords or the unrelated long-term-memory score.
+        update_mid_term(state, emo_label, emo_score)
+        record_memory_event(
+            state,
+            section="emotion",
+            action="added",
+            text=user_text,
+            reason=(
+                f"情绪模型置信度 {float(emo_score):.2f} 达到情绪记录阈值 "
+                f"{EMOTION_CONFIDENCE_THRESHOLD:.2f}"
+            ),
+            score=score,
+        )
     profile = extract_personal_profile(user_text)
     if profile is not None:
         action = update_stable_profile(state, profile)
@@ -606,16 +626,17 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
             score=score,
         )
         return "long"
-    if score >= SCORE_MID_TERM_THRESHOLD:
-        update_mid_term(state, emo_label, emo_score)
+    if score >= SCORE_MID_TERM_THRESHOLD and not emotion_recorded:
         record_memory_event(
             state,
             section="emotion",
-            action="added",
+            action="skipped",
             text=user_text,
-            reason=f"记忆评分 {score:.2f} 达到情绪记忆阈值 {SCORE_MID_TERM_THRESHOLD:.2f}",
+            reason="情绪识别置信度不足，不强行写入情绪标签",
             score=score,
         )
+        return "discard"
+    if emotion_recorded:
         return "mid"
     reason = "这是回忆查询，不作为新的个人事实保存" if is_memory_query(user_text) else (
         f"记忆评分 {score:.2f} 未达到写入阈值 {SCORE_MID_TERM_THRESHOLD:.2f}"

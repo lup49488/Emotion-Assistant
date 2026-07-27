@@ -138,12 +138,27 @@ class TestScoreMemory(unittest.TestCase):
         self.assertEqual(result, "long")
 
     def test_threshold_boundary_mid_term_inclusive(self):
-        # score 恰好等于 2.0 时应该判定为 mid
-        # "我想" 命中 memory keyword(+2)，emo_score=0 -> 0*2+2 = 2.0
-        result = chatbot.smart_memory_filter(
-            self._fresh_state(), "我想看看", "neutral", 0.0
-        )
+        # 可信的情绪标签应独立于通用记忆关键词写入情绪历史。
+        result = chatbot.smart_memory_filter(self._fresh_state(), "今天很平静", "neutral", 1.0)
         self.assertEqual(result, "mid")
+
+    def test_reliable_emotion_is_written_without_memory_keywords(self):
+        state = self._fresh_state()
+
+        result = chatbot.smart_memory_filter(state, "今天考试通过了，我很开心", "joy", 0.9)
+
+        self.assertEqual(result, "mid")
+        self.assertEqual(state.emotion_memory[-1]["label"], "joy")
+        self.assertAlmostEqual(state.emotion_memory[-1]["score"], 0.9)
+
+    def test_uncertain_emotion_is_not_written_to_emotion_memory(self):
+        state = self._fresh_state()
+
+        result = chatbot.smart_memory_filter(state, "我想看看", "uncertain", 0.0)
+
+        self.assertEqual(result, "discard")
+        self.assertEqual(state.emotion_memory, [])
+        self.assertEqual(state.memory_events[-1]["action"], "skipped")
 
     def test_below_mid_threshold_is_discarded(self):
         # 无关键词、neutral、低分 -> score < 2.0 -> discard
@@ -226,58 +241,63 @@ class TestInterestMemoryStore(unittest.TestCase):
 
 class TestSafeAnalyze(unittest.TestCase):
 
-    def test_normal_list_result_zh(self):
-        with patch.object(chatbot.goemotions, "predict_emotion_zh",
+    def test_normal_list_result_uses_original_multilingual_text(self):
+        with patch.object(chatbot.goemotions, "predict_emotion",
                            return_value=("joy", 0.9)):
             label, score = chatbot.safe_analyze("我很开心", "zh-cn")
         self.assertEqual(label, "joy")
         self.assertAlmostEqual(score, 0.9)
 
     def test_normal_dict_result_en(self):
-        with patch.object(chatbot.goemotions, "predict_emotion_en",
+        with patch.object(chatbot.goemotions, "predict_emotion",
                            return_value={"label": "sadness", "score": 0.7}):
             label, score = chatbot.safe_analyze("I feel sad", "en")
         self.assertEqual(label, "sadness")
         self.assertAlmostEqual(score, 0.7)
 
-    def test_empty_list_result_falls_back_to_neutral(self):
-        # 原版会在这里抛 ValueError；修复后应该安全回退
-        with patch.object(chatbot.goemotions, "predict_emotion_en", return_value=[]):
+    def test_empty_list_result_becomes_uncertain(self):
+        with patch.object(chatbot.goemotions, "predict_emotion", return_value=[]):
             label, score = chatbot.safe_analyze("test", "en")
-        self.assertEqual(label, "neutral")
+        self.assertEqual(label, "uncertain")
         self.assertEqual(score, 0.0)
 
-    def test_empty_tuple_result_falls_back_to_neutral(self):
-        with patch.object(chatbot.goemotions, "predict_emotion_en", return_value=()):
+    def test_empty_tuple_result_becomes_uncertain(self):
+        with patch.object(chatbot.goemotions, "predict_emotion", return_value=()):
             label, score = chatbot.safe_analyze("test", "en")
-        self.assertEqual(label, "neutral")
+        self.assertEqual(label, "uncertain")
         self.assertEqual(score, 0.0)
 
-    def test_unknown_format_falls_back_to_neutral(self):
-        with patch.object(chatbot.goemotions, "predict_emotion_en", return_value=42):
+    def test_unknown_format_becomes_uncertain(self):
+        with patch.object(chatbot.goemotions, "predict_emotion", return_value=42):
             label, score = chatbot.safe_analyze("test", "en")
-        self.assertEqual(label, "neutral")
+        self.assertEqual(label, "uncertain")
         self.assertEqual(score, 0.0)
 
-    def test_model_raises_exception_falls_back_to_neutral(self):
-        with patch.object(chatbot.goemotions, "predict_emotion_en",
+    def test_model_raises_exception_becomes_uncertain(self):
+        with patch.object(chatbot.goemotions, "predict_emotion",
                            side_effect=RuntimeError("model crashed")):
             label, score = chatbot.safe_analyze("test", "en")
-        self.assertEqual(label, "neutral")
+        self.assertEqual(label, "uncertain")
         self.assertEqual(score, 0.0)
 
     def test_raw_label_gets_mapped_to_primary_category(self):
         # "grief" 应该被映射成 "sadness"
-        with patch.object(chatbot.goemotions, "predict_emotion_en",
+        with patch.object(chatbot.goemotions, "predict_emotion",
                            return_value=("grief", 0.6)):
             label, _ = chatbot.safe_analyze("test", "en")
         self.assertEqual(label, "sadness")
 
     def test_none_score_defaults_to_zero(self):
-        with patch.object(chatbot.goemotions, "predict_emotion_en",
+        with patch.object(chatbot.goemotions, "predict_emotion",
                            return_value={"label": "joy", "score": None}):
             _, score = chatbot.safe_analyze("test", "en")
         self.assertEqual(score, 0.0)
+
+    def test_low_confidence_does_not_force_an_emotion_label(self):
+        with patch.object(chatbot.goemotions, "predict_emotion", return_value=("joy", 0.59)):
+            label, score = chatbot.safe_analyze("I feel okay", "en")
+        self.assertEqual(label, "uncertain")
+        self.assertAlmostEqual(score, 0.59)
 
 
 # ═══════════════════════════════════════════════════════════
@@ -346,11 +366,11 @@ class TestEmotionHelpers(unittest.TestCase):
         self.assertEqual(chatbot.map_emotion_label("annoyance"), "anger")
         self.assertEqual(chatbot.map_emotion_label("gratitude"), "joy")
 
-    def test_map_emotion_label_unknown_defaults_neutral(self):
-        self.assertEqual(chatbot.map_emotion_label("some_unmapped_label"), "neutral")
+    def test_map_emotion_label_unknown_becomes_uncertain(self):
+        self.assertEqual(chatbot.map_emotion_label("some_unmapped_label"), "uncertain")
 
-    def test_map_emotion_label_none_defaults_neutral(self):
-        self.assertEqual(chatbot.map_emotion_label(None), "neutral")
+    def test_map_emotion_label_none_becomes_uncertain(self):
+        self.assertEqual(chatbot.map_emotion_label(None), "uncertain")
 
     def test_intensity_to_level_boundaries(self):
         self.assertEqual(chatbot.intensity_to_level(0.75), "high")
@@ -361,6 +381,12 @@ class TestEmotionHelpers(unittest.TestCase):
 
     def test_detect_emotion_fluctuation_no_history_is_stable_unknown(self):
         level, direction = chatbot.detect_emotion_fluctuation([], "joy", 0.5)
+        self.assertEqual((level, direction), ("stable", "unknown"))
+
+    def test_detect_emotion_fluctuation_uncertain_input_does_not_infer_trend(self):
+        level, direction = chatbot.detect_emotion_fluctuation(
+            [{"label": "sadness", "score": 0.8}], "uncertain", 0.59
+        )
         self.assertEqual((level, direction), ("stable", "unknown"))
 
     def test_detect_emotion_fluctuation_small_delta_is_stable(self):
@@ -524,6 +550,11 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
         messages = build_messages(chatbot.SessionState(), "你叫什么名字？", "neutral", 0.0)
 
         assert "你的名字是 Serenova" in messages[0]["content"]
+
+    def test_prompt_does_not_present_uncertain_as_an_emotion_label(self):
+        messages = build_messages(chatbot.SessionState(), "I feel okay", "uncertain", 0.59)
+
+        assert "未能可靠判断（不作为情绪标签）" in messages[0]["content"]
 
 
 class TestModelRuntimeConfig(unittest.TestCase):

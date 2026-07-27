@@ -7,6 +7,7 @@ from typing import Any
 from langdetect import detect
 
 import goemotions_local as goemotions
+from config import EMOTION_CONFIDENCE_THRESHOLD
 
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ def map_emotion_label(label: str | None) -> str:
         "sadness": "sadness", "grief": "sadness", "disappointment": "sadness",
         "remorse": "sadness", "embarrassment": "sadness", "pessimism": "sadness",
         "anger": "anger", "annoyance": "anger", "disgust": "anger",
+        "contempt": "anger", "frustration": "anger",
         "fear": "fear", "nervousness": "fear",
         "anxiety": "anxiety", "confusion": "anxiety",
         "joy": "joy", "amusement": "joy", "approval": "joy",
@@ -25,33 +27,39 @@ def map_emotion_label(label: str | None) -> str:
         "neutral": "neutral", "curiosity": "neutral",
         "realization": "neutral", "surprise": "neutral",
     }
-    return mapping.get(label or "", "neutral")
+    return mapping.get((label or "").strip().lower(), "uncertain")
 
 
 def safe_analyze(text: str, lang: str) -> tuple[str, float]:
     try:
-        result = (
-            goemotions.predict_emotion_zh(text)
-            if lang.startswith("zh")
-            else goemotions.predict_emotion_en(text)
-        )
+        result = goemotions.predict_emotion(text)
     except Exception:
-        logger.exception("情绪模型处理失败，回退到 neutral。text=%r lang=%r", text, lang)
-        return "neutral", 0.0
+        logger.exception("情绪模型处理失败，不写入情绪标签。text=%r lang=%r", text, lang)
+        return "uncertain", 0.0
 
     if isinstance(result, (list, tuple)):
         if not result:
-            logger.warning("情绪模型返回空结果，回退到 neutral")
-            return "neutral", 0.0
+            logger.warning("情绪模型返回空结果，不写入情绪标签")
+            return "uncertain", 0.0
         raw_label, emo_score, *_ = result
     elif isinstance(result, dict):
         raw_label = result.get("label")
         emo_score = result.get("score", 0.0)
     else:
-        logger.warning("未知情绪模型输出格式 %r，回退到 neutral", type(result))
-        return "neutral", 0.0
+        logger.warning("未知情绪模型输出格式 %r，不写入情绪标签", type(result))
+        return "uncertain", 0.0
 
-    return map_emotion_label(raw_label), float(emo_score or 0.0)
+    score = float(emo_score or 0.0)
+    label = map_emotion_label(raw_label)
+    if score < EMOTION_CONFIDENCE_THRESHOLD or label == "uncertain":
+        logger.info(
+            "情绪置信度不足或标签未映射，不写入情绪标签。label=%r score=%.3f threshold=%.3f",
+            raw_label,
+            score,
+            EMOTION_CONFIDENCE_THRESHOLD,
+        )
+        return "uncertain", score
+    return label, score
 
 
 def intensity_to_level(score: float) -> str:
@@ -77,7 +85,7 @@ def emotion_to_style(label: str, level: str) -> str:
 def detect_emotion_fluctuation(
     memories: list[dict[str, Any]], new_label: str, new_score: float
 ) -> tuple[str, str]:
-    if not memories:
+    if not memories or new_label == "uncertain":
         return "stable", "unknown"
     last_score = float(memories[-1].get("score", 0.0))
     delta = abs(float(new_score) - last_score)

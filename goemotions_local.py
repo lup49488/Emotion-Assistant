@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-
-EMOTION_MODEL_NAME = "SamLowe/roberta-base-go_emotions"
-TRANSLATION_MODEL_NAME = "Helsinki-NLP/opus-mt-zh-en"
+from config import EMOTION_MODEL_MULTI_LABEL, EMOTION_MODEL_NAME
 
 _emotion_tokenizer = None
 _emotion_model = None
-_translation_tokenizer = None
-_translation_model = None
 
 
 def require_torch():
@@ -20,15 +16,15 @@ def require_torch():
 
 def require_transformers():
     try:
-        from transformers import AutoModelForSequenceClassification, AutoTokenizer, MarianMTModel, MarianTokenizer
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
     except ModuleNotFoundError as exc:
         raise RuntimeError("缺少依赖 transformers，请先安装后再使用情绪识别功能。") from exc
-    return AutoModelForSequenceClassification, AutoTokenizer, MarianMTModel, MarianTokenizer
+    return AutoModelForSequenceClassification, AutoTokenizer
 
 
 def get_emotion_model():
     global _emotion_tokenizer, _emotion_model
-    AutoModelForSequenceClassification, AutoTokenizer, _, _ = require_transformers()
+    AutoModelForSequenceClassification, AutoTokenizer = require_transformers()
     if _emotion_tokenizer is None:
         _emotion_tokenizer = AutoTokenizer.from_pretrained(EMOTION_MODEL_NAME)
     if _emotion_model is None:
@@ -37,38 +33,30 @@ def get_emotion_model():
     return _emotion_tokenizer, _emotion_model
 
 
-def get_translation_model():
-    global _translation_tokenizer, _translation_model
-    _, _, MarianMTModel, MarianTokenizer = require_transformers()
-    if _translation_tokenizer is None:
-        _translation_tokenizer = MarianTokenizer.from_pretrained(TRANSLATION_MODEL_NAME)
-    if _translation_model is None:
-        _translation_model = MarianMTModel.from_pretrained(TRANSLATION_MODEL_NAME, use_safetensors=True)
-        _translation_model.eval()
-    return _translation_tokenizer, _translation_model
-
-
-def translate_zh_to_en(text: str) -> str:
-    torch = require_torch()
-    tokenizer, model = get_translation_model()
-    inputs = tokenizer(text, return_tensors="pt", padding=True, truncation=True)
-    with torch.inference_mode():
-        outputs = model.generate(**inputs)
-    return tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-
-def predict_emotion_en(text: str) -> tuple[str, float]:
+def predict_emotion(text: str) -> tuple[str, float]:
+    """Classify the original text with a multilingual emotion model."""
     torch = require_torch()
     emotion_tokenizer, emotion_model = get_emotion_model()
     inputs = emotion_tokenizer(text, return_tensors="pt", padding=True, truncation=True)
     with torch.inference_mode():
         outputs = emotion_model(**inputs)
-    probs = torch.sigmoid(outputs.logits)[0]
+    is_multi_label = (
+        getattr(emotion_model.config, "problem_type", "") == "multi_label_classification"
+        or EMOTION_MODEL_MULTI_LABEL
+    )
+    probs = torch.sigmoid(outputs.logits)[0] if is_multi_label else torch.softmax(outputs.logits, dim=-1)[0]
     label_id = torch.argmax(probs).item()
-    label = emotion_model.config.id2label[label_id]
+    id2label = emotion_model.config.id2label
+    label = id2label.get(label_id, id2label.get(str(label_id), str(label_id)))
     score = probs[label_id].item()
     return label, float(score)
 
 
+def predict_emotion_en(text: str) -> tuple[str, float]:
+    """Compatibility alias; input is no longer translated before inference."""
+    return predict_emotion(text)
+
+
 def predict_emotion_zh(text: str) -> tuple[str, float]:
-    return predict_emotion_en(translate_zh_to_en(text))
+    """Compatibility alias; input is no longer translated before inference."""
+    return predict_emotion(text)

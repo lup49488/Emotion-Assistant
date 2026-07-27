@@ -66,7 +66,7 @@ def test_api_lifespan_starts_warmup_once(monkeypatch):
 
 def test_api_warmup_loads_support_models_only(monkeypatch):
     calls = []
-    monkeypatch.setattr(model_warmup.goemotions, "predict_emotion_zh", lambda text: calls.append(("emotion", text)))
+    monkeypatch.setattr(model_warmup.goemotions, "predict_emotion", lambda text: calls.append(("emotion", text)))
     monkeypatch.setattr(model_warmup, "get_embedding_model", lambda: calls.append(("embedding", None)))
 
     model_warmup.warmup_api_models()

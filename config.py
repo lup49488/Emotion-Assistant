@@ -64,6 +64,16 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5
 CHAT_MODEL_NAME      = os.getenv("CHAT_MODEL_NAME", "Qwen/Qwen2.5-3B-Instruct")
 HF_TOKEN             = os.getenv("HF_TOKEN") or None
 
+# Multilingual emotion classification runs directly on the original text, so
+# Chinese and other non-English input no longer needs a translation fallback.
+EMOTION_MODEL_NAME = os.getenv(
+    "EMOTION_MODEL_NAME", "tabularisai/multilingual-emotion-classification"
+)
+EMOTION_CONFIDENCE_THRESHOLD = min(
+    1.0, max(0.0, _env_float("EMOTION_CONFIDENCE_THRESHOLD", 0.60))
+)
+EMOTION_MODEL_MULTI_LABEL = os.getenv("EMOTION_MODEL_MULTI_LABEL", "true").lower() == "true"
+
 DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")
 DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
 DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")

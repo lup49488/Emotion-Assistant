@@ -29,5 +29,8 @@ test('assistant replies render HTML line breaks and LaTeX delimiters safely', as
   await expect(page.getByText('First line')).toBeVisible()
   await expect(page.getByText('Second line')).toBeVisible()
   await expect(page.locator('.katex-display')).toHaveCount(1)
+  await expect(page.getByText('Posterior')).toBeVisible()
+  await expect(page.locator('.katex')).toHaveCount(2)
+  await expect(page.getByText('$$', { exact: false })).toHaveCount(0)
   await expect(page.getByText('<br>', { exact: true })).toHaveCount(0)
 })
