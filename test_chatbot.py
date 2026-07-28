@@ -160,6 +160,24 @@ class TestScoreMemory(unittest.TestCase):
         self.assertEqual(state.emotion_memory, [])
         self.assertEqual(state.memory_events[-1]["action"], "skipped")
 
+    def test_uncertain_emotion_is_not_stored_on_long_term_memory(self):
+        # 评分达到长期阈值时仍会保存文本，但不可靠的情绪不能写成标签，
+        # 否则 uncertain 会出现在记忆面板与摘要提示里。
+        state = self._fresh_state()
+
+        result = chatbot.smart_memory_filter(state, "我想去旅行", "uncertain", 1.0)
+
+        self.assertEqual(result, "long")
+        self.assertEqual(state.long_memory[-1]["text"], "我想去旅行")
+        self.assertEqual(state.long_memory[-1]["emotion"], "")
+
+    def test_reliable_emotion_is_stored_on_long_term_memory(self):
+        state = self._fresh_state()
+
+        chatbot.smart_memory_filter(state, "我想去旅行", "sadness", 1.0)
+
+        self.assertEqual(state.long_memory[-1]["emotion"], "sadness")
+
     def test_below_mid_threshold_is_discarded(self):
         # 无关键词、neutral、低分 -> score < 2.0 -> discard
         result = chatbot.smart_memory_filter(
@@ -371,6 +389,40 @@ class TestEmotionHelpers(unittest.TestCase):
 
     def test_map_emotion_label_none_becomes_uncertain(self):
         self.assertEqual(chatbot.map_emotion_label(None), "uncertain")
+
+    def test_fear_with_anticipatory_worry_is_refined_to_anxiety(self):
+        import emotion
+
+        for text in ("我有点担心明天的面试", "我最近很焦虑，睡不着", "I am anxious about tomorrow"):
+            with self.subTest(text=text):
+                self.assertEqual(emotion.refine_fear_as_anxiety("fear", text), "anxiety")
+
+    def test_acute_fright_stays_fear(self):
+        import emotion
+
+        for text in ("那条狗突然冲过来，吓死我了", "半夜听到有人敲门，我很害怕"):
+            with self.subTest(text=text):
+                self.assertEqual(emotion.refine_fear_as_anxiety("fear", text), "fear")
+
+    def test_anxiety_refinement_only_applies_to_fear(self):
+        import emotion
+
+        # 其他情绪即使含焦虑词也不改写，避免凭空造出模型没有识别的情绪。
+        self.assertEqual(emotion.refine_fear_as_anxiety("sadness", "我很担心也很难过"), "sadness")
+        self.assertEqual(emotion.refine_fear_as_anxiety("uncertain", "我很焦虑"), "uncertain")
+
+    def test_anxiety_refinement_can_be_disabled(self):
+        import emotion
+
+        with patch.object(emotion, "EMOTION_ANXIETY_REFINEMENT", False):
+            self.assertEqual(emotion.refine_fear_as_anxiety("fear", "我很焦虑"), "fear")
+
+    def test_safe_analyze_reports_anxiety_for_worried_text(self):
+        with patch.object(chatbot.goemotions, "predict_emotion", return_value=("fear", 0.9)):
+            label, score = chatbot.safe_analyze("我一直担心考试会不会不及格", "zh")
+
+        self.assertEqual(label, "anxiety")
+        self.assertAlmostEqual(score, 0.9)
 
     def test_intensity_to_level_boundaries(self):
         self.assertEqual(chatbot.intensity_to_level(0.75), "high")

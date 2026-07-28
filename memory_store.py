@@ -614,7 +614,9 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
         return "interest"
     if score >= SCORE_LONG_TERM_THRESHOLD:
         added = update_long_term(state, {
-            "text": user_text, "emotion": emo_label,
+            # An unreliable reading must not be stored as an emotion label; the
+            # empty string keeps it out of summaries and the memory panel.
+            "text": user_text, "emotion": "" if not emotion_recorded else emo_label,
             "score": float(emo_score), "time": datetime.now().isoformat(),
         })
         record_memory_event(

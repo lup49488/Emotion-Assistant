@@ -6,31 +6,30 @@ import remarkMath from 'remark-math'
 
 function escapeTablePipes(formula) {
   // A raw pipe inside math would otherwise be parsed as the next GFM table cell.
-  return formula.replace(/(^|[^\\])\|/g, (_, prefix) => `${prefix}\\vert `)
+  // Matching `\\.` first keeps already-escaped sequences intact and lets every
+  // bare pipe be replaced, including consecutive ones.
+  return formula.replace(/\\.|\|/g, (match) => (match === '|' ? '\\vert ' : match))
 }
 
-function normalizeTableMath(segment) {
-  return segment
-    .split('\n')
-    .map((line) => {
-      if (!line.trimStart().startsWith('|')) return line
-      // Block math is not valid inside a table cell; retain the formula inline.
-      return line.replace(/\$\$([^\n]+?)\$\$/g, (_, formula) => `$${formula.trim()}$`)
-    })
-    .join('\n')
+function normalizeTableRowMath(line) {
+  return line
+    // Block math is not valid inside a table cell; retain the formula inline.
+    .replace(/\$\$([^\n]+?)\$\$/g, (_, formula) => `$${escapeTablePipes(formula.trim())}$`)
+    .replace(/(^|[^$])\$([^$\n]+?)\$(?!\$)/g, (_, prefix, formula) => (
+      `${prefix}$${escapeTablePipes(formula)}$`
+    ))
 }
 
 function normalizeMarkdownSegment(segment) {
-  const normalized = segment
+  return segment
     .replace(/<br\s*\/?>/gi, '  \n')
     .replace(/\\\[\s*([\s\S]*?)\s*\\\]/g, (_, formula) => `\n\n$$\n${formula.trim()}\n$$\n\n`)
     .replace(/\\\(\s*([\s\S]*?)\s*\\\)/g, (_, formula) => `$${formula.trim()}$`)
-
-  return normalizeTableMath(normalized)
-    .replace(/\$\$([\s\S]*?)\$\$/g, (_, formula) => `$$${escapeTablePipes(formula)}$$`)
-    .replace(/(^|[^$])\$([^$\n]+?)\$(?!\$)/gm, (_, prefix, formula) => (
-      `${prefix}$${escapeTablePipes(formula)}$`
-    ))
+    .split('\n')
+    // Only table rows need pipe escaping. Elsewhere a raw pipe is harmless, and
+    // rewriting it would break valid math such as \begin{array}{c|c}.
+    .map((line) => (line.trimStart().startsWith('|') ? normalizeTableRowMath(line) : line))
+    .join('\n')
 }
 
 function normalizeAssistantMarkdown(content) {

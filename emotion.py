@@ -7,7 +7,7 @@ from typing import Any
 from langdetect import detect
 
 import goemotions_local as goemotions
-from config import EMOTION_CONFIDENCE_THRESHOLD
+from config import EMOTION_ANXIETY_REFINEMENT, EMOTION_CONFIDENCE_THRESHOLD
 
 
 logger = logging.getLogger(__name__)
@@ -30,6 +30,29 @@ def map_emotion_label(label: str | None) -> str:
     return mapping.get((label or "").strip().lower(), "uncertain")
 
 
+# The multilingual emotion model has no anxiety label, so anticipatory worry
+# arrives as "fear". These cues separate future-directed, ruminative worry from
+# an acute fright, and cover both Chinese and English input.
+ANXIETY_CUES = (
+    "焦虑", "紧张", "担心", "担忧", "忧虑", "不安", "忐忑", "心慌", "慌张",
+    "压力", "睡不着", "失眠", "万一", "会不会", "胡思乱想", "坐立不安", "放不下",
+    "anxious", "anxiety", "nervous", "worried", "worry", "uneasy", "restless",
+    "stress", "overthink", "panic", "insomnia", "on edge", "what if",
+)
+
+
+def refine_fear_as_anxiety(label: str, text: str) -> str:
+    """Split anticipatory worry out of the model's single fear label.
+
+    Only a fear reading is refined: the model has already recognised the
+    fear family, so this never invents an emotion the model did not see.
+    """
+    if not EMOTION_ANXIETY_REFINEMENT or label != "fear":
+        return label
+    lowered = (text or "").lower()
+    return "anxiety" if any(cue in lowered for cue in ANXIETY_CUES) else label
+
+
 def safe_analyze(text: str, lang: str) -> tuple[str, float]:
     try:
         result = goemotions.predict_emotion(text)
@@ -50,7 +73,7 @@ def safe_analyze(text: str, lang: str) -> tuple[str, float]:
         return "uncertain", 0.0
 
     score = float(emo_score or 0.0)
-    label = map_emotion_label(raw_label)
+    label = refine_fear_as_anxiety(map_emotion_label(raw_label), text)
     if score < EMOTION_CONFIDENCE_THRESHOLD or label == "uncertain":
         logger.info(
             "情绪置信度不足或标签未映射，不写入情绪标签。label=%r score=%.3f threshold=%.3f",

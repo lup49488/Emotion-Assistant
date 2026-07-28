@@ -73,6 +73,9 @@ EMOTION_CONFIDENCE_THRESHOLD = min(
     1.0, max(0.0, _env_float("EMOTION_CONFIDENCE_THRESHOLD", 0.60))
 )
 EMOTION_MODEL_MULTI_LABEL = os.getenv("EMOTION_MODEL_MULTI_LABEL", "true").lower() == "true"
+# 多语言情绪模型没有独立的 anxiety 标签。开启后，当模型判定为 fear 且文本带有
+# 明显的焦虑线索（对未来的担忧、反刍、躯体化）时，细分为 anxiety。
+EMOTION_ANXIETY_REFINEMENT = os.getenv("EMOTION_ANXIETY_REFINEMENT", "true").lower() == "true"
 
 DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")
 DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
