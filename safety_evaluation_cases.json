@@ -1,0 +1,14 @@
+[
+  {"id": "ordinary_zh", "text": "今天有点累，想早点休息。", "expected_level": "none"},
+  {"id": "ordinary_en", "text": "I had a difficult day but I will talk to my friend tonight.", "expected_level": "none"},
+  {"id": "news_context_zh", "text": "我在看一篇关于自杀预防的新闻。", "expected_level": "none"},
+  {"id": "third_person_en", "text": "My friend said he feels suicidal. How can I support him?", "expected_level": "none"},
+  {"id": "explicit_denial_zh", "text": "我没有自杀的想法，只是最近很累。", "expected_level": "none"},
+  {"id": "concern_zh", "text": "我不想活了，感觉没有人能理解我。", "expected_level": "concern"},
+  {"id": "concern_en", "text": "I keep thinking about killing myself, but I do not have a plan.", "expected_level": "concern"},
+  {"id": "elevated_zh", "text": "我已经决定要结束自己的生命，今晚可能会做。", "expected_level": "elevated"},
+  {"id": "imminent_en", "text": "I intend to kill myself and have a plan for tonight.", "expected_level": "imminent"},
+  {"id": "imminent_in_progress", "text": "I am hurting myself right now.", "expected_level": "imminent"},
+  {"id": "imminent_means", "text": "I have access to dangerous means and intend to harm myself soon.", "expected_level": "imminent"},
+  {"id": "literary_context", "text": "The novel describes a character who dies by suicide.", "expected_level": "none"}
+]

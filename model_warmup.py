@@ -12,12 +12,15 @@ import threading
 
 import goemotions_local as goemotions
 from chatbot import get_embedding_model
+from safety_semantic import get_semantic_classifier, semantic_safety_preload_enabled
 
 
 logger = logging.getLogger(__name__)
 _warmup_lock = threading.Lock()
 _warmup_started = False
-_warmup_status: dict[str, str] = {"emotion": "pending", "embedding": "pending"}
+_warmup_status: dict[str, str] = {
+    "emotion": "pending", "embedding": "pending", "safety_semantic": "disabled",
+}
 
 
 def _api_preload_enabled() -> bool:
@@ -26,10 +29,15 @@ def _api_preload_enabled() -> bool:
 
 def warmup_api_models() -> None:
     """Load support models without loading the local LLM."""
-    for label, loader in (
+    loaders = [
         ("emotion", lambda: goemotions.predict_emotion("hello")),
         ("embedding", get_embedding_model),
-    ):
+    ]
+    if semantic_safety_preload_enabled():
+        with _warmup_lock:
+            _warmup_status["safety_semantic"] = "pending"
+        loaders.append(("safety_semantic", get_semantic_classifier))
+    for label, loader in loaders:
         with _warmup_lock:
             _warmup_status[label] = "running"
         try:

@@ -77,6 +77,17 @@ EMOTION_MODEL_MULTI_LABEL = os.getenv("EMOTION_MODEL_MULTI_LABEL", "true").lower
 # 明显的焦虑线索（对未来的担忧、反刍、躯体化）时，细分为 anxiety。
 EMOTION_ANXIETY_REFINEMENT = os.getenv("EMOTION_ANXIETY_REFINEMENT", "true").lower() == "true"
 
+# Optional local multilingual NLI supplement for the rule-based safety layer.
+# It is disabled by default because the model adds a sizeable CPU/RAM footprint.
+SAFETY_SEMANTIC_ENABLED = os.getenv("SAFETY_SEMANTIC_ENABLED", "false").lower() == "true"
+SAFETY_SEMANTIC_PRELOAD = os.getenv("SAFETY_SEMANTIC_PRELOAD", "true").lower() == "true"
+SAFETY_SEMANTIC_MODEL_NAME = os.getenv(
+    "SAFETY_SEMANTIC_MODEL_NAME", "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
+)
+SAFETY_SEMANTIC_THRESHOLD = min(
+    1.0, max(0.0, _env_float("SAFETY_SEMANTIC_THRESHOLD", 0.78))
+)
+
 DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")
 DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
 DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")
@@ -173,4 +184,3 @@ PERSONAL_KEYWORDS = ["我是", "我叫", "我的名字", "我今年", "我来自
 
 # 合法 user_id 字符集：字母、数字、下划线、短横线，1-128 字符
 _USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-]{1,128}$")
-

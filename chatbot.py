@@ -150,13 +150,13 @@ def chat(
     emo_label, emo_score = safe_analyze(user_text, lang)
 
     crisis_reply = check_crisis(state, user_text, emo_label, emo_score, lang)
-    smart_memory_filter(state, user_text, emo_label, emo_score)
-
     if crisis_reply is not None:
         update_short_term(state, user_text, crisis_reply)
         _archive_exchange(state.user_id, conversation_id, user_text, crisis_reply)
         yield crisis_reply
         return
+
+    smart_memory_filter(state, user_text, emo_label, emo_score)
 
     config = model_config or ModelRuntimeConfig()
     # Provider 层用此标识做按用户限额与用量归集。

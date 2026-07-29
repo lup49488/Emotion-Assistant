@@ -74,6 +74,18 @@ def test_api_warmup_loads_support_models_only(monkeypatch):
     assert calls == [("emotion", "hello"), ("embedding", None)]
 
 
+def test_api_warmup_optionally_loads_semantic_safety_model(monkeypatch):
+    calls = []
+    monkeypatch.setattr(model_warmup.goemotions, "predict_emotion", lambda text: calls.append(("emotion", text)))
+    monkeypatch.setattr(model_warmup, "get_embedding_model", lambda: calls.append(("embedding", None)))
+    monkeypatch.setattr(model_warmup, "semantic_safety_preload_enabled", lambda: True)
+    monkeypatch.setattr(model_warmup, "get_semantic_classifier", lambda: calls.append(("safety_semantic", None)))
+
+    model_warmup.warmup_api_models()
+
+    assert calls == [("emotion", "hello"), ("embedding", None), ("safety_semantic", None)]
+
+
 def test_login_sets_signed_cookie_and_memory_quality_uses_it(monkeypatch, tmp_path):
     with TestClient(api_server.app, base_url="https://testserver") as client:
         _login(client, monkeypatch, tmp_path)
