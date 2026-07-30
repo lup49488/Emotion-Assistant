@@ -6,6 +6,7 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
+from config import NEGATIVE_EMOTIONS
 from emotion import detect_emotion_fluctuation
 from safety_semantic import SemanticSafetySignals, assess_semantic_safety, semantic_safety_enabled
 
@@ -271,9 +272,8 @@ def detect_crisis_trend(emotion_memory: list[dict[str, Any]], current_fluct_leve
     recent = emotion_memory[-(CRISIS_SEVERE_STREAK_THRESHOLD - 1):]
     if len(recent) < CRISIS_SEVERE_STREAK_THRESHOLD - 1:
         return False
-    negative_emotions = {"sadness", "fear", "anger", "anxiety"}
     return all(
-        memory.get("label") in negative_emotions and float(memory.get("score", 0.0)) >= 0.75
+        memory.get("label") in NEGATIVE_EMOTIONS and float(memory.get("score", 0.0)) >= 0.75
         for memory in recent
     )
 

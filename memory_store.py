@@ -15,6 +15,7 @@ from config import (
     INTEREST_SIMILARITY_THRESHOLD,
     LONG_TERM_EXPIRY_DAYS,
     MEMORY_KEYWORDS,
+    NEGATIVE_EMOTIONS,
     PERSONAL_KEYWORDS,
     SCORE_EMOTION_MULTIPLIER,
     SCORE_LONG_TERM_THRESHOLD,
@@ -230,7 +231,7 @@ def compact_long_memory(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def score_memory(user_text: str, emo_label: str, emo_score: float) -> float:
     score = float(emo_score) * SCORE_EMOTION_MULTIPLIER
-    if emo_label in {"sadness", "fear", "anger", "anxiety"}:
+    if emo_label in NEGATIVE_EMOTIONS:
         score += SCORE_NEGATIVE_BONUS
     if not is_memory_query(user_text):
         if any(kw in user_text for kw in MEMORY_KEYWORDS):

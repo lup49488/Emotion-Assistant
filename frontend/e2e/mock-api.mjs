@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 
 let loggedIn = false
 const conversations = []
+const moodRecords = []
 const memorySnapshot = {
   history: [],
   emotion_memory: [],
@@ -15,6 +16,11 @@ const memorySnapshot = {
 function resetState() {
   loggedIn = false
   conversations.splice(0, conversations.length)
+  moodRecords.splice(0, moodRecords.length, {
+    date: '2026-07-29', mood: 'calm', intensity: 3,
+    note: 'First paragraph.\n\nSecond paragraph.', source: 'checkin',
+    created_at: '2026-07-29T09:00:00', updated_at: '2026-07-29T09:00:00',
+  })
   Object.assign(memorySnapshot, {
     history: [], emotion_memory: [], long_memory: [], stable_profile: [], interest_memory: [], memory_events: [],
   })
@@ -79,6 +85,8 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/memory') return send(response, 200, memorySnapshot)
   if (request.method === 'GET' && url.pathname === '/api/v1/memory/quality') return send(response, 200, { report: 'Memory quality is healthy.' })
+  if (request.method === 'GET' && url.pathname === '/api/v1/mood/checkins') return send(response, 200, { records: moodRecords })
+  if (request.method === 'GET' && url.pathname === '/api/v1/mood/weekly') return send(response, 200, { points: [], summary: 'No weekly summary available.', analysis: '' })
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {
     const item = conversation(body.conversation_id)
     if (body.message === 'Trigger retryable error' && !body.retry_last_response) {

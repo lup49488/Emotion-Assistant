@@ -404,6 +404,53 @@ class TestEmotionHelpers(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(emotion.refine_fear_as_anxiety("fear", text), "fear")
 
+    def test_negated_worry_is_not_refined_to_anxiety(self):
+        import emotion
+
+        # 宽慰或否认（「别担心」「我并不焦虑」）不是焦虑，应保留 fear 的安抚风格。
+        for text in (
+            "别担心，我只是刚才被吓了一跳",
+            "不用担心我",
+            "没什么好焦虑的",
+            "我并不焦虑，只是被吓到了",
+            "我不担心，就是有点怕",
+            "Don't worry, I just got scared by the movie",
+            "There is nothing to worry about, it just startled me",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(emotion.refine_fear_as_anxiety("fear", text), "fear")
+
+    def test_negation_elsewhere_does_not_suppress_a_real_cue(self):
+        import emotion
+
+        # 否定词只在紧邻线索时才生效，远处的「不」不应压掉真实的焦虑表达。
+        for text in (
+            "我不知道为什么，最近一直很焦虑",
+            "I cannot stop worrying about the exam",
+            "特别担心明天的面试",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(emotion.refine_fear_as_anxiety("fear", text), "anxiety")
+
+    def test_worry_plural_forms_are_recognised(self):
+        import emotion
+
+        for text in ("My worries keep me up at night", "I have a lot of worries lately"):
+            with self.subTest(text=text):
+                self.assertEqual(emotion.refine_fear_as_anxiety("fear", text), "anxiety")
+
+    def test_non_emotional_tension_collocations_stay_fear(self):
+        import emotion
+
+        # 「时间紧张」描述客观状况、"no worries" 是口头语，都不是情绪线索。
+        for text in (
+            "时间紧张，我怕来不及",
+            "气氛很紧张，那个人突然拿刀冲过来",
+            "No worries, but that jump scare terrified me",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(emotion.refine_fear_as_anxiety("fear", text), "fear")
+
     def test_anxiety_refinement_only_applies_to_fear(self):
         import emotion
 

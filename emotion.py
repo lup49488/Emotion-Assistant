@@ -7,7 +7,11 @@ from typing import Any
 from langdetect import detect
 
 import goemotions_local as goemotions
-from config import EMOTION_ANXIETY_REFINEMENT, EMOTION_CONFIDENCE_THRESHOLD
+from config import (
+    EMOTION_ANXIETY_REFINEMENT,
+    EMOTION_CONFIDENCE_THRESHOLD,
+    NEGATIVE_EMOTIONS,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -36,9 +40,51 @@ def map_emotion_label(label: str | None) -> str:
 ANXIETY_CUES = (
     "焦虑", "紧张", "担心", "担忧", "忧虑", "不安", "忐忑", "心慌", "慌张",
     "压力", "睡不着", "失眠", "万一", "会不会", "胡思乱想", "坐立不安", "放不下",
-    "anxious", "anxiety", "nervous", "worried", "worry", "uneasy", "restless",
+    # "worri" covers worries / worried / worrying; "worry" is spelled separately.
+    "anxious", "anxiety", "nervous", "worri", "worry", "uneasy", "restless",
     "stress", "overthink", "panic", "insomnia", "on edge", "what if",
 )
+
+# 含线索词但并不表达焦虑的固定说法：「时间紧张」这类客观描述，以及 "no worries" 这类口头语。
+# 先整体剔除，避免它们触发细分。
+_NON_EMOTIONAL_CUE_PATTERN = re.compile(
+    r"(?:时间|气氛|关系|局势|资金|供应|比赛|日程|行程)[^，。！？,.!?]{0,3}紧张"
+    r"|\bno worries\b|\bnot to worry\b"
+)
+
+# 出现在线索词前方的否定表达：「别担心」「我并不焦虑」「don't worry」等是宽慰或否认，
+# 不应判为焦虑。「别」用否定型后顾排除“特别/分别”这类词内误命中。
+_ZH_NEGATOR_PATTERN = re.compile(
+    r"(?<![特差分个区派级告送识类辨])别|不用|不必|不要|不太|无需|并不|没什么[好可]|没有必要|不至于"
+)
+_EN_NEGATOR_PATTERN = re.compile(r"\b(?:not|never|no need|nothing)\b|\bdon'?t\b")
+# 仅回看这么多字符，避免把远处无关的否定词算到当前线索头上。
+# 英文否定词与线索之间常隔着 "need to" / "to" 之类的虚词，所以窗口比中文宽。
+_ZH_NEGATION_WINDOW = 6
+_EN_NEGATION_WINDOW = 16
+
+
+def _is_negated(text: str, cue_start: int) -> bool:
+    # 紧贴线索词的单个「不」才算否定（不担心 / 不焦虑），否则「不知道为什么很焦虑」会被误判。
+    if cue_start > 0 and text[cue_start - 1] == "不":
+        return True
+    if _ZH_NEGATOR_PATTERN.search(text[max(0, cue_start - _ZH_NEGATION_WINDOW):cue_start]):
+        return True
+    return bool(
+        _EN_NEGATOR_PATTERN.search(text[max(0, cue_start - _EN_NEGATION_WINDOW):cue_start])
+    )
+
+
+def has_anxiety_cue(text: str) -> bool:
+    """Report whether the text carries at least one non-negated anxiety cue."""
+    lowered = _NON_EMOTIONAL_CUE_PATTERN.sub("", (text or "").lower())
+    for cue in ANXIETY_CUES:
+        start = lowered.find(cue)
+        while start != -1:
+            if not _is_negated(lowered, start):
+                return True
+            start = lowered.find(cue, start + 1)
+    return False
 
 
 def refine_fear_as_anxiety(label: str, text: str) -> str:
@@ -49,8 +95,7 @@ def refine_fear_as_anxiety(label: str, text: str) -> str:
     """
     if not EMOTION_ANXIETY_REFINEMENT or label != "fear":
         return label
-    lowered = (text or "").lower()
-    return "anxiety" if any(cue in lowered for cue in ANXIETY_CUES) else label
+    return "anxiety" if has_anxiety_cue(text) else label
 
 
 def safe_analyze(text: str, lang: str) -> tuple[str, float]:
@@ -112,8 +157,7 @@ def detect_emotion_fluctuation(
         return "stable", "unknown"
     last_score = float(memories[-1].get("score", 0.0))
     delta = abs(float(new_score) - last_score)
-    negative_emotions = {"sadness", "fear", "anger", "anxiety"}
-    if new_label in negative_emotions:
+    if new_label in NEGATIVE_EMOTIONS:
         direction = "worse" if new_score > last_score else "better"
     else:
         direction = "better" if new_score > last_score else "worse"

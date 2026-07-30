@@ -76,6 +76,9 @@ EMOTION_MODEL_MULTI_LABEL = os.getenv("EMOTION_MODEL_MULTI_LABEL", "true").lower
 # 多语言情绪模型没有独立的 anxiety 标签。开启后，当模型判定为 fear 且文本带有
 # 明显的焦虑线索（对未来的担忧、反刍、躯体化）时，细分为 anxiety。
 EMOTION_ANXIETY_REFINEMENT = os.getenv("EMOTION_ANXIETY_REFINEMENT", "true").lower() == "true"
+# 负面情绪集合。记忆加权、情绪波动方向与危机趋势判断共用同一份定义，
+# 以免新增情绪标签时只改到其中一处（漏改危机趋势会让检测静默失效）。
+NEGATIVE_EMOTIONS = frozenset({"sadness", "fear", "anger", "anxiety"})
 
 # Optional local multilingual NLI supplement for the rule-based safety layer.
 # It is disabled by default because the model adds a sizeable CPU/RAM footprint.

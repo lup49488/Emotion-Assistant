@@ -80,6 +80,15 @@ test('a reliable conversation emotion is visible in personal data', async ({ pag
   await expect(page.getByText('0.98', { exact: false })).toBeVisible()
 })
 
+test('mood notes retain paragraph breaks in the check-in history', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+
+  const note = page.locator('.record-note')
+  await expect(note).toHaveText('First paragraph.\n\nSecond paragraph.')
+  await expect(note).toHaveCSS('white-space', 'pre-wrap')
+})
+
 test('mobile navigation has no horizontal overflow and applies theme changes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)
