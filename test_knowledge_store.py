@@ -168,6 +168,39 @@ def test_knowledge_bundle_only_cites_chunks_that_fit_the_context_budget():
     assert len(bundle["context"]) <= 200
 
 
+def test_results_without_usable_text_are_not_treated_as_evidence():
+    # The evaluation set and the chat path must agree, so both ask this predicate.
+    assert knowledge_store.has_usable_evidence([]) is False
+    assert knowledge_store.has_usable_evidence([{"source": "a.txt", "text": "  ", "score": 0.9}]) is False
+    assert knowledge_store.has_usable_evidence([{"source": "a.txt", "text": "grounded", "score": 0.9}]) is True
+
+
+def test_bundle_reports_unusable_excerpts_separately_from_missing_matches():
+    with patch.object(knowledge_store, "retrieve_knowledge", return_value=[{"source": "a.txt", "text": "", "score": 0.9}]):
+        bundle = knowledge_store.build_knowledge_bundle("question")
+
+    assert bundle["evidence"]["status"] == "insufficient"
+    assert bundle["evidence"]["reason"] == "no_usable_excerpt"
+    assert bundle["evidence"]["matched_chunks"] == 1
+
+
+def test_build_knowledge_bundle_marks_missing_evidence_structurally():
+    with patch.object(knowledge_store, "retrieve_knowledge", return_value=[]), \
+         patch.object(knowledge_store, "load_chunks", return_value=[]):
+        bundle = knowledge_store.build_knowledge_bundle("question")
+
+    assert bundle["context"] == ""
+    assert bundle["citations"] == []
+    assert bundle["evidence"] == {
+        "status": "insufficient",
+        "code": "insufficient_evidence",
+        "reason": "knowledge_base_empty",
+        "matched_chunks": 0,
+        "matched_sources": 0,
+        "retrieval_threshold": knowledge_store.KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    }
+
+
 def test_quality_report_detects_duplicate_short_and_stale_index():
     chunks = [
         {"source": "a.txt", "text": "短"},
@@ -232,3 +265,16 @@ def test_release_gate_restores_candidate_when_evaluation_misses_thresholds(tmp_p
         assert status["report"]["pass_rate"] == 50.0
 
     assert restored == [True]
+
+
+def test_release_gate_rejects_low_insufficient_evidence_refusal_rate(monkeypatch):
+    report = {
+        "total_cases": 10, "pass_rate": 100.0, "source_cases": 0,
+        "keyword_cases": 0, "insufficient_cases": 4,
+        "insufficient_refusal_rate": 50.0,
+    }
+    monkeypatch.setattr(knowledge_store, "RAG_RELEASE_MIN_CASES", 5)
+    monkeypatch.setattr(knowledge_store, "RAG_RELEASE_MIN_PASS_RATE", 80.0)
+    monkeypatch.setattr(knowledge_store, "RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL", 80.0)
+
+    assert knowledge_store._evaluate_release_gate(report) == ["资料不足拒答率低于 80%。"]

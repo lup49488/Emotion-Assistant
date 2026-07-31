@@ -172,6 +172,95 @@ def test_chat_stream_emits_real_rag_citations_and_accepts_owned_feedback(monkeyp
     assert feedback.json()["helpful"] is True
 
 
+def test_chat_refuses_missing_rag_evidence_without_calling_the_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "build_knowledge_bundle", lambda _: {
+        "context": "", "citations": [],
+        "evidence": {"status": "insufficient", "code": "insufficient_evidence", "reason": "no_relevant_sources"},
+    })
+
+    def unexpected_model_call(*_args, **_kwargs):
+        raise AssertionError("The model must not run without RAG evidence")
+
+    monkeypatch.setattr(api_server, "_chat_chunks", unexpected_model_call)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.post("/api/v1/chat", json={"message": "Unknown topic", "use_knowledge": True}, headers=headers)
+
+    assert response.status_code == 200
+    assert response.json()["rag_status"]["status"] == "insufficient"
+    assert response.json()["rag_status"]["enforced"] is True
+    # The archived notice must read as plain text everywhere, not as an internal marker.
+    assert response.json()["reply"] == api_server.RAG_INSUFFICIENT_EVIDENCE_NOTICE["en"]
+    assert "[[" not in response.json()["reply"]
+
+
+def test_chat_stream_emits_insufficient_evidence_state_without_calling_the_model(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "build_knowledge_bundle", lambda _: {
+        "context": "", "citations": [],
+        "evidence": {"status": "insufficient", "code": "insufficient_evidence", "reason": "no_relevant_sources"},
+    })
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("The model must not run")))
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "Unknown topic", "use_knowledge": True}, headers=headers) as response:
+            body = "".join(response.iter_text())
+
+    assert "event: rag_status" in body
+    assert '"status": "insufficient"' in body
+    assert '"enforced": true' in body
+    assert body.rstrip().endswith("event: done\ndata: {}")
+
+
+def test_insufficient_evidence_is_not_enforced_when_evidence_is_not_required(monkeypatch, tmp_path):
+    """With RAG_REQUIRE_EVIDENCE off the model still answers, so nothing is suppressed."""
+    monkeypatch.setattr(api_server, "RAG_REQUIRE_EVIDENCE", False)
+    monkeypatch.setattr(api_server, "build_knowledge_bundle", lambda _: {
+        "context": "", "citations": [],
+        "evidence": {"status": "insufficient", "code": "insufficient_evidence", "reason": "no_relevant_sources"},
+    })
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda *_args, **_kwargs: iter(["general answer"]))
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.post("/api/v1/chat", json={"message": "Unknown topic", "use_knowledge": True}, headers=headers)
+
+    assert response.json()["reply"] == "general answer"
+    assert response.json()["rag_status"]["status"] == "insufficient"
+    assert response.json()["rag_status"]["enforced"] is False
+
+
+def test_crisis_message_is_answered_by_safety_layer_instead_of_the_rag_refusal(monkeypatch, tmp_path):
+    """The refusal path bypasses chatbot.chat, so it must run crisis detection itself."""
+    monkeypatch.setattr(api_server, "build_knowledge_bundle", lambda _: {
+        "context": "", "citations": [],
+        "evidence": {"status": "insufficient", "code": "insufficient_evidence", "reason": "no_relevant_sources"},
+    })
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("The model must not run")))
+    monkeypatch.setattr(api_server, "crisis_precheck", lambda *_args, **_kwargs: "crisis support reply")
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.post("/api/v1/chat", json={"message": "I want to end it all", "use_knowledge": True}, headers=headers)
+
+    assert response.json()["reply"] == "crisis support reply"
+    # A real answer was produced, so the client must not replace it with the notice.
+    assert response.json()["rag_status"]["enforced"] is False
+
+
+def test_chat_stream_crisis_reply_overrides_the_rag_refusal(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "build_knowledge_bundle", lambda _: {
+        "context": "", "citations": [],
+        "evidence": {"status": "insufficient", "code": "insufficient_evidence", "reason": "no_relevant_sources"},
+    })
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda *_args, **_kwargs: (_ for _ in ()).throw(AssertionError("The model must not run")))
+    monkeypatch.setattr(api_server, "crisis_precheck", lambda *_args, **_kwargs: "crisis support reply")
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "I want to end it all", "use_knowledge": True}, headers=headers) as response:
+            body = "".join(response.iter_text())
+
+    assert '"enforced": false' in body
+    assert "crisis support reply" in body
+
+
 def test_chat_stream_emits_structured_retryable_service_error(monkeypatch, tmp_path):
     def failing_chunks(*_):
         raise ServiceError("provider_timeout", "provider timed out", retryable=True)

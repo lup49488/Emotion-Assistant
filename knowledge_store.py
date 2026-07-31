@@ -28,6 +28,7 @@ from config import (
     KNOWLEDGE_TOP_K,
     RAG_RELEASE_GATE_ENABLED,
     RAG_RELEASE_MIN_CASES,
+    RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL,
     RAG_RELEASE_MIN_KEYWORD_COVERAGE,
     RAG_RELEASE_MIN_PASS_RATE,
     RAG_RELEASE_MIN_SOURCE_RECALL,
@@ -377,6 +378,7 @@ def _release_thresholds() -> dict[str, int | float]:
         "min_pass_rate": RAG_RELEASE_MIN_PASS_RATE,
         "min_source_recall": RAG_RELEASE_MIN_SOURCE_RECALL,
         "min_keyword_coverage": RAG_RELEASE_MIN_KEYWORD_COVERAGE,
+        "min_insufficient_refusal": RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL,
     }
 
 
@@ -390,6 +392,8 @@ def _evaluate_release_gate(report: dict[str, Any]) -> list[str]:
         failures.append(f"来源召回率低于 {RAG_RELEASE_MIN_SOURCE_RECALL:.0f}%。")
     if int(report.get("keyword_cases", 0)) and float(report.get("keyword_coverage") or 0) < RAG_RELEASE_MIN_KEYWORD_COVERAGE:
         failures.append(f"关键词覆盖率低于 {RAG_RELEASE_MIN_KEYWORD_COVERAGE:.0f}%。")
+    if int(report.get("insufficient_cases", 0)) and float(report.get("insufficient_refusal_rate") or 0) < RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL:
+        failures.append(f"资料不足拒答率低于 {RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL:.0f}%。")
     return failures
 
 
@@ -641,17 +645,10 @@ def build_knowledge_context(
     )["context"]
 
 
-def build_knowledge_bundle(
-    query: str,
-    *,
-    top_k: int = KNOWLEDGE_TOP_K,
-    threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
-    max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
-) -> dict[str, Any]:
-    """Build prompt context and the matching, display-safe citation metadata."""
-    results = retrieve_knowledge(query, top_k=top_k, threshold=threshold)
-    if not results:
-        return {"context": "", "citations": []}
+def _collect_context_blocks(
+    results: list[dict[str, Any]], max_context_chars: int
+) -> tuple[list[str], list[dict[str, Any]]]:
+    """Fit retrieved chunks into the prompt budget, keeping citations in step."""
     lines: list[str] = []
     citations: list[dict[str, Any]] = []
     used_chars = 0
@@ -676,7 +673,67 @@ def build_knowledge_bundle(
             "excerpt": excerpt[:280],
         })
         used_chars += len(block) + 2
-    return {"context": "\n\n".join(lines), "citations": citations}
+    return lines, citations
+
+
+def has_usable_evidence(
+    results: list[dict[str, Any]], max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS
+) -> bool:
+    """Whether retrieved chunks actually yield citable context.
+
+    The chat path and the evaluation set must agree on what counts as grounded,
+    so both decide through this predicate rather than testing ``results`` alone.
+    """
+    return bool(results) and bool(_collect_context_blocks(results, max_context_chars)[1])
+
+
+def _insufficient_bundle(
+    reason: str, results: list[dict[str, Any]], threshold: float
+) -> dict[str, Any]:
+    return {
+        "context": "",
+        "citations": [],
+        "evidence": {
+            "status": "insufficient",
+            "code": "insufficient_evidence",
+            "reason": reason,
+            "matched_chunks": len(results),
+            "matched_sources": len({str(item.get("source", "")) for item in results}),
+            "retrieval_threshold": threshold,
+        },
+    }
+
+
+def build_knowledge_bundle(
+    query: str,
+    *,
+    top_k: int = KNOWLEDGE_TOP_K,
+    threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
+) -> dict[str, Any]:
+    """Build prompt context and the matching, display-safe citation metadata."""
+    results = retrieve_knowledge(query, top_k=top_k, threshold=threshold)
+    if not results:
+        reason = "knowledge_base_empty" if not load_chunks() else "no_relevant_sources"
+        return _insufficient_bundle(reason, [], threshold)
+    lines, citations = _collect_context_blocks(results, max_context_chars)
+    if not citations:
+        # Excerpts are truncated to fit, so reaching this point means the top
+        # chunks carried no usable text (empty body, or a header alone already
+        # larger than the whole budget) rather than the budget running out.
+        return _insufficient_bundle("no_usable_excerpt", results, threshold)
+    return {
+        "context": "\n\n".join(lines),
+        "citations": citations,
+        "evidence": {
+            "status": "sufficient",
+            "code": None,
+            "reason": None,
+            "matched_chunks": len(citations),
+            "matched_sources": len({citation["source"] for citation in citations}),
+            "retrieval_threshold": threshold,
+        },
+    }
 
 
 def assess_knowledge_quality() -> dict[str, Any]:

@@ -192,6 +192,12 @@ python -c "import knowledge_store; print(knowledge_store.rebuild_knowledge_index
 
 The API also exposes administrator-protected RAG management routes for uploads, rebuilds, search diagnostics, quality reports, feedback, and evaluation jobs.
 
+### Retrieval regression set
+
+[`knowledge_base/rag_evaluation_cases.json`](knowledge_base/rag_evaluation_cases.json) is a versioned regression set for the bundled knowledge corpus. It contains natural grounded questions plus `expected_outcome: "insufficient"` cases for questions the corpus should decline to answer from sources.
+
+For a grounded case, set `expected_sources` and/or `expected_keywords`. For an insufficient-evidence case, omit both fields. Import a revised JSON or JSONL set from the Gradio RAG panel before running an evaluation. When the release gate is enabled, it also checks `RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL` whenever the set contains insufficient-evidence cases.
+
 ## Style RAG
 
 Style-reference source documents live under:
@@ -282,4 +288,3 @@ For users in the United States:
 - 988 Lifeline website: [https://988lifeline.org](https://988lifeline.org?oai_link_source=model_response_hotline)
 
 If you are outside the United States, use the emergency or crisis service available in your location.
-

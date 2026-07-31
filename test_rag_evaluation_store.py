@@ -49,6 +49,52 @@ def test_evaluation_case_requires_expected_ground_truth(tmp_path, monkeypatch):
         raise AssertionError("Expected missing ground truth to be rejected")
 
 
+def test_evaluation_supports_insufficient_evidence_cases(tmp_path, monkeypatch):
+    _configure_paths(tmp_path, monkeypatch)
+    source = tmp_path / "evaluation.json"
+    source.write_text('[{"id":"out-of-domain","category":"insufficient","query":"火星天气怎么样？","expected_outcome":"insufficient"}]', encoding="utf-8")
+    rag_evaluation_store.import_evaluation_cases(source)
+
+    with patch.object(rag_evaluation_store, "diagnose_knowledge_search", return_value={"results": []}):
+        report = rag_evaluation_store.run_evaluation(top_k=4, threshold=0.35, candidate_multiplier=3)
+
+    assert report["passed_cases"] == 1
+    assert report["insufficient_cases"] == 1
+    assert report["insufficient_passes"] == 1
+    assert report["insufficient_refusal_rate"] == 100.0
+
+
+def test_duplicate_case_ids_are_rejected(tmp_path, monkeypatch):
+    _configure_paths(tmp_path, monkeypatch)
+    source = tmp_path / "duplicate.json"
+    source.write_text(
+        '[{"id":"same","query":"A","expected_keywords":["a"]},'
+        '{"id":"same","query":"B","expected_keywords":["b"]}]',
+        encoding="utf-8",
+    )
+
+    try:
+        rag_evaluation_store.import_evaluation_cases(source)
+    except ValueError as exc:
+        assert "重复的样本 id" in str(exc)
+    else:
+        raise AssertionError("Expected duplicate case ids to be rejected")
+
+
+def test_insufficient_case_fails_when_results_carry_usable_text(tmp_path, monkeypatch):
+    _configure_paths(tmp_path, monkeypatch)
+    source = tmp_path / "evaluation.json"
+    source.write_text('[{"id":"out-of-domain","query":"火星天气怎么样？","expected_outcome":"insufficient"}]', encoding="utf-8")
+    rag_evaluation_store.import_evaluation_cases(source)
+
+    results = {"results": [{"source": "a.txt", "text": "grounded text", "score": 0.9}]}
+    with patch.object(rag_evaluation_store, "diagnose_knowledge_search", return_value=results):
+        report = rag_evaluation_store.run_evaluation(top_k=4, threshold=0.35, candidate_multiplier=3)
+
+    assert report["insufficient_passes"] == 0
+    assert report["insufficient_refusal_rate"] == 0.0
+
+
 def test_evaluation_error_messages_are_fully_english_without_mixed_fragments(tmp_path, monkeypatch):
     _configure_paths(tmp_path, monkeypatch)
     source = tmp_path / "invalid.json"

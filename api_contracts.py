@@ -107,6 +107,16 @@ class ChatRequest(ContractModel):
     retry_last_response: bool = False
 
 
+class RagEvidenceStatus(ContractModel):
+    status: Literal["not_requested", "sufficient", "insufficient"]
+    code: str | None = None
+    reason: str | None = None
+    enforced: bool = False
+    matched_chunks: int = 0
+    matched_sources: int = 0
+    retrieval_threshold: float | None = None
+
+
 class StylePreferenceRequest(ContractModel):
     style_prefix: str = Field(default="", max_length=64)
 
@@ -121,6 +131,7 @@ class ChatResponse(ContractModel):
     memory_receipt: str | None = None
     citations: list[dict[str, Any]] = Field(default_factory=list)
     citation_trace_id: str | None = None
+    rag_status: RagEvidenceStatus = Field(default_factory=lambda: RagEvidenceStatus(status="not_requested"))
 
 
 class RagFeedbackRequest(ContractModel):

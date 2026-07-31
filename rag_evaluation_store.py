@@ -7,7 +7,7 @@ from typing import Any
 
 from config import KNOWLEDGE_DIR
 from json_utils import load_json, save_json
-from knowledge_store import diagnose_knowledge_search
+from knowledge_store import diagnose_knowledge_search, has_usable_evidence
 
 
 RAG_EVALUATION_CASES_PATH = KNOWLEDGE_DIR / "rag_evaluation_cases.json"
@@ -29,15 +29,40 @@ def normalize_case(value: Any, *, position: int | None = None) -> dict[str, Any]
     query = str(value.get("query", value.get("question", ""))).strip()
     sources = _as_string_list(value.get("expected_sources", value.get("expected_source", [])))
     keywords = _as_string_list(value.get("expected_keywords", value.get("expected_keyword", [])))
+    case_id = str(value.get("id") or "").strip() or f"case-{position or 0:03d}"
+    category = str(value.get("category") or "general").strip()
+    expected_outcome = str(value.get("expected_outcome") or "grounded").strip().lower()
     if not query:
         raise ValueError(f"第 {position or '?'} 条评估样本缺少 query。")
-    if not sources and not keywords:
+    if expected_outcome not in {"grounded", "insufficient"}:
+        raise ValueError(f"第 {position or '?'} 条评估样本的 expected_outcome 必须是 grounded 或 insufficient。")
+    if expected_outcome == "grounded" and not sources and not keywords:
         raise ValueError(f"第 {position or '?'} 条评估样本至少需要 expected_sources 或 expected_keywords。")
-    return {"query": query, "expected_sources": sources, "expected_keywords": keywords}
+    if expected_outcome == "insufficient" and (sources or keywords):
+        raise ValueError(f"第 {position or '?'} 条应拒答样本不能包含 expected_sources 或 expected_keywords。")
+    return {
+        "id": case_id,
+        "category": category,
+        "query": query,
+        "expected_outcome": expected_outcome,
+        "expected_sources": sources,
+        "expected_keywords": keywords,
+    }
+
+
+def normalize_cases(rows: list[Any]) -> list[dict[str, Any]]:
+    """Normalize a whole set, rejecting duplicate ids so reports stay traceable."""
+    cases = [normalize_case(item, position=index) for index, item in enumerate(rows, start=1)]
+    seen: set[str] = set()
+    for case in cases:
+        if case["id"] in seen:
+            raise ValueError(f"评估集存在重复的样本 id：{case['id']}。")
+        seen.add(case["id"])
+    return cases
 
 
 def load_evaluation_cases() -> list[dict[str, Any]]:
-    return [normalize_case(item, position=index) for index, item in enumerate(load_json(RAG_EVALUATION_CASES_PATH), start=1)]
+    return normalize_cases(load_json(RAG_EVALUATION_CASES_PATH))
 
 
 def _load_uploaded_cases(path: str | Path) -> list[Any]:
@@ -54,7 +79,7 @@ def _load_uploaded_cases(path: str | Path) -> list[Any]:
 
 def import_evaluation_cases(path: str | Path) -> dict[str, Any]:
     rows = _load_uploaded_cases(path)
-    cases = [normalize_case(item, position=index) for index, item in enumerate(rows, start=1)]
+    cases = normalize_cases(rows)
     if not cases:
         raise ValueError("评估集不能是空数组。")
     RAG_EVALUATION_CASES_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +103,7 @@ def run_evaluation(
         raise ValueError("还没有评估样本，请先导入 JSON 或 JSONL 评估集。")
 
     source_cases = keyword_cases = source_hits = keyword_hits = passed_cases = 0
+    insufficient_cases = insufficient_passes = 0
     reciprocal_rank_total = 0.0
     details: list[dict[str, Any]] = []
     for case in cases:
@@ -94,29 +120,40 @@ def run_evaluation(
         source_pass: bool | None = None
         keyword_pass: bool | None = None
         hit_rank: int | None = None
-        if expected_sources:
-            source_cases += 1
-            for index, source in enumerate(returned_sources, start=1):
-                if source.casefold() in expected_sources:
-                    hit_rank = index
-                    break
-            source_pass = hit_rank is not None
-            if source_pass:
-                source_hits += 1
-                reciprocal_rank_total += 1 / hit_rank
-        if expected_keywords:
-            keyword_cases += 1
-            keyword_pass = all(keyword in returned_text for keyword in expected_keywords)
-            if keyword_pass:
-                keyword_hits += 1
-        passed = all(value is not False for value in (source_pass, keyword_pass))
+        insufficient_pass: bool | None = None
+        if case["expected_outcome"] == "insufficient":
+            insufficient_cases += 1
+            # Match the chat path: grounded means "yields citable context",
+            # not merely "the index returned rows".
+            insufficient_pass = not has_usable_evidence(results)
+            if insufficient_pass:
+                insufficient_passes += 1
+            passed = insufficient_pass
+        else:
+            if expected_sources:
+                source_cases += 1
+                for index, source in enumerate(returned_sources, start=1):
+                    if source.casefold() in expected_sources:
+                        hit_rank = index
+                        break
+                source_pass = hit_rank is not None
+                if source_pass:
+                    source_hits += 1
+                    reciprocal_rank_total += 1 / hit_rank
+            if expected_keywords:
+                keyword_cases += 1
+                keyword_pass = all(keyword in returned_text for keyword in expected_keywords)
+                if keyword_pass:
+                    keyword_hits += 1
+            passed = all(value is not False for value in (source_pass, keyword_pass))
         if passed:
             passed_cases += 1
         details.append({
-            "query": case["query"], "expected_sources": case["expected_sources"],
+            "id": case["id"], "category": case["category"], "query": case["query"],
+            "expected_outcome": case["expected_outcome"], "expected_sources": case["expected_sources"],
             "expected_keywords": case["expected_keywords"], "returned_sources": returned_sources,
             "source_pass": source_pass, "keyword_pass": keyword_pass,
-            "hit_rank": hit_rank, "passed": passed,
+            "insufficient_pass": insufficient_pass, "hit_rank": hit_rank, "passed": passed,
         })
 
     report = {
@@ -129,6 +166,8 @@ def run_evaluation(
         "mrr": round(reciprocal_rank_total / source_cases, 3) if source_cases else None,
         "keyword_cases": keyword_cases, "keyword_hits": keyword_hits,
         "keyword_coverage": _percent(keyword_hits, keyword_cases),
+        "insufficient_cases": insufficient_cases, "insufficient_passes": insufficient_passes,
+        "insufficient_refusal_rate": _percent(insufficient_passes, insufficient_cases),
         "failures": [item for item in details if not item["passed"]][:10],
     }
     reports = load_json(RAG_EVALUATION_REPORTS_PATH)

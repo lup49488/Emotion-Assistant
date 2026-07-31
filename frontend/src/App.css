@@ -52,5 +52,6 @@
 
 .rag-citations { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 4px; color: var(--muted); font-size: 12px; }
 .rag-citation { max-width: 200px; overflow: hidden; padding: 3px 7px; border: 1px solid var(--line); border-radius: 4px; background: var(--surface); color: var(--accent-deep); text-overflow: ellipsis; white-space: nowrap; }
+.rag-evidence-status { margin: 0; padding: 10px 12px; border-left: 3px solid #d8ab48; background: #fff8e9; color: #735819; font-size: 13px; line-height: 1.55; }
 .message-action.selected { color: var(--accent-deep); background: #e8f2f1; }
-[data-theme='dark'] .rag-citation, [data-theme='dark'] .message-action.selected { background: #26383a; border-color: #3d5557; }
+[data-theme='dark'] .rag-citation, [data-theme='dark'] .message-action.selected { background: #26383a; border-color: #3d5557; } [data-theme='dark'] .rag-evidence-status { background: #403821; color: #f3dda0; border-left-color: #d8ab48; }

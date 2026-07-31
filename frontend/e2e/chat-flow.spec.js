@@ -69,6 +69,24 @@ test('retryable SSE errors display a retry action that regenerates the reply', a
   await expect(page.getByText('Regenerated answer')).toBeVisible()
 })
 
+test('insufficient RAG evidence displays a grounded-response status without regeneration', async ({ page }) => {
+  await signIn(page)
+  await page.getByText('Knowledge retrieval').click()
+  await sendMessage(page, 'Ask without sources')
+
+  await expect(page.getByRole('status')).toHaveText(/does not contain enough relevant information/)
+  await expect(page.getByTitle('Regenerate')).toHaveCount(0)
+})
+
+test('an unenforced insufficient-evidence status still shows the generated reply', async ({ page }) => {
+  await signIn(page)
+  await page.getByText('Knowledge retrieval').click()
+  await sendMessage(page, 'Ask without sources unenforced')
+
+  await expect(page.getByText('General answer without sources.')).toBeVisible()
+  await expect(page.getByRole('status')).toHaveCount(0)
+})
+
 test('a reliable conversation emotion is visible in personal data', async ({ page }) => {
   await signIn(page)
   await sendMessage(page, 'I feel happy today')

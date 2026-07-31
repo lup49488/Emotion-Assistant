@@ -94,6 +94,19 @@ const server = http.createServer(async (request, response) => {
       response.write('event: error\ndata: {"code":"provider_timeout","retryable":true}\n\n')
       return response.end('event: done\ndata: {}\n\n')
     }
+    if (body.message === 'Ask without sources' && body.use_knowledge) {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+      response.write('event: rag_status\ndata: {"status":"insufficient","code":"insufficient_evidence","reason":"no_relevant_sources","enforced":true}\n\n')
+      response.write('event: chunk\ndata: {"text":"The knowledge base did not contain enough relevant information."}\n\n')
+      return response.end('event: done\ndata: {}\n\n')
+    }
+    // Retrieval found nothing but RAG_REQUIRE_EVIDENCE is off, so the reply still stands.
+    if (body.message === 'Ask without sources unenforced' && body.use_knowledge) {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+      response.write('event: rag_status\ndata: {"status":"insufficient","code":"insufficient_evidence","reason":"no_relevant_sources","enforced":false}\n\n')
+      response.write('event: chunk\ndata: {"text":"General answer without sources."}\n\n')
+      return response.end('event: done\ndata: {}\n\n')
+    }
     const reply = body.retry_last_response ? 'Regenerated answer' : body.message === 'Show markdown'
       ? 'First line<br>Second line\n\n\\[ P(C \\mid \\mathbf{x}) = \\frac{P(\\mathbf{x} \\mid C)P(C)}{P(\\mathbf{x})} \\]\n\n| 后验分布 | 公式 |\n| --- | --- |\n| Posterior | $$P(\\theta | x)=\\frac{P(x | \\theta)P(\\theta)}{P(x)}$$ |'
       : 'Grounded answer from the knowledge base.'

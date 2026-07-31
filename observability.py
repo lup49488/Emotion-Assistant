@@ -42,12 +42,18 @@ def request_finished(status_code: int, duration_ms: int) -> None:
         _metrics["http_duration_ms_total"] += max(0, duration_ms)
 
 
-def chat_finished(success: bool, duration_ms: int, streaming: bool) -> None:
+def chat_finished(
+    success: bool, duration_ms: int, streaming: bool, *, rag_refused: bool = False
+) -> None:
     with _lock:
         _metrics["chat_requests_total"] += 1
         _metrics["chat_success_total" if success else "chat_failure_total"] += 1
         _metrics["chat_stream_total" if streaming else "chat_sync_total"] += 1
         _metrics["chat_duration_ms_total"] += max(0, duration_ms)
+        if rag_refused:
+            # Refusals succeed technically but answer nothing; keep them visible
+            # in the dashboard instead of hiding inside chat_success_total.
+            _metrics["chat_rag_refused_total"] += 1
 
 
 def runtime_metrics() -> dict[str, Any]:
@@ -62,5 +68,6 @@ def runtime_metrics() -> dict[str, Any]:
             "http_average_duration_ms": round(_metrics["http_duration_ms_total"] / request_count, 1) if request_count else 0.0,
             "chat_requests_total": chat_count,
             "chat_failures_total": _metrics["chat_failure_total"],
+            "chat_rag_refused_total": _metrics["chat_rag_refused_total"],
             "chat_average_duration_ms": round(_metrics["chat_duration_ms_total"] / chat_count, 1) if chat_count else 0.0,
         }

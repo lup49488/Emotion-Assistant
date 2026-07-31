@@ -7,11 +7,16 @@ from unittest.mock import patch
 
 import chatbot
 import safety
+import session_store
 from safety import SafetyRiskLevel, assess_safety, check_crisis
 from safety_semantic import SemanticSafetySignals
 
 
 CASES_PATH = Path(__file__).with_name("safety_evaluation_cases.json")
+
+
+def _unexpected_model_call(*_args, **_kwargs):
+    raise AssertionError("The crisis precheck must not call the model")
 
 
 def test_safety_evaluation_set_matches_expected_levels():
@@ -71,6 +76,26 @@ def test_crisis_message_is_not_promoted_into_long_or_emotion_memory():
     assert state.long_memory == []
     assert state.emotion_memory == []
     assert list(state.interest_store.items) == []
+
+
+def test_crisis_precheck_answers_a_crisis_message_without_running_a_full_turn(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(chatbot, "stream_model_response", _unexpected_model_call)
+
+    with patch.object(chatbot, "safe_analyze", return_value=("sadness", 0.95)):
+        reply = chatbot.crisis_precheck("precheck-user", "I intend to kill myself and have a plan for tonight.")
+
+    assert reply
+
+
+def test_crisis_precheck_stays_out_of_the_way_for_an_ordinary_message(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(chatbot, "stream_model_response", _unexpected_model_call)
+
+    with patch.object(chatbot, "safe_analyze", return_value=("joy", 0.95)):
+        reply = chatbot.crisis_precheck("precheck-user", "What is cognitive behavioural therapy?")
+
+    assert reply is None
 
 
 def test_semantic_layer_promotes_implicit_first_person_signal_to_concern(monkeypatch):

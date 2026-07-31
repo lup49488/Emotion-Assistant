@@ -157,6 +157,7 @@ def format_rag_evaluation_report(report: dict[str, Any] | None, locale: str = "z
             f"Source recall@K: {report['source_hits']}/{report['source_cases']} ({report['source_recall_at_k'] if report['source_recall_at_k'] is not None else not_available}%)",
             f"MRR: {report['mrr'] if report['mrr'] is not None else not_available}",
             f"Keyword coverage: {report['keyword_hits']}/{report['keyword_cases']} ({report['keyword_coverage'] if report['keyword_coverage'] is not None else not_available}%)",
+            f"Insufficient-evidence refusal: {report.get('insufficient_passes', 0)}/{report.get('insufficient_cases', 0)} ({report.get('insufficient_refusal_rate') if report.get('insufficient_refusal_rate') is not None else not_available}%)",
         ]
     else:
         lines = [
@@ -166,6 +167,7 @@ def format_rag_evaluation_report(report: dict[str, Any] | None, locale: str = "z
             f"来源召回率@K：{report['source_hits']}/{report['source_cases']} ({report['source_recall_at_k'] if report['source_recall_at_k'] is not None else not_available}%)",
             f"MRR：{report['mrr'] if report['mrr'] is not None else not_available}",
             f"关键词覆盖率：{report['keyword_hits']}/{report['keyword_cases']} ({report['keyword_coverage'] if report['keyword_coverage'] is not None else not_available}%)",
+            f"资料不足拒答：{report.get('insufficient_passes', 0)}/{report.get('insufficient_cases', 0)} ({report.get('insufficient_refusal_rate') if report.get('insufficient_refusal_rate') is not None else not_available}%)",
         ]
     failures = report.get("failures") or []
     if failures:

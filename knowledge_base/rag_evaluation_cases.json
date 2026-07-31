@@ -1,0 +1,182 @@
+[
+  {
+    "id": "ai-what-is-ai",
+    "category": "ai-basics",
+    "query": "人工智能和通用人工智能有什么区别？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["通用人工智能"]
+  },
+  {
+    "id": "ai-learning-types",
+    "category": "ai-basics",
+    "query": "监督学习、无监督学习和强化学习分别适合什么情况？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["监督学习", "无监督学习", "强化学习"]
+  },
+  {
+    "id": "ai-transformer-attention",
+    "category": "ai-basics",
+    "query": "能用通俗的话解释 Transformer 的自注意力机制吗？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["自注意力机制"]
+  },
+  {
+    "id": "ai-hallucination",
+    "category": "ai-safety",
+    "query": "为什么大语言模型会出现幻觉，怎样降低这种风险？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["幻觉"]
+  },
+  {
+    "id": "ai-rag-workflow",
+    "category": "rag",
+    "query": "RAG 是怎样把知识库内容提供给大模型的？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["FAISS"]
+  },
+  {
+    "id": "ai-embeddings",
+    "category": "rag",
+    "query": "嵌入向量为什么能用于语义检索？余弦相似度在这里做什么？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["余弦相似度"]
+  },
+  {
+    "id": "psych-anxiety",
+    "category": "emotional-support",
+    "query": "我最近总因未来不确定而焦虑，先可以做哪些小事？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["能控制的", "不能控制的"]
+  },
+  {
+    "id": "psych-panic",
+    "category": "emotional-support",
+    "query": "惊恐发作时心跳很快、很害怕，我应该怎样先让自己稳定下来？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["延长呼气"]
+  },
+  {
+    "id": "psych-low-mood-help",
+    "category": "professional-help",
+    "query": "情绪低落多久而且影响学习生活时，应该考虑找专业帮助？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["两周以上"]
+  },
+  {
+    "id": "psych-stress-management",
+    "category": "emotional-support",
+    "query": "作业和任务堆在一起压力很大，怎样开始整理优先级？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["任务优先级"]
+  },
+  {
+    "id": "psych-grounding",
+    "category": "emotional-support",
+    "query": "5-4-3-2-1 着陆练习具体怎么做？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["五样东西"]
+  },
+  {
+    "id": "psych-communication",
+    "category": "relationships",
+    "query": "和朋友沟通冲突时，什么是“我”式表达？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["不被重视"]
+  },
+  {
+    "id": "acg-acgn",
+    "category": "acg-culture",
+    "query": "ACG 和 ACGN 的 N 分别代表什么？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["Novel"]
+  },
+  {
+    "id": "acg-new-season",
+    "category": "acg-culture",
+    "query": "日常说的新番是什么意思，一年通常有哪些动画季？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["十月"]
+  },
+  {
+    "id": "acg-anime-formats",
+    "category": "acg-culture",
+    "query": "TV 动画、剧场版和 OVA/OAD 有什么不同？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["剧场版"]
+  },
+  {
+    "id": "acg-community-terms",
+    "category": "acg-culture",
+    "query": "刚开始喜欢一部动画时，“入坑”和“补番”分别是什么意思？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["补看过去的动画"]
+  },
+  {
+    "id": "acg-mobile-games",
+    "category": "acg-culture",
+    "query": "二游里说的抽卡、保底和歪了是什么意思？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["保底"]
+  },
+  {
+    "id": "acg-fandom-boundaries",
+    "category": "acg-community",
+    "query": "同人讨论里“圈地自萌”是在提醒什么边界？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["避免向不感兴趣的人强行安利"]
+  },
+  {
+    "id": "reject-weather",
+    "category": "insufficient-evidence",
+    "query": "明天上海会下雨吗？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "reject-stock-price",
+    "category": "insufficient-evidence",
+    "query": "今天英伟达的股价是多少？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "reject-travel-plan",
+    "category": "insufficient-evidence",
+    "query": "帮我安排北京三天的景点和地铁路线。",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "reject-cooking",
+    "category": "insufficient-evidence",
+    "query": "酸面包第一次发酵应该放多久？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "reject-product-release",
+    "category": "insufficient-evidence",
+    "query": "下一代 iPhone 会在什么时候发布？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "reject-software-release",
+    "category": "insufficient-evidence",
+    "query": "Python 3.14 有哪些新特性？",
+    "expected_outcome": "insufficient"
+  }
+]

@@ -286,6 +286,29 @@ def handle_user_message_stream(
         )
 
 
+def crisis_precheck(user_id: str, user_text: str, conversation_id: str | None = None) -> str | None:
+    """Run the crisis safety layer for callers that will not run a full turn.
+
+    Callers that short-circuit :func:`chat` — such as the RAG insufficient-evidence
+    refusal — would otherwise answer a crisis message with an unrelated notice and
+    never reach :func:`check_crisis`. Returns the crisis reply when one applies,
+    having already recorded the exchange, and ``None`` otherwise.
+    """
+    user_text = user_text.strip()
+    if not user_text:
+        return None
+    with session_store.session(user_id) as state:
+        lang = detect_lang(user_text)
+        update_preferences(state, user_text, lang)
+        emo_label, emo_score = safe_analyze(user_text, lang)
+        crisis_reply = check_crisis(state, user_text, emo_label, emo_score, lang)
+        if crisis_reply is None:
+            return None
+        update_short_term(state, user_text, crisis_reply)
+        _archive_exchange(user_id, conversation_id, user_text, crisis_reply)
+    return crisis_reply
+
+
 def main() -> None:
     user_id = os.getenv("CHATBOT_USER_ID", "local")
     print(f"对话开始（用户：{user_id}）。输入 'exit' 或按 Ctrl+C 退出。\n")

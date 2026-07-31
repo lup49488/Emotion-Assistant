@@ -55,6 +55,7 @@ from api_contracts import (
     PrivacyResponse,
     RagEvaluationRequest,
     RagEvaluationResponse,
+    RagEvidenceStatus,
     RagFeedbackRequest,
     RagFeedbackResponse,
     RagFeedbackSummaryResponse,
@@ -70,12 +71,13 @@ from api_contracts import (
     UsageSummaryResponse,
     WeeklyMoodResponse,
 )
-from chatbot import handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
+from chatbot import crisis_precheck, handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
+from emotion import detect_lang
 from auth_store import access_key_version
-from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_RAG_ADMIN_USER_IDS, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER
+from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_RAG_ADMIN_USER_IDS, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER, RAG_REQUIRE_EVIDENCE
 from auth_rate_limit import clear_login_failures, login_allowed, record_login_failure
 from api_usage_store import list_usage_events, usage_summary
-from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations, remove_last_exchange, rename_conversation
+from conversation_store import append_exchange, create_conversation, delete_conversation, get_conversation, list_conversations, remove_last_exchange, rename_conversation
 from export_store import build_user_export_payload
 from gui_auth import authorize
 from knowledge_store import (
@@ -109,7 +111,7 @@ from sqlite_store import connection, storage_backend
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-07-21.6"
+API_CONTRACT_VERSION = "2026-07-30.1"
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -547,13 +549,68 @@ def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | No
 
 
 def _knowledge_bundle(request: ChatRequest) -> dict[str, Any]:
-    return build_knowledge_bundle(request.message) if request.use_knowledge else {"context": "", "citations": []}
+    if not request.use_knowledge:
+        return {
+            "context": "", "citations": [],
+            "evidence": RagEvidenceStatus(status="not_requested").model_dump(),
+        }
+    return build_knowledge_bundle(request.message)
+
+
+def _rag_status(bundle: dict[str, Any]) -> dict[str, Any]:
+    return RagEvidenceStatus(**bundle.get("evidence", {"status": "sufficient"})).model_dump()
+
+
+def _must_refuse_for_insufficient_evidence(request: ChatRequest, rag_status: dict[str, Any]) -> bool:
+    return bool(request.use_knowledge and RAG_REQUIRE_EVIDENCE and rag_status["status"] == "insufficient")
+
+
+# Stored verbatim in the conversation archive, so it must read correctly in the
+# Gradio history view and in a user's JSON export — not only in the React client.
+RAG_INSUFFICIENT_EVIDENCE_NOTICE = {
+    "zh": "知识库中没有足够相关资料，本次没有基于资料作答。",
+    "en": "The knowledge base did not contain enough relevant information, so this turn was not answered from sources.",
+}
+
+
+def _insufficient_evidence_notice(message: str) -> str:
+    return RAG_INSUFFICIENT_EVIDENCE_NOTICE["zh" if detect_lang(message).startswith("zh") else "en"]
+
+
+def _resolve_insufficient_evidence(user_id: str, request: ChatRequest) -> tuple[str, bool]:
+    """Answer a turn that retrieval could not ground, and archive the exchange.
+
+    Returns the reply text plus whether the crisis safety layer produced it.
+    Crisis detection lives in ``chatbot.chat``, which this path never reaches, so
+    it runs explicitly here — a distressed message must never be answered with an
+    unrelated "no sources" notice.
+    """
+    if request.retry_last_response:
+        remove_last_exchange(user_id, request.conversation_id, request.message)
+        _rollback_short_term_exchange(user_id, request.message)
+    crisis_reply = crisis_precheck(user_id, request.message, request.conversation_id)
+    if crisis_reply is not None:
+        return crisis_reply, True
+    notice = _insufficient_evidence_notice(request.message)
+    append_exchange(user_id, request.conversation_id, request.message, notice)
+    return notice, False
 
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
-def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, str]:
-    bundle = _knowledge_bundle(request)
+def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
     started = time.perf_counter()
+    bundle = _knowledge_bundle(request)
+    rag_status = _rag_status(bundle)
+    rag_status["enforced"] = _must_refuse_for_insufficient_evidence(request, rag_status)
+    if rag_status["enforced"]:
+        reply, from_crisis_layer = _resolve_insufficient_evidence(user_id, request)
+        # A crisis reply is a real answer, so the client must render it normally
+        # instead of replacing it with the insufficient-evidence notice.
+        rag_status["enforced"] = not from_crisis_layer
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        chat_finished(True, duration_ms, streaming=False, rag_refused=rag_status["enforced"])
+        logger.info("event=chat_completed request_id=%s provider=%s streaming=false rag_status=insufficient crisis=%s", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER, from_crisis_layer)
+        return {"reply": reply, "citations": [], "citation_trace_id": None, "rag_status": rag_status}
     try:
         reply = "".join(_chat_chunks(user_id, request, bundle["context"]))
     except Exception:
@@ -565,7 +622,7 @@ def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, str]:
     chat_finished(True, duration_ms, streaming=False)
     logger.info("event=chat_completed request_id=%s provider=%s streaming=false duration_ms=%s reply_chars=%s", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER, duration_ms, len(reply))
     trace_id = create_citation_trace(user_id, request.conversation_id, bundle["citations"])
-    payload = {"reply": reply, "citations": bundle["citations"], "citation_trace_id": trace_id}
+    payload = {"reply": reply, "citations": bundle["citations"], "citation_trace_id": trace_id, "rag_status": rag_status}
     if request.show_memory_receipt:
         with session_store.session(user_id) as state:
             payload["memory_receipt"] = latest_memory_receipt(state)
@@ -582,7 +639,7 @@ def _memory_receipt(user_id: str) -> str:
     response_class=StreamingResponse,
     responses={
         200: {
-            "description": "Server-sent events: `chunk` ({text}), optional `receipt` ({text}), then `done` ({}). On generation failure emits `error` ({code, message}).",
+            "description": "Server-sent events: optional `rag_status`, `chunk` ({text}), optional `citations` and `receipt`, then `done` ({}). On generation failure emits `error` ({code, message}).",
             "content": {"text/event-stream": {}},
         }
     },
@@ -597,6 +654,22 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             # The chat generator does blocking model inference; iterate it in a
             # worker thread so the async event loop stays responsive.
             bundle = await run_in_threadpool(_knowledge_bundle, request)
+            rag_status = _rag_status(bundle)
+            rag_status["enforced"] = _must_refuse_for_insufficient_evidence(request, rag_status)
+            if rag_status["enforced"]:
+                reply, from_crisis_layer = await run_in_threadpool(_resolve_insufficient_evidence, user_id, request)
+                # A crisis reply is a real answer, so the client must render it
+                # normally instead of the insufficient-evidence notice.
+                rag_status["enforced"] = not from_crisis_layer
+                yield f"event: rag_status\ndata: {json.dumps(rag_status, ensure_ascii=False)}\n\n"
+                yield f"event: chunk\ndata: {json.dumps({'text': reply}, ensure_ascii=False)}\n\n"
+                yield "event: done\ndata: {}\n\n"
+                duration_ms = int((time.perf_counter() - started) * 1000)
+                chat_finished(True, duration_ms, streaming=True, rag_refused=rag_status["enforced"])
+                logger.info("event=chat_completed request_id=%s provider=%s streaming=true rag_status=insufficient crisis=%s", request_id, request.provider or DEFAULT_LLM_PROVIDER, from_crisis_layer)
+                return
+            if request.use_knowledge:
+                yield f"event: rag_status\ndata: {json.dumps(rag_status, ensure_ascii=False)}\n\n"
             # 始终复用 bundle 已检索出的上下文（与非流式 /chat 一致），
             # 避免 use_knowledge=True 但检索为空时在 chatbot 内部重复检索。
             generator = _chat_chunks(user_id, request, bundle["context"])

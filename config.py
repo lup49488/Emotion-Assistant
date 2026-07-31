@@ -118,6 +118,7 @@ RAG_RELEASE_MIN_CASES = max(1, _env_int("RAG_RELEASE_MIN_CASES", 5))
 RAG_RELEASE_MIN_PASS_RATE = min(100.0, max(0.0, _env_float("RAG_RELEASE_MIN_PASS_RATE", 80.0)))
 RAG_RELEASE_MIN_SOURCE_RECALL = min(100.0, max(0.0, _env_float("RAG_RELEASE_MIN_SOURCE_RECALL", 80.0)))
 RAG_RELEASE_MIN_KEYWORD_COVERAGE = min(100.0, max(0.0, _env_float("RAG_RELEASE_MIN_KEYWORD_COVERAGE", 80.0)))
+RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL = min(100.0, max(0.0, _env_float("RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL", 80.0)))
 
 # Persistent operational telemetry. Event bodies and user content are never stored.
 OBSERVABILITY_RETENTION_DAYS = max(1, _env_int("OBSERVABILITY_RETENTION_DAYS", 90))
@@ -164,6 +165,9 @@ KNOWLEDGE_CANDIDATE_MULTIPLIER = _env_int("KNOWLEDGE_CANDIDATE_MULTIPLIER", 4)
 KNOWLEDGE_MAX_PER_SOURCE = _env_int("KNOWLEDGE_MAX_PER_SOURCE", 2)
 KNOWLEDGE_MAX_CONTEXT_CHARS = _env_int("KNOWLEDGE_MAX_CONTEXT_CHARS", 4000)
 KNOWLEDGE_MIN_CHUNK_CHARS = _env_int("KNOWLEDGE_MIN_CHUNK_CHARS", 40)
+# When a caller explicitly enables RAG, do not let the model answer as though
+# it were grounded if retrieval found no eligible source chunks.
+RAG_REQUIRE_EVIDENCE = os.getenv("RAG_REQUIRE_EVIDENCE", "true").lower() == "true"
 
 STYLE_ENABLED = os.getenv("STYLE_ENABLED", "true").lower() == "true"
 STYLE_TOP_K = _env_int("STYLE_TOP_K", 3)

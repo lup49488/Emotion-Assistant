@@ -192,6 +192,12 @@ python -c "import knowledge_store; print(knowledge_store.rebuild_knowledge_index
 
 FastAPI 也提供管理员权限的 RAG 上传、重建、搜索诊断、质量报告、反馈和评估任务接口。
 
+### 检索回归集
+
+[`knowledge_base/rag_evaluation_cases.json`](knowledge_base/rag_evaluation_cases.json) 是随仓库版本管理、面向当前知识语料的回归集。它同时包含应当依据资料回答的自然问题，以及以 `expected_outcome: "insufficient"` 标记的资料库外问题。
+
+资料命中样本需要填写 `expected_sources` 和/或 `expected_keywords`；资料不足样本不应填写这两个字段。可在 Gradio 的 RAG 面板导入更新后的 JSON 或 JSONL 评估集后再运行评估。启用发布门槛时，只要评估集包含资料不足样本，还会检查 `RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL`。
+
 ## 风格 RAG
 
 风格参考文档放在：

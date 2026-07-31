@@ -4,7 +4,7 @@
     "title": "Emotion-Aware Chat API",
     "description": "Versioned API contract for the Emotion-Aware Chat application.",
     "version": "1.0.0",
-    "x-contract-version": "2026-07-21.6",
+    "x-contract-version": "2026-07-30.1",
     "x-api-version": "v1"
   },
   "paths": {
@@ -621,7 +621,7 @@
         },
         "responses": {
           "200": {
-            "description": "Server-sent events: `chunk` ({text}), optional `receipt` ({text}), then `done` ({}). On generation failure emits `error` ({code, message}).",
+            "description": "Server-sent events: optional `rag_status`, `chunk` ({text}), optional `citations` and `receipt`, then `done` ({}). On generation failure emits `error` ({code, message}).",
             "content": {
               "text/event-stream": {}
             }
@@ -2864,6 +2864,9 @@
               }
             ],
             "title": "Citation Trace Id"
+          },
+          "rag_status": {
+            "$ref": "#/components/schemas/RagEvidenceStatus"
           }
         },
         "additionalProperties": false,
@@ -3792,6 +3795,73 @@
           "report"
         ],
         "title": "RagEvaluationResponse"
+      },
+      "RagEvidenceStatus": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": [
+              "not_requested",
+              "sufficient",
+              "insufficient"
+            ],
+            "title": "Status"
+          },
+          "code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Code"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "enforced": {
+            "type": "boolean",
+            "title": "Enforced",
+            "default": false
+          },
+          "matched_chunks": {
+            "type": "integer",
+            "title": "Matched Chunks",
+            "default": 0
+          },
+          "matched_sources": {
+            "type": "integer",
+            "title": "Matched Sources",
+            "default": 0
+          },
+          "retrieval_threshold": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Threshold"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "RagEvidenceStatus"
       },
       "RagFeedbackRequest": {
         "properties": {

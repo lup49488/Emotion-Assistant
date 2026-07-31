@@ -271,6 +271,7 @@ function App() {
       let buffer = ''
       let receivedError = ''
       let receivedText = false
+      let receivedRagStatus = false
 
       while (true) {
         const { done, value } = await reader.read()
@@ -294,11 +295,17 @@ function App() {
               ? { ...item, citations: payload.citations || [], citationTraceId: payload.trace_id || null }
               : item))
           }
+          if (eventName === 'rag_status') {
+            receivedRagStatus = Boolean(payload.enforced)
+            setMessages((current) => current.map((item, index) => index === current.length - 1
+              ? { ...item, pending: false, ragStatus: payload }
+              : item))
+          }
           if (eventName === 'error') receivedError = { code: payload.code || 'generation_failed', retryable: Boolean(payload.retryable), message: payload.message }
         }
       }
       if (receivedError) throw new ApiRequestError(receivedError.message || receivedError.code, receivedError)
-      if (!receivedText) throw new Error(t('emptyResponse'))
+      if (!receivedText && !receivedRagStatus) throw new Error(t('emptyResponse'))
       await refreshConversations()
     } catch (error) {
       const cancelled = error.name === 'AbortError'
@@ -436,7 +443,31 @@ function LoginScreen({ onSuccess, t }) {
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt('我今天有一点焦虑，能陪我理一理吗？')}>{t('talkPrompt')}</button><button onClick={() => onPrompt('我想为未来做一点准备，可以从哪里开始？')}>{t('planPrompt')}</button></div></div> }
 
-function Message({ message, index, canRegenerate, onCopy, onRetry, onRagFeedback, isSending, t }) { const canRetry = message.failed ? message.retryable : canRegenerate && Boolean(message.content); return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}><div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div><div><div className={`message-body ${message.role === 'assistant' && !message.failed ? 'assistant-markdown' : ''}`}>{message.pending && !message.content ? <span className="typing"><i /><i /><i /></span> : message.role === 'assistant' && !message.failed ? <Suspense fallback={message.content}><AssistantMarkdown content={message.content} /></Suspense> : message.content}</div>{message.role === 'assistant' && message.citations?.length > 0 && <div className="rag-citations"><span>{t('sources')}</span>{message.citations.map((citation) => <span className="rag-citation" title={citation.excerpt} key={`${citation.source}-${citation.chunk_index}`}>{citation.source}</span>)}</div>}{message.role === 'assistant' && !message.pending && <div className="message-actions">{message.content && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(message.content)}><Copy size={14} /></button>}{message.citationTraceId && <><button className={`message-action ${message.ragFeedback === true ? 'selected' : ''}`} title={t('ragHelpful')} onClick={() => onRagFeedback(index, true)}><ThumbsUp size={14} /></button><button className={`message-action ${message.ragFeedback === false ? 'selected' : ''}`} title={t('ragUnhelpful')} onClick={() => onRagFeedback(index, false)}><ThumbsDown size={14} /></button></>}{canRetry && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</div>}</div></article> }
+function Message({ message, index, canRegenerate, onCopy, onRetry, onRagFeedback, isSending, t }) {
+  // Only an enforced refusal replaces the reply. When RAG_REQUIRE_EVIDENCE is off
+  // the server still reports `insufficient`, but it also answers normally.
+  const insufficientEvidence = Boolean(message.ragStatus?.enforced)
+  const displayContent = insufficientEvidence ? '' : message.content
+  const canRetry = !insufficientEvidence && (message.failed ? message.retryable : canRegenerate && Boolean(displayContent))
+
+  return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}>
+    <div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div>
+    <div>
+      <div className={`message-body ${message.role === 'assistant' && !message.failed ? 'assistant-markdown' : ''}`}>
+        {message.pending && !displayContent ? <span className="typing"><i /><i /><i /></span>
+          : insufficientEvidence ? <p className="rag-evidence-status" role="status">{t('ragInsufficientEvidence')}</p>
+            : message.role === 'assistant' && !message.failed ? <Suspense fallback={displayContent}><AssistantMarkdown content={displayContent} /></Suspense>
+              : displayContent}
+      </div>
+      {message.role === 'assistant' && message.citations?.length > 0 && <div className="rag-citations"><span>{t('sources')}</span>{message.citations.map((citation) => <span className="rag-citation" title={citation.excerpt} key={`${citation.source}-${citation.chunk_index}`}>{citation.source}</span>)}</div>}
+      {message.role === 'assistant' && !message.pending && <div className="message-actions">
+        {displayContent && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(displayContent)}><Copy size={14} /></button>}
+        {message.citationTraceId && <><button className={`message-action ${message.ragFeedback === true ? 'selected' : ''}`} title={t('ragHelpful')} onClick={() => onRagFeedback(index, true)}><ThumbsUp size={14} /></button><button className={`message-action ${message.ragFeedback === false ? 'selected' : ''}`} title={t('ragUnhelpful')} onClick={() => onRagFeedback(index, false)}><ThumbsDown size={14} /></button></>}
+        {canRetry && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}
+      </div>}
+    </div>
+  </article>
+}
 
 function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, t }) { return <div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div> }
 
