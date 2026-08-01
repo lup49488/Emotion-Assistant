@@ -198,6 +198,8 @@ FastAPI 也提供管理员权限的 RAG 上传、重建、搜索诊断、质量�
 
 资料命中样本需要填写 `expected_sources` 和/或 `expected_keywords`；资料不足样本不应填写这两个字段。可在 Gradio 的 RAG 面板导入更新后的 JSON 或 JSONL 评估集后再运行评估。启用发布门槛时，只要评估集包含资料不足样本，还会检查 `RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL`。
 
+检索默认使用 `hybrid_rrf`：将 BM25 词法排序与 FAISS 向量排序通过倒数排序融合（RRF）组合。需要与旧基线比较时，可临时设置 `KNOWLEDGE_RETRIEVAL_MODE=vector`。管理员在 RAG 页面运行评估时，会对同一回归集同时比较两种模式，并给出 Recall@K、MRR 和资料不足拒答准确率。
+
 ## 风格 RAG
 
 风格参考文档放在：

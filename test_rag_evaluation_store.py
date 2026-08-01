@@ -95,6 +95,36 @@ def test_insufficient_case_fails_when_results_carry_usable_text(tmp_path, monkey
     assert report["insufficient_refusal_rate"] == 0.0
 
 
+def test_evaluation_compares_vector_and_hybrid_metrics(tmp_path, monkeypatch):
+    _configure_paths(tmp_path, monkeypatch)
+    source = tmp_path / "evaluation.json"
+    source.write_text(json.dumps([
+        {"id": "grounded", "query": "课程安排", "expected_sources": ["course.md"]},
+        {"id": "insufficient", "query": "火星天气", "expected_outcome": "insufficient"},
+    ], ensure_ascii=False), encoding="utf-8")
+    rag_evaluation_store.import_evaluation_cases(source)
+
+    def fake_diagnose(query, *, retrieval_mode, **_kwargs):
+        if query == "课程安排":
+            source_name = "course.md" if retrieval_mode == "hybrid_rrf" else "other.md"
+            return {"results": [{"source": source_name, "text": "课程材料"}]}
+        return {"results": [] if retrieval_mode == "hybrid_rrf" else [{"source": "other.md", "text": "unrelated"}]}
+
+    with patch.object(rag_evaluation_store, "diagnose_knowledge_search", side_effect=fake_diagnose):
+        report = rag_evaluation_store.run_evaluation(
+            top_k=4, threshold=0.35, candidate_multiplier=3,
+            retrieval_mode="hybrid_rrf", compare_modes=True,
+        )
+
+    comparison = report["mode_comparison"]
+    assert report["settings"]["retrieval_mode"] == "hybrid_rrf"
+    assert report["recall_at_k"] == 100.0
+    assert comparison["vector"]["recall_at_k"] == 0.0
+    assert comparison["hybrid_rrf"]["mrr"] == 1.0
+    assert comparison["hybrid_rrf"]["insufficient_refusal_accuracy"] == 100.0
+    assert comparison["delta_hybrid_minus_vector"]["pass_rate"] == 100.0
+
+
 def test_evaluation_error_messages_are_fully_english_without_mixed_fragments(tmp_path, monkeypatch):
     _configure_paths(tmp_path, monkeypatch)
     source = tmp_path / "invalid.json"
@@ -136,3 +166,23 @@ def test_evaluation_report_is_localized_to_english():
 
     assert "Overall pass rate: 1/2 (50.0%)" in text
     assert "Source recall@K" in text
+
+
+def test_evaluation_report_shows_hybrid_comparison():
+    report = {
+        "created_at": "2026-07-31T10:00:00",
+        "settings": {"top_k": 4, "threshold": 0.35, "candidate_multiplier": 3, "retrieval_mode": "hybrid_rrf"},
+        "passed_cases": 2, "total_cases": 2, "pass_rate": 100.0,
+        "source_hits": 1, "source_cases": 1, "source_recall_at_k": 100.0,
+        "mrr": 1.0, "keyword_hits": 0, "keyword_cases": 0,
+        "keyword_coverage": None, "failures": [],
+        "mode_comparison": {
+            "vector": {"recall_at_k": 50.0, "mrr": 0.5, "insufficient_refusal_accuracy": 0.0},
+            "hybrid_rrf": {"recall_at_k": 100.0, "mrr": 1.0, "insufficient_refusal_accuracy": 100.0},
+        },
+    }
+
+    text = gui_knowledge.format_rag_evaluation_report(report, "en")
+
+    assert "Mode comparison (vector -> hybrid RRF)" in text
+    assert "Recall@K 50.0% -> 100.0%" in text

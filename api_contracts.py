@@ -262,6 +262,7 @@ class RagSearchRequest(ContractModel):
     top_k: int = Field(default=4, ge=1, le=20)
     threshold: float = Field(default=0.35, ge=-1, le=1)
     candidate_multiplier: int = Field(default=4, ge=1, le=16)
+    retrieval_mode: Literal["vector", "hybrid_rrf"] | None = None
 
 
 class RagSearchResponse(BaseModel):
@@ -274,6 +275,8 @@ class RagEvaluationRequest(ContractModel):
     top_k: int = Field(default=4, ge=1, le=20)
     threshold: float = Field(default=0.35, ge=-1, le=1)
     candidate_multiplier: int = Field(default=4, ge=1, le=16)
+    retrieval_mode: Literal["vector", "hybrid_rrf"] | None = None
+    compare_modes: bool = False
 
 
 class RagEvaluationResponse(ContractModel):

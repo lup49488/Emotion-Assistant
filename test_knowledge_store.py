@@ -142,6 +142,46 @@ def test_diagnose_search_filters_threshold_duplicates_and_preserves_diversity():
     assert "低于阈值 0.30" in decisions
 
 
+def test_hybrid_rrf_promotes_chunks_present_in_both_rankings():
+    chunks = [
+        {"source": "vector-only.md", "text": "vector result", "chunk_index": 0},
+        {"source": "hybrid-hit.md", "text": "transformer self attention", "chunk_index": 0},
+    ]
+    vector_candidates = [
+        {**chunks[0], "score": 0.91, "_index": 0},
+        {**chunks[1], "score": 0.82, "_index": 1},
+    ]
+    bm25_candidates = [{**chunks[1], "bm25_score": 2.4, "_index": 1}]
+
+    with patch.object(knowledge_store, "_search_candidates", return_value=vector_candidates), \
+         patch.object(knowledge_store, "_bm25_search_candidates", return_value=bm25_candidates):
+        candidates = knowledge_store._hybrid_search_candidates(
+            "transformer attention", chunks, top_k=2, candidate_multiplier=2,
+        )
+
+    assert [item["source"] for item in candidates] == ["hybrid-hit.md", "vector-only.md"]
+    assert candidates[0]["vector_score"] == 0.82
+    assert candidates[0]["bm25_score"] == 2.4
+    assert candidates[0]["rrf_score"] > candidates[1]["rrf_score"]
+
+
+def test_hybrid_bm25_only_match_does_not_bypass_evidence_threshold():
+    chunks = [{"source": "term-only.md", "text": "common term", "chunk_index": 0}]
+    candidates = [{
+        **chunks[0], "score": 0.0, "vector_score": None,
+        "bm25_score": 3.0, "rrf_score": 1 / 61, "_index": 0,
+    }]
+
+    with patch.object(knowledge_store, "load_chunks", return_value=chunks), \
+         patch.object(knowledge_store, "_hybrid_search_candidates", return_value=candidates):
+        diagnostic = knowledge_store.diagnose_knowledge_search(
+            "common term", top_k=1, threshold=0.35, retrieval_mode="hybrid_rrf",
+        )
+
+    assert diagnostic["results"] == []
+    assert diagnostic["candidates"][0]["decision"] == "低于阈值 0.35"
+
+
 def test_build_context_enforces_character_budget_and_shows_scores():
     results = [
         {"source": "a.txt", "text": "甲" * 300, "score": 0.8},

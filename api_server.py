@@ -111,7 +111,7 @@ from sqlite_store import connection, storage_backend
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-07-30.1"
+API_CONTRACT_VERSION = "2026-07-31.1"
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -951,6 +951,7 @@ def rag_search(request: RagSearchRequest, _: CsrfCurrentUser) -> dict[str, Any]:
     return diagnose_knowledge_search(
         request.query, top_k=request.top_k, threshold=request.threshold,
         candidate_multiplier=request.candidate_multiplier,
+        retrieval_mode=request.retrieval_mode,
     )
 
 
@@ -969,6 +970,7 @@ def rag_run_evaluation(request: RagEvaluationRequest, user_id: CsrfCurrentUser) 
         return run_evaluation(
             top_k=request.top_k, threshold=request.threshold,
             candidate_multiplier=request.candidate_multiplier,
+            retrieval_mode=request.retrieval_mode, compare_modes=request.compare_modes,
         )
 
     return _submit_rag_job(user_id, "rag_evaluation", _evaluate)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import tempfile
@@ -25,6 +26,8 @@ from config import (
     KNOWLEDGE_MAX_PER_SOURCE,
     KNOWLEDGE_MIN_CHUNK_CHARS,
     KNOWLEDGE_RETRIEVAL_THRESHOLD,
+    KNOWLEDGE_RETRIEVAL_MODE,
+    KNOWLEDGE_RRF_K,
     KNOWLEDGE_TOP_K,
     RAG_RELEASE_GATE_ENABLED,
     RAG_RELEASE_MIN_CASES,
@@ -537,6 +540,84 @@ def _search_candidates(
     return candidates
 
 
+_CJK_RUN_RE = re.compile(r"[\u3400-\u9fff]+")
+_WORD_RE = re.compile(r"[a-z0-9][a-z0-9_+.#-]*", re.IGNORECASE)
+
+
+def _bm25_tokens(text: str) -> list[str]:
+    """Tokenize mixed Chinese and Latin text without adding a tokenizer dependency."""
+    normalized = str(text or "").casefold()
+    tokens = _WORD_RE.findall(normalized)
+    for run in _CJK_RUN_RE.findall(normalized):
+        tokens.extend(run[index:index + 2] for index in range(max(1, len(run) - 1)))
+    return tokens
+
+
+def _bm25_search_candidates(
+    query: str, chunks: list[dict[str, Any]], *, candidate_count: int
+) -> list[dict[str, Any]]:
+    query_tokens = _bm25_tokens(query)
+    if not query_tokens or not chunks:
+        return []
+    documents = [_bm25_tokens(str(chunk.get("text", ""))) for chunk in chunks]
+    document_frequency: Counter[str] = Counter()
+    for tokens in documents:
+        document_frequency.update(set(tokens))
+    average_length = sum(len(tokens) for tokens in documents) / len(documents) or 1.0
+    query_terms = Counter(query_tokens)
+    ranked: list[tuple[float, int]] = []
+    for index, tokens in enumerate(documents):
+        if not tokens:
+            continue
+        frequencies = Counter(tokens)
+        score = 0.0
+        for term, query_frequency in query_terms.items():
+            frequency = frequencies.get(term, 0)
+            if not frequency:
+                continue
+            inverse_frequency = math.log(1 + (len(documents) - document_frequency[term] + 0.5) / (document_frequency[term] + 0.5))
+            denominator = frequency + 1.5 * (1 - 0.75 + 0.75 * len(tokens) / average_length)
+            score += query_frequency * inverse_frequency * frequency * 2.5 / denominator
+        if score > 0:
+            ranked.append((score, index))
+    ranked.sort(key=lambda item: (-item[0], item[1]))
+    return [
+        {**chunks[index], "_index": index, "bm25_score": float(score)}
+        for score, index in ranked[:candidate_count]
+    ]
+
+
+def _hybrid_search_candidates(
+    query: str,
+    chunks: list[dict[str, Any]],
+    *,
+    top_k: int,
+    candidate_multiplier: int,
+) -> list[dict[str, Any]]:
+    candidate_count = min(len(chunks), max(top_k, top_k * max(1, int(candidate_multiplier))))
+    vector_candidates = _search_candidates(
+        query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier,
+    )
+    bm25_candidates = _bm25_search_candidates(query, chunks, candidate_count=candidate_count)
+    merged: dict[int, dict[str, Any]] = {}
+    for rank, candidate in enumerate(vector_candidates, start=1):
+        index = int(candidate["_index"])
+        merged[index] = {**candidate, "vector_score": float(candidate["score"]), "rrf_score": 1 / (KNOWLEDGE_RRF_K + rank)}
+    for rank, candidate in enumerate(bm25_candidates, start=1):
+        index = int(candidate["_index"])
+        item = merged.setdefault(index, {**candidate, "score": 0.0, "vector_score": None, "rrf_score": 0.0})
+        item["bm25_score"] = float(candidate["bm25_score"])
+        item["rrf_score"] += 1 / (KNOWLEDGE_RRF_K + rank)
+    return sorted(merged.values(), key=lambda item: (-float(item["rrf_score"]), int(item["_index"])))
+
+
+def _normalize_retrieval_mode(retrieval_mode: str | None) -> str:
+    mode = str(retrieval_mode or KNOWLEDGE_RETRIEVAL_MODE).strip().lower()
+    if mode not in {"vector", "hybrid_rrf"}:
+        raise ValueError("检索模式仅支持 vector 或 hybrid_rrf。")
+    return mode
+
+
 def diagnose_knowledge_search(
     query: str,
     *,
@@ -544,6 +625,7 @@ def diagnose_knowledge_search(
     threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
     candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
     max_per_source: int = KNOWLEDGE_MAX_PER_SOURCE,
+    retrieval_mode: str | None = None,
 ) -> dict[str, Any]:
     chunks = load_chunks()
     query = (query or "").strip()
@@ -553,18 +635,16 @@ def diagnose_knowledge_search(
     top_k = max(1, min(int(top_k), len(chunks)))
     threshold = max(-1.0, min(float(threshold), 1.0))
     max_per_source = max(1, int(max_per_source))
-    candidates = _search_candidates(
-        query,
-        chunks,
-        top_k=top_k,
-        candidate_multiplier=candidate_multiplier,
-    )
+    mode = _normalize_retrieval_mode(retrieval_mode)
+    candidates = _hybrid_search_candidates(query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier) if mode == "hybrid_rrf" else _search_candidates(query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier)
 
     eligible: list[dict[str, Any]] = []
     seen_texts: set[str] = set()
     for item in candidates:
         score = float(item["score"])
         key = _normalized_chunk_key(str(item.get("text", "")))
+        # RRF changes ordering, while the vector score remains the evidence gate.
+        # A common BM25 term alone must not turn out-of-domain text into evidence.
         if score < threshold:
             item["accepted"] = False
             item["decision"] = f"低于阈值 {threshold:.2f}"
@@ -613,6 +693,7 @@ def diagnose_knowledge_search(
         "candidates": public_candidates,
         "threshold": threshold,
         "top_k": top_k,
+        "retrieval_mode": mode,
     }
 
 
@@ -623,6 +704,7 @@ def retrieve_knowledge(
     threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
     candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
     max_per_source: int = KNOWLEDGE_MAX_PER_SOURCE,
+    retrieval_mode: str | None = None,
 ) -> list[dict[str, Any]]:
     return diagnose_knowledge_search(
         query,
@@ -630,6 +712,7 @@ def retrieve_knowledge(
         threshold=threshold,
         candidate_multiplier=candidate_multiplier,
         max_per_source=max_per_source,
+        retrieval_mode=retrieval_mode,
     )["results"]
 
 

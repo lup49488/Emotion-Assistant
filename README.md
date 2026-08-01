@@ -198,6 +198,8 @@ The API also exposes administrator-protected RAG management routes for uploads, 
 
 For a grounded case, set `expected_sources` and/or `expected_keywords`. For an insufficient-evidence case, omit both fields. Import a revised JSON or JSONL set from the Gradio RAG panel before running an evaluation. When the release gate is enabled, it also checks `RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL` whenever the set contains insufficient-evidence cases.
 
+Retrieval defaults to `hybrid_rrf`: BM25 lexical ranking and FAISS vector ranking are fused with reciprocal-rank fusion (RRF). Set `KNOWLEDGE_RETRIEVAL_MODE=vector` for a temporary baseline comparison. The administrator RAG evaluation action compares both modes on the same regression set and reports Recall@K, MRR, and insufficient-evidence refusal accuracy.
+
 ## Style RAG
 
 Style-reference source documents live under:

@@ -149,10 +149,11 @@ def format_rag_evaluation_report(report: dict[str, Any] | None, locale: str = "z
         return "No RAG evaluation has been run." if english else "尚未运行 RAG 评估。"
     settings = report["settings"]
     not_available = "n/a" if english else "不适用"
+    mode = settings.get("retrieval_mode")
     if english:
         lines = [
             f"Latest run: {report['created_at']}",
-            f"Settings: Top K={settings['top_k']}, threshold={settings['threshold']:.2f}, candidate multiplier={settings['candidate_multiplier']}",
+            f"Settings: Top K={settings['top_k']}, threshold={settings['threshold']:.2f}, candidate multiplier={settings['candidate_multiplier']}" + (f", retrieval={mode}" if mode else ""),
             f"Overall pass rate: {report['passed_cases']}/{report['total_cases']} ({report['pass_rate']:.1f}%)",
             f"Source recall@K: {report['source_hits']}/{report['source_cases']} ({report['source_recall_at_k'] if report['source_recall_at_k'] is not None else not_available}%)",
             f"MRR: {report['mrr'] if report['mrr'] is not None else not_available}",
@@ -162,13 +163,31 @@ def format_rag_evaluation_report(report: dict[str, Any] | None, locale: str = "z
     else:
         lines = [
             f"最近评估：{report['created_at']}",
-            f"参数：Top K={settings['top_k']}，阈值={settings['threshold']:.2f}，候选池倍数={settings['candidate_multiplier']}",
+            f"参数：Top K={settings['top_k']}，阈值={settings['threshold']:.2f}，候选池倍数={settings['candidate_multiplier']}" + (f"，检索模式={mode}" if mode else ""),
             f"总体通过率：{report['passed_cases']}/{report['total_cases']} ({report['pass_rate']:.1f}%)",
             f"来源召回率@K：{report['source_hits']}/{report['source_cases']} ({report['source_recall_at_k'] if report['source_recall_at_k'] is not None else not_available}%)",
             f"MRR：{report['mrr'] if report['mrr'] is not None else not_available}",
             f"关键词覆盖率：{report['keyword_hits']}/{report['keyword_cases']} ({report['keyword_coverage'] if report['keyword_coverage'] is not None else not_available}%)",
             f"资料不足拒答：{report.get('insufficient_passes', 0)}/{report.get('insufficient_cases', 0)} ({report.get('insufficient_refusal_rate') if report.get('insufficient_refusal_rate') is not None else not_available}%)",
         ]
+    comparison = report.get("mode_comparison")
+    if isinstance(comparison, dict):
+        vector = comparison.get("vector") or {}
+        hybrid = comparison.get("hybrid_rrf") or {}
+        if english:
+            lines.append(
+                "Mode comparison (vector -> hybrid RRF): "
+                f"Recall@K {vector.get('recall_at_k', not_available)}% -> {hybrid.get('recall_at_k', not_available)}%; "
+                f"MRR {vector.get('mrr', not_available)} -> {hybrid.get('mrr', not_available)}; "
+                f"insufficient-evidence refusal {vector.get('insufficient_refusal_accuracy', not_available)}% -> {hybrid.get('insufficient_refusal_accuracy', not_available)}%."
+            )
+        else:
+            lines.append(
+                "模式对照（向量 -> Hybrid RRF）："
+                f"召回率@K {vector.get('recall_at_k', not_available)}% -> {hybrid.get('recall_at_k', not_available)}%；"
+                f"MRR {vector.get('mrr', not_available)} -> {hybrid.get('mrr', not_available)}；"
+                f"资料不足拒答 {vector.get('insufficient_refusal_accuracy', not_available)}% -> {hybrid.get('insufficient_refusal_accuracy', not_available)}%。"
+            )
     failures = report.get("failures") or []
     if failures:
         lines.append("Failed samples:" if english else "失败样本：")
@@ -184,6 +203,7 @@ def run_rag_evaluation_from_gui(
     try:
         report = run_evaluation(
             top_k=int(top_k), threshold=float(threshold), candidate_multiplier=int(candidate_multiplier),
+            compare_modes=True,
         )
     except Exception as exc:
         return localize_status_text(f"运行 RAG 评估失败：{exc}", locale)

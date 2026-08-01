@@ -4,7 +4,7 @@
     "title": "Emotion-Aware Chat API",
     "description": "Versioned API contract for the Emotion-Aware Chat application.",
     "version": "1.0.0",
-    "x-contract-version": "2026-07-30.1",
+    "x-contract-version": "2026-07-31.1",
     "x-api-version": "v1"
   },
   "paths": {
@@ -3768,6 +3768,26 @@
             "minimum": 1.0,
             "title": "Candidate Multiplier",
             "default": 4
+          },
+          "retrieval_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "vector",
+                  "hybrid_rrf"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Mode"
+          },
+          "compare_modes": {
+            "type": "boolean",
+            "title": "Compare Modes",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -3993,6 +4013,21 @@
             "minimum": 1.0,
             "title": "Candidate Multiplier",
             "default": 4
+          },
+          "retrieval_mode": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "vector",
+                  "hybrid_rrf"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Retrieval Mode"
           }
         },
         "additionalProperties": false,

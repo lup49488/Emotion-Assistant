@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from config import KNOWLEDGE_DIR
+from config import KNOWLEDGE_DIR, KNOWLEDGE_RETRIEVAL_MODE
 from json_utils import load_json, save_json
 from knowledge_store import diagnose_knowledge_search, has_usable_evidence
 
@@ -95,12 +95,10 @@ def _percent(numerator: int, denominator: int) -> float | None:
     return round(numerator / denominator * 100, 1) if denominator else None
 
 
-def run_evaluation(
-    *, top_k: int, threshold: float, candidate_multiplier: int
+def _evaluate_cases(
+    cases: list[dict[str, Any]], *, top_k: int, threshold: float,
+    candidate_multiplier: int, retrieval_mode: str,
 ) -> dict[str, Any]:
-    cases = load_evaluation_cases()
-    if not cases:
-        raise ValueError("还没有评估样本，请先导入 JSON 或 JSONL 评估集。")
 
     source_cases = keyword_cases = source_hits = keyword_hits = passed_cases = 0
     insufficient_cases = insufficient_passes = 0
@@ -110,6 +108,7 @@ def run_evaluation(
         diagnostic = diagnose_knowledge_search(
             case["query"], top_k=int(top_k), threshold=float(threshold),
             candidate_multiplier=int(candidate_multiplier),
+            retrieval_mode=retrieval_mode,
         )
         results = diagnostic["results"]
         returned_sources = [str(item.get("source", "")) for item in results]
@@ -158,18 +157,63 @@ def run_evaluation(
 
     report = {
         "created_at": datetime.now().isoformat(timespec="seconds"),
-        "settings": {"top_k": int(top_k), "threshold": float(threshold), "candidate_multiplier": int(candidate_multiplier)},
+        "settings": {"top_k": int(top_k), "threshold": float(threshold), "candidate_multiplier": int(candidate_multiplier), "retrieval_mode": retrieval_mode},
         "total_cases": len(cases), "passed_cases": passed_cases,
         "pass_rate": _percent(passed_cases, len(cases)),
         "source_cases": source_cases, "source_hits": source_hits,
         "source_recall_at_k": _percent(source_hits, source_cases),
+        "recall_at_k": _percent(source_hits, source_cases),
         "mrr": round(reciprocal_rank_total / source_cases, 3) if source_cases else None,
         "keyword_cases": keyword_cases, "keyword_hits": keyword_hits,
         "keyword_coverage": _percent(keyword_hits, keyword_cases),
         "insufficient_cases": insufficient_cases, "insufficient_passes": insufficient_passes,
         "insufficient_refusal_rate": _percent(insufficient_passes, insufficient_cases),
+        "insufficient_refusal_accuracy": _percent(insufficient_passes, insufficient_cases),
         "failures": [item for item in details if not item["passed"]][:10],
     }
+    return report
+
+
+def _comparison_summary(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "recall_at_k": report["recall_at_k"],
+        "mrr": report["mrr"],
+        "insufficient_refusal_accuracy": report["insufficient_refusal_accuracy"],
+        "pass_rate": report["pass_rate"],
+    }
+
+
+def run_evaluation(
+    *, top_k: int, threshold: float, candidate_multiplier: int,
+    retrieval_mode: str | None = None, compare_modes: bool = False,
+) -> dict[str, Any]:
+    cases = load_evaluation_cases()
+    if not cases:
+        raise ValueError("还没有评估样本，请先导入 JSON 或 JSONL 评估集。")
+    mode = str(retrieval_mode or KNOWLEDGE_RETRIEVAL_MODE).strip().lower()
+    if mode not in {"vector", "hybrid_rrf"}:
+        raise ValueError("检索模式仅支持 vector 或 hybrid_rrf。")
+    report = _evaluate_cases(
+        cases, top_k=top_k, threshold=threshold,
+        candidate_multiplier=candidate_multiplier, retrieval_mode=mode,
+    )
+    if compare_modes:
+        reports = {mode: report}
+        alternate_mode = "vector" if mode == "hybrid_rrf" else "hybrid_rrf"
+        reports[alternate_mode] = _evaluate_cases(
+            cases, top_k=top_k, threshold=threshold,
+            candidate_multiplier=candidate_multiplier, retrieval_mode=alternate_mode,
+        )
+        vector_summary = _comparison_summary(reports["vector"])
+        hybrid_summary = _comparison_summary(reports["hybrid_rrf"])
+        report["mode_comparison"] = {
+            "vector": vector_summary,
+            "hybrid_rrf": hybrid_summary,
+            "delta_hybrid_minus_vector": {
+                key: round(float(hybrid_summary[key] or 0) - float(vector_summary[key] or 0), 3)
+                for key in vector_summary
+            },
+        }
     reports = load_json(RAG_EVALUATION_REPORTS_PATH)
     RAG_EVALUATION_REPORTS_PATH.parent.mkdir(parents=True, exist_ok=True)
     save_json(RAG_EVALUATION_REPORTS_PATH, [report, *reports[: MAX_SAVED_REPORTS - 1]])
