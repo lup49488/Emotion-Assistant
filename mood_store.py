@@ -61,7 +61,13 @@ def _normalize_mood(value: str | None) -> str:
 
 
 def _clean_note(value: str | None) -> str:
-    return (value or "").strip()
+    """Keep the note as typed, including leading indentation.
+
+    Only trailing whitespace is dropped: it is invisible either way, and keeping
+    it would grow the note every time the record is edited and saved again. A
+    whitespace-only note collapses to empty, which still counts as "no note".
+    """
+    return str(value or "").rstrip()
 
 
 def _load_records_unlocked(user_id: str) -> list[dict[str, Any]]:

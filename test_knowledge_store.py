@@ -2,6 +2,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import config
 import knowledge_store
 from prompt_builder import build_messages
 from session_store import SessionState
@@ -180,6 +181,83 @@ def test_hybrid_bm25_only_match_does_not_bypass_evidence_threshold():
 
     assert diagnostic["results"] == []
     assert diagnostic["candidates"][0]["decision"] == "低于阈值 0.35"
+
+
+def test_unsupported_retrieval_mode_falls_back_instead_of_breaking_startup(monkeypatch):
+    """A typo in one env var must not make importing config raise for the whole app."""
+    monkeypatch.setenv("KNOWLEDGE_RETRIEVAL_MODE", "hybrid")
+
+    assert config._env_choice(
+        "KNOWLEDGE_RETRIEVAL_MODE", "hybrid_rrf", config.KNOWLEDGE_RETRIEVAL_MODES
+    ) == "hybrid_rrf"
+
+    monkeypatch.setenv("KNOWLEDGE_RETRIEVAL_MODE", "VECTOR")
+    assert config._env_choice(
+        "KNOWLEDGE_RETRIEVAL_MODE", "hybrid_rrf", config.KNOWLEDGE_RETRIEVAL_MODES
+    ) == "vector"
+
+
+def test_lexical_gate_admits_a_rare_term_the_embedding_missed(monkeypatch):
+    chunks = [{"source": "term-only.md", "text": "EMDR 用于创伤治疗", "chunk_index": 0}]
+    candidates = [{
+        **chunks[0], "score": 0.0, "vector_score": None,
+        "bm25_score": 3.0, "rrf_score": 1 / 61, "_index": 0,
+    }]
+    monkeypatch.setattr(knowledge_store, "KNOWLEDGE_BM25_MIN_SCORE", 2.0)
+
+    with patch.object(knowledge_store, "load_chunks", return_value=chunks), \
+         patch.object(knowledge_store, "_hybrid_search_candidates", return_value=candidates):
+        diagnostic = knowledge_store.diagnose_knowledge_search(
+            "EMDR", top_k=1, threshold=0.35, retrieval_mode="hybrid_rrf",
+        )
+
+    assert [item["source"] for item in diagnostic["results"]] == ["term-only.md"]
+
+
+def test_lexical_gate_still_rejects_a_weak_lexical_match(monkeypatch):
+    chunks = [{"source": "common.md", "text": "common term", "chunk_index": 0}]
+    candidates = [{
+        **chunks[0], "score": 0.0, "vector_score": None,
+        "bm25_score": 0.4, "rrf_score": 1 / 61, "_index": 0,
+    }]
+    monkeypatch.setattr(knowledge_store, "KNOWLEDGE_BM25_MIN_SCORE", 2.0)
+
+    with patch.object(knowledge_store, "load_chunks", return_value=chunks), \
+         patch.object(knowledge_store, "_hybrid_search_candidates", return_value=candidates):
+        diagnostic = knowledge_store.diagnose_knowledge_search(
+            "common term", top_k=1, threshold=0.35, retrieval_mode="hybrid_rrf",
+        )
+
+    assert diagnostic["results"] == []
+
+
+def test_bm25_statistics_are_reused_until_the_corpus_changes():
+    knowledge_store._BM25_INDEX = None
+    chunks = [{"source": "a.md", "text": "认知行为疗法", "chunk_index": 0}]
+
+    first = knowledge_store._bm25_index(chunks)
+    assert knowledge_store._bm25_index(chunks) is first
+
+    chunks.append({"source": "b.md", "text": "正念练习", "chunk_index": 0})
+    assert knowledge_store._bm25_index(chunks) is not first
+
+
+def test_every_hybrid_candidate_carries_a_bm25_field():
+    chunks = [
+        {"source": "vector-only.md", "text": "vector result", "chunk_index": 0},
+        {"source": "lexical.md", "text": "transformer attention", "chunk_index": 0},
+    ]
+    vector_candidates = [{**chunks[0], "score": 0.91, "_index": 0}]
+    bm25_candidates = [{**chunks[1], "bm25_score": 2.4, "_index": 1}]
+
+    with patch.object(knowledge_store, "_search_candidates", return_value=vector_candidates), \
+         patch.object(knowledge_store, "_bm25_search_candidates", return_value=bm25_candidates):
+        candidates = knowledge_store._hybrid_search_candidates(
+            "transformer", chunks, top_k=2, candidate_multiplier=2,
+        )
+
+    assert all("bm25_score" in item for item in candidates)
+    assert next(item["bm25_score"] for item in candidates if item["source"] == "vector-only.md") is None
 
 
 def test_build_context_enforces_character_budget_and_shows_scores():

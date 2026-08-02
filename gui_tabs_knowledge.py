@@ -23,6 +23,7 @@ class KnowledgeTabComponents:
     rag_evaluation_file: Any
     import_rag_evaluation_button: Any
     run_rag_evaluation_button: Any
+    rag_compare_modes: Any
     rag_evaluation_box: Any
     knowledge_document_selector: Any
     refresh_knowledge_documents_button: Any
@@ -87,6 +88,10 @@ def build_knowledge_tab(
                     rag_evaluation_file = gr.File(
                         label=tr("RAG 评估集"), file_count="single", file_types=[".json", ".jsonl"],
                     )
+                    # 对照模式会把整份评估集跑两遍，日常回归通常不需要，默认关闭。
+                    rag_compare_modes = gr.Checkbox(
+                        label=tr("同时对照向量检索模式"), value=False,
+                    )
                     with gr.Row():
                         import_rag_evaluation_button = gr.Button(tr("导入评估集"))
                         run_rag_evaluation_button = gr.Button(tr("运行 RAG 评估"))
@@ -131,7 +136,7 @@ def build_knowledge_tab(
         knowledge_query, knowledge_box, knowledge_advanced_controls, knowledge_top_k_input,
         knowledge_threshold_input, knowledge_candidate_multiplier_input, rebuild_knowledge_button,
         preview_knowledge_button, inspect_knowledge_quality_button, rag_evaluation_file,
-        import_rag_evaluation_button, run_rag_evaluation_button, rag_evaluation_box,
+        import_rag_evaluation_button, run_rag_evaluation_button, rag_compare_modes, rag_evaluation_box,
         knowledge_document_selector,
         refresh_knowledge_documents_button, delete_knowledge_document_button,
         clear_knowledge_documents_button, knowledge_document_box, style_files,

@@ -6,6 +6,19 @@ import gui_knowledge
 import rag_evaluation_store
 
 
+def test_bundled_regression_set_includes_hard_multilingual_and_near_domain_cases():
+    cases_path = Path(__file__).parent / "knowledge_base" / "rag_evaluation_cases.json"
+    cases = rag_evaluation_store.normalize_cases(json.loads(cases_path.read_text(encoding="utf-8")))
+
+    categories = {case["category"] for case in cases}
+    ids = {case["id"] for case in cases}
+
+    assert len(cases) >= 48
+    assert "hard-multilingual" in categories
+    assert "hard-near-domain-insufficient" in categories
+    assert {"hard-ai-supervised-english", "hard-reject-therapy-diagnosis"} <= ids
+
+
 def _configure_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(rag_evaluation_store, "RAG_EVALUATION_CASES_PATH", tmp_path / "cases.json")
     monkeypatch.setattr(rag_evaluation_store, "RAG_EVALUATION_REPORTS_PATH", tmp_path / "reports.json")
@@ -118,11 +131,32 @@ def test_evaluation_compares_vector_and_hybrid_metrics(tmp_path, monkeypatch):
 
     comparison = report["mode_comparison"]
     assert report["settings"]["retrieval_mode"] == "hybrid_rrf"
-    assert report["recall_at_k"] == 100.0
-    assert comparison["vector"]["recall_at_k"] == 0.0
+    assert report["source_recall_at_k"] == 100.0
+    assert comparison["vector"]["source_recall_at_k"] == 0.0
     assert comparison["hybrid_rrf"]["mrr"] == 1.0
-    assert comparison["hybrid_rrf"]["insufficient_refusal_accuracy"] == 100.0
+    assert comparison["hybrid_rrf"]["insufficient_refusal_rate"] == 100.0
     assert comparison["delta_hybrid_minus_vector"]["pass_rate"] == 100.0
+
+
+def test_comparison_delta_is_undefined_when_a_metric_has_no_denominator(tmp_path, monkeypatch):
+    """A metric with no cases has no delta; reporting 0 would read as "no change"."""
+    _configure_paths(tmp_path, monkeypatch)
+    source = tmp_path / "evaluation.json"
+    source.write_text(json.dumps([
+        {"id": "grounded", "query": "课程安排", "expected_keywords": ["课程"]},
+    ], ensure_ascii=False), encoding="utf-8")
+    rag_evaluation_store.import_evaluation_cases(source)
+
+    results = {"results": [{"source": "course.md", "text": "课程材料"}]}
+    with patch.object(rag_evaluation_store, "diagnose_knowledge_search", return_value=results):
+        report = rag_evaluation_store.run_evaluation(
+            top_k=4, threshold=0.35, candidate_multiplier=3, compare_modes=True,
+        )
+
+    # No expected_sources and no insufficient cases, so both metrics are undefined.
+    assert report["mode_comparison"]["delta_hybrid_minus_vector"]["source_recall_at_k"] is None
+    assert report["mode_comparison"]["delta_hybrid_minus_vector"]["insufficient_refusal_rate"] is None
+    assert report["mode_comparison"]["delta_hybrid_minus_vector"]["pass_rate"] == 0.0
 
 
 def test_evaluation_error_messages_are_fully_english_without_mixed_fragments(tmp_path, monkeypatch):
@@ -177,8 +211,8 @@ def test_evaluation_report_shows_hybrid_comparison():
         "mrr": 1.0, "keyword_hits": 0, "keyword_cases": 0,
         "keyword_coverage": None, "failures": [],
         "mode_comparison": {
-            "vector": {"recall_at_k": 50.0, "mrr": 0.5, "insufficient_refusal_accuracy": 0.0},
-            "hybrid_rrf": {"recall_at_k": 100.0, "mrr": 1.0, "insufficient_refusal_accuracy": 100.0},
+            "vector": {"source_recall_at_k": 50.0, "mrr": 0.5, "insufficient_refusal_rate": 0.0},
+            "hybrid_rrf": {"source_recall_at_k": 100.0, "mrr": 1.0, "insufficient_refusal_rate": 100.0},
         },
     }
 
@@ -186,3 +220,23 @@ def test_evaluation_report_shows_hybrid_comparison():
 
     assert "Mode comparison (vector -> hybrid RRF)" in text
     assert "Recall@K 50.0% -> 100.0%" in text
+
+
+def test_comparison_line_shows_not_available_instead_of_none():
+    report = {
+        "created_at": "2026-07-31T10:00:00",
+        "settings": {"top_k": 4, "threshold": 0.35, "candidate_multiplier": 3, "retrieval_mode": "hybrid_rrf"},
+        "passed_cases": 1, "total_cases": 1, "pass_rate": 100.0,
+        "source_hits": 0, "source_cases": 0, "source_recall_at_k": None,
+        "mrr": None, "keyword_hits": 1, "keyword_cases": 1,
+        "keyword_coverage": 100.0, "failures": [],
+        "mode_comparison": {
+            "vector": {"source_recall_at_k": None, "mrr": None, "insufficient_refusal_rate": None},
+            "hybrid_rrf": {"source_recall_at_k": None, "mrr": None, "insufficient_refusal_rate": None},
+        },
+    }
+
+    text = gui_knowledge.format_rag_evaluation_report(report, "en")
+
+    assert "None" not in text
+    assert "Recall@K n/a% -> n/a%" in text

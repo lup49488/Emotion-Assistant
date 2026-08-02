@@ -174,19 +174,26 @@ def format_rag_evaluation_report(report: dict[str, Any] | None, locale: str = "z
     if isinstance(comparison, dict):
         vector = comparison.get("vector") or {}
         hybrid = comparison.get("hybrid_rrf") or {}
+
+        def metric(summary: dict[str, Any], key: str) -> str:
+            # A metric with no denominator is stored as None, so a plain dict.get
+            # default would print "None" instead of the not-available marker.
+            value = summary.get(key)
+            return not_available if value is None else str(value)
+
         if english:
             lines.append(
                 "Mode comparison (vector -> hybrid RRF): "
-                f"Recall@K {vector.get('recall_at_k', not_available)}% -> {hybrid.get('recall_at_k', not_available)}%; "
-                f"MRR {vector.get('mrr', not_available)} -> {hybrid.get('mrr', not_available)}; "
-                f"insufficient-evidence refusal {vector.get('insufficient_refusal_accuracy', not_available)}% -> {hybrid.get('insufficient_refusal_accuracy', not_available)}%."
+                f"Recall@K {metric(vector, 'source_recall_at_k')}% -> {metric(hybrid, 'source_recall_at_k')}%; "
+                f"MRR {metric(vector, 'mrr')} -> {metric(hybrid, 'mrr')}; "
+                f"insufficient-evidence refusal {metric(vector, 'insufficient_refusal_rate')}% -> {metric(hybrid, 'insufficient_refusal_rate')}%."
             )
         else:
             lines.append(
                 "模式对照（向量 -> Hybrid RRF）："
-                f"召回率@K {vector.get('recall_at_k', not_available)}% -> {hybrid.get('recall_at_k', not_available)}%；"
-                f"MRR {vector.get('mrr', not_available)} -> {hybrid.get('mrr', not_available)}；"
-                f"资料不足拒答 {vector.get('insufficient_refusal_accuracy', not_available)}% -> {hybrid.get('insufficient_refusal_accuracy', not_available)}%。"
+                f"召回率@K {metric(vector, 'source_recall_at_k')}% -> {metric(hybrid, 'source_recall_at_k')}%；"
+                f"MRR {metric(vector, 'mrr')} -> {metric(hybrid, 'mrr')}；"
+                f"资料不足拒答 {metric(vector, 'insufficient_refusal_rate')}% -> {metric(hybrid, 'insufficient_refusal_rate')}%。"
             )
     failures = report.get("failures") or []
     if failures:
@@ -198,12 +205,13 @@ def format_rag_evaluation_report(report: dict[str, Any] | None, locale: str = "z
 
 
 def run_rag_evaluation_from_gui(
-    top_k: int, threshold: float, candidate_multiplier: int, locale: str = "zh-CN"
+    top_k: int, threshold: float, candidate_multiplier: int,
+    compare_modes: bool = False, locale: str = "zh-CN",
 ) -> str:
     try:
         report = run_evaluation(
             top_k=int(top_k), threshold=float(threshold), candidate_multiplier=int(candidate_multiplier),
-            compare_modes=True,
+            compare_modes=bool(compare_modes),
         )
     except Exception as exc:
         return localize_status_text(f"运行 RAG 评估失败：{exc}", locale)

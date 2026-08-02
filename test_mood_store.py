@@ -39,6 +39,26 @@ def test_add_mood_checkin_creates_record(isolated_users_dir):
     assert load_mood_checkins("alice") == [record]
 
 
+def test_note_keeps_leading_indentation_through_a_save_and_reload(isolated_users_dir):
+    note = "    今天先记三件小事：\n      1. 早睡\n      2. 散步"
+
+    add_mood_checkin("alice", "平静", 3, note, "2026-07-12")
+
+    assert load_mood_checkins("alice")[0]["note"] == note
+
+
+def test_note_drops_trailing_whitespace_so_repeated_edits_do_not_grow_it(isolated_users_dir):
+    add_mood_checkin("alice", "平静", 3, "  有一点累  \n\n  ", "2026-07-12")
+
+    assert load_mood_checkins("alice")[0]["note"] == "  有一点累"
+
+
+def test_whitespace_only_note_is_stored_as_no_note(isolated_users_dir):
+    add_mood_checkin("alice", "平静", 3, "   \n  ", "2026-07-12")
+
+    assert load_mood_checkins("alice")[0]["note"] == ""
+
+
 def test_same_day_checkin_updates_existing_record(isolated_users_dir):
     first = add_mood_checkin("alice", "一般", 3, "早上普通", "2026-07-12")
     updated = add_mood_checkin("alice", "平静", 2, "晚上好多了", "2026-07-12")

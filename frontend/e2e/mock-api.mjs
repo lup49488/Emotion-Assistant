@@ -18,7 +18,7 @@ function resetState() {
   conversations.splice(0, conversations.length)
   moodRecords.splice(0, moodRecords.length, {
     date: '2026-07-29', mood: 'calm', intensity: 3,
-    note: 'First paragraph.\n\nSecond paragraph.', source: 'checkin',
+    note: '    Indented first line.\n\nSecond paragraph.', source: 'checkin',
     created_at: '2026-07-29T09:00:00', updated_at: '2026-07-29T09:00:00',
   })
   Object.assign(memorySnapshot, {

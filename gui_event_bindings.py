@@ -337,7 +337,8 @@ def bind_gui_events(
         fn=callback("run_rag_evaluation_from_gui"),
         inputs=[
             ui.knowledge_top_k, ui.knowledge_threshold,
-            ui.knowledge_candidate_multiplier, ui.locale_probe_input,
+            ui.knowledge_candidate_multiplier, ui.rag_compare_modes,
+            ui.locale_probe_input,
         ],
         outputs=ui.rag_evaluation_box,
     )

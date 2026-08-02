@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import re
@@ -25,8 +26,10 @@ from config import (
     KNOWLEDGE_MAX_CONTEXT_CHARS,
     KNOWLEDGE_MAX_PER_SOURCE,
     KNOWLEDGE_MIN_CHUNK_CHARS,
+    KNOWLEDGE_BM25_MIN_SCORE,
     KNOWLEDGE_RETRIEVAL_THRESHOLD,
     KNOWLEDGE_RETRIEVAL_MODE,
+    KNOWLEDGE_RETRIEVAL_MODES,
     KNOWLEDGE_RRF_K,
     KNOWLEDGE_TOP_K,
     RAG_RELEASE_GATE_ENABLED,
@@ -553,23 +556,60 @@ def _bm25_tokens(text: str) -> list[str]:
     return tokens
 
 
+def _chunks_fingerprint(chunks: list[dict[str, Any]]) -> str:
+    digest = hashlib.blake2b(digest_size=16)
+    for chunk in chunks:
+        digest.update(str(chunk.get("text", "")).encode("utf-8"))
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+# (fingerprint, statistics). Rebound as a whole so concurrent readers never see a
+# half-built index; a race only costs duplicated work, never a stale result.
+_BM25_INDEX: tuple[str, dict[str, Any]] | None = None
+
+
+def _bm25_index(chunks: list[dict[str, Any]]) -> dict[str, Any]:
+    """Tokenized corpus statistics, cached because hashing costs far less than tokenizing.
+
+    Rebuilding per query is O(corpus) regex work on the request thread, which grows
+    with the knowledge base; digesting the same text to detect changes does not.
+    """
+    global _BM25_INDEX
+    fingerprint = _chunks_fingerprint(chunks)
+    cached = _BM25_INDEX
+    if cached is not None and cached[0] == fingerprint:
+        return cached[1]
+    documents = [_bm25_tokens(str(chunk.get("text", ""))) for chunk in chunks]
+    document_frequency: Counter[str] = Counter()
+    for tokens in documents:
+        document_frequency.update(set(tokens))
+    index = {
+        "documents": documents,
+        "frequencies": [Counter(tokens) for tokens in documents],
+        "document_frequency": document_frequency,
+        "average_length": (sum(len(tokens) for tokens in documents) / len(documents)) or 1.0,
+    }
+    _BM25_INDEX = (fingerprint, index)
+    return index
+
+
 def _bm25_search_candidates(
     query: str, chunks: list[dict[str, Any]], *, candidate_count: int
 ) -> list[dict[str, Any]]:
     query_tokens = _bm25_tokens(query)
     if not query_tokens or not chunks:
         return []
-    documents = [_bm25_tokens(str(chunk.get("text", ""))) for chunk in chunks]
-    document_frequency: Counter[str] = Counter()
-    for tokens in documents:
-        document_frequency.update(set(tokens))
-    average_length = sum(len(tokens) for tokens in documents) / len(documents) or 1.0
+    index = _bm25_index(chunks)
+    documents = index["documents"]
+    document_frequency = index["document_frequency"]
+    average_length = index["average_length"]
     query_terms = Counter(query_tokens)
     ranked: list[tuple[float, int]] = []
-    for index, tokens in enumerate(documents):
+    for position, tokens in enumerate(documents):
         if not tokens:
             continue
-        frequencies = Counter(tokens)
+        frequencies = index["frequencies"][position]
         score = 0.0
         for term, query_frequency in query_terms.items():
             frequency = frequencies.get(term, 0)
@@ -579,11 +619,11 @@ def _bm25_search_candidates(
             denominator = frequency + 1.5 * (1 - 0.75 + 0.75 * len(tokens) / average_length)
             score += query_frequency * inverse_frequency * frequency * 2.5 / denominator
         if score > 0:
-            ranked.append((score, index))
+            ranked.append((score, position))
     ranked.sort(key=lambda item: (-item[0], item[1]))
     return [
-        {**chunks[index], "_index": index, "bm25_score": float(score)}
-        for score, index in ranked[:candidate_count]
+        {**chunks[position], "_index": position, "bm25_score": float(score)}
+        for score, position in ranked[:candidate_count]
     ]
 
 
@@ -602,7 +642,12 @@ def _hybrid_search_candidates(
     merged: dict[int, dict[str, Any]] = {}
     for rank, candidate in enumerate(vector_candidates, start=1):
         index = int(candidate["_index"])
-        merged[index] = {**candidate, "vector_score": float(candidate["score"]), "rrf_score": 1 / (KNOWLEDGE_RRF_K + rank)}
+        # Keep bm25_score present on every candidate so the diagnostics panel does
+        # not show the field for only part of the pool.
+        merged[index] = {
+            **candidate, "vector_score": float(candidate["score"]),
+            "bm25_score": None, "rrf_score": 1 / (KNOWLEDGE_RRF_K + rank),
+        }
     for rank, candidate in enumerate(bm25_candidates, start=1):
         index = int(candidate["_index"])
         item = merged.setdefault(index, {**candidate, "score": 0.0, "vector_score": None, "rrf_score": 0.0})
@@ -611,10 +656,22 @@ def _hybrid_search_candidates(
     return sorted(merged.values(), key=lambda item: (-float(item["rrf_score"]), int(item["_index"])))
 
 
+def _passes_lexical_gate(item: dict[str, Any]) -> bool:
+    """Whether a chunk the vector search scored too low qualifies on lexical evidence.
+
+    Disabled by default: without this gate BM25 can only reorder the vector
+    candidate pool, so an exact rare term the embedding missed stays unreachable.
+    """
+    if KNOWLEDGE_BM25_MIN_SCORE <= 0:
+        return False
+    bm25_score = item.get("bm25_score")
+    return bm25_score is not None and float(bm25_score) >= KNOWLEDGE_BM25_MIN_SCORE
+
+
 def _normalize_retrieval_mode(retrieval_mode: str | None) -> str:
     mode = str(retrieval_mode or KNOWLEDGE_RETRIEVAL_MODE).strip().lower()
-    if mode not in {"vector", "hybrid_rrf"}:
-        raise ValueError("检索模式仅支持 vector 或 hybrid_rrf。")
+    if mode not in KNOWLEDGE_RETRIEVAL_MODES:
+        raise ValueError(f"检索模式仅支持 {'、'.join(KNOWLEDGE_RETRIEVAL_MODES)}。")
     return mode
 
 
@@ -643,9 +700,11 @@ def diagnose_knowledge_search(
     for item in candidates:
         score = float(item["score"])
         key = _normalized_chunk_key(str(item.get("text", "")))
-        # RRF changes ordering, while the vector score remains the evidence gate.
-        # A common BM25 term alone must not turn out-of-domain text into evidence.
-        if score < threshold:
+        # RRF only reorders; the vector score stays the primary evidence gate so a
+        # common BM25 term alone cannot turn out-of-domain text into evidence. A
+        # lexical-only chunk is admitted only when KNOWLEDGE_BM25_MIN_SCORE is
+        # configured and its BM25 score clears that separate, stricter bar.
+        if score < threshold and not _passes_lexical_gate(item):
             item["accepted"] = False
             item["decision"] = f"低于阈值 {threshold:.2f}"
         elif not key:

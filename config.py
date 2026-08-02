@@ -37,6 +37,19 @@ def _env_int(name: str, default: int) -> int:
         _logger.warning("环境变量 %s=%r 不是合法的整数，使用默认值 %s", name, raw, default)
         return default
 
+def _env_choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    if raw not in allowed:
+        _logger.warning(
+            "环境变量 %s=%r 不是受支持的取值（%s），使用默认值 %s",
+            name, raw, "、".join(allowed), default,
+        )
+        return default
+    return raw
+
+
 USERS_DIR = BASE_DIR / "users"
 KNOWLEDGE_DIR = BASE_DIR / "knowledge_base"
 KNOWLEDGE_DOCS_DIR = KNOWLEDGE_DIR / "documents"
@@ -159,10 +172,13 @@ LOCAL_MODEL_CPU_MAX_MEMORY_GB = _env_float("LOCAL_MODEL_CPU_MAX_MEMORY_GB", 12.0
 KNOWLEDGE_ENABLED = os.getenv("KNOWLEDGE_ENABLED", "false").lower() == "true"
 KNOWLEDGE_TOP_K = _env_int("KNOWLEDGE_TOP_K", 4)
 KNOWLEDGE_RETRIEVAL_THRESHOLD = _env_float("KNOWLEDGE_RETRIEVAL_THRESHOLD", 0.35)
-KNOWLEDGE_RETRIEVAL_MODE = os.getenv("KNOWLEDGE_RETRIEVAL_MODE", "hybrid_rrf").strip().lower()
-if KNOWLEDGE_RETRIEVAL_MODE not in {"vector", "hybrid_rrf"}:
-    raise RuntimeError("KNOWLEDGE_RETRIEVAL_MODE 仅支持 vector 或 hybrid_rrf。")
+# 检索模式的唯一定义来源，避免各模块各写一份取值集合。
+KNOWLEDGE_RETRIEVAL_MODES = ("vector", "hybrid_rrf")
+KNOWLEDGE_RETRIEVAL_MODE = _env_choice("KNOWLEDGE_RETRIEVAL_MODE", "hybrid_rrf", KNOWLEDGE_RETRIEVAL_MODES)
 KNOWLEDGE_RRF_K = max(1, _env_int("KNOWLEDGE_RRF_K", 60))
+# BM25 独立准入门槛。向量分数始终是主门槛；该值大于 0 时，纯词法命中只要 BM25
+# 分数达标也可入选，用于找回向量检索漏掉的专有名词与缩写。默认关闭（保持保守）。
+KNOWLEDGE_BM25_MIN_SCORE = max(0.0, _env_float("KNOWLEDGE_BM25_MIN_SCORE", 0.0))
 KNOWLEDGE_CHUNK_SIZE = _env_int("KNOWLEDGE_CHUNK_SIZE", 700)
 KNOWLEDGE_CHUNK_OVERLAP = _env_int("KNOWLEDGE_CHUNK_OVERLAP", 120)
 KNOWLEDGE_CANDIDATE_MULTIPLIER = _env_int("KNOWLEDGE_CANDIDATE_MULTIPLIER", 4)

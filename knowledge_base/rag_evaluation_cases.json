@@ -178,5 +178,237 @@
     "category": "insufficient-evidence",
     "query": "Python 3.14 有哪些新特性？",
     "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-ai-narrow-versus-agi",
+    "category": "hard-concept-contrast",
+    "query": "现在能落地的 Narrow AI 和假想中的 AGI，能力范围有什么根本差别？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["假想系统"]
+  },
+  {
+    "id": "hard-ai-no-real-emotions",
+    "category": "hard-negation",
+    "query": "资料是否认为当代 AI 已经具有真实意识和情感？请不要把表现像人误当成真的理解。",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["并不具备意识"]
+  },
+  {
+    "id": "hard-ai-overfitting-generalization",
+    "category": "hard-semantic-rewrite",
+    "query": "模型把训练题全做对了，但一换新样本就表现差，这个问题叫什么？怎样缓解？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["无法泛化到新数据"]
+  },
+  {
+    "id": "hard-ai-supervised-english",
+    "category": "hard-multilingual",
+    "query": "Which learning setup uses labelled input-output pairs rather than discovering clusters by itself?",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["带标签的数据"]
+  },
+  {
+    "id": "hard-ai-transformer-parallel",
+    "category": "hard-concept-contrast",
+    "query": "为什么 Transformer 相比逐词处理的循环网络更利于训练，也更容易处理相隔很远的词？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["并行处理整个序列", "长距离的依赖关系"]
+  },
+  {
+    "id": "hard-ai-attention-runtime",
+    "category": "hard-project-terms",
+    "query": "在这个项目的本地模型中，SDPA 或 Flash Attention 影响的是回答内容，还是运行资源？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["推理速度", "显存占用"]
+  },
+  {
+    "id": "hard-ai-next-token",
+    "category": "hard-negation",
+    "query": "LLM 给出看似可信的答案时，它是在逐条查证事实，还是主要在做另一种预测？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["预测下一个词"]
+  },
+  {
+    "id": "hard-ai-training-stages",
+    "category": "hard-concept-contrast",
+    "query": "pre-training 和 instruction tuning 在大模型训练中分别解决什么问题？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["预训练阶段", "指令微调"]
+  },
+  {
+    "id": "hard-rag-update-without-training",
+    "category": "hard-semantic-rewrite",
+    "query": "私有资料变更后，为什么不必重新训练整套大模型也能让回答跟上内容？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["更新知识库", "无需重新训练模型"]
+  },
+  {
+    "id": "hard-rag-chunk-tradeoff",
+    "category": "hard-concept-contrast",
+    "query": "RAG 切片是不是越短越好？片段过大和过小分别会有什么代价？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["片段过大", "过小则"]
+  },
+  {
+    "id": "hard-embedding-cosine-english",
+    "category": "hard-multilingual",
+    "query": "For embeddings with different magnitudes, what relationship does cosine similarity measure?",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["向量方向"]
+  },
+  {
+    "id": "hard-nlp-chinese-boundaries",
+    "category": "hard-multilingual",
+    "query": "Why does Chinese NLP need segmentation while English tokenization feels more obvious?",
+    "expected_outcome": "grounded",
+    "expected_sources": ["人工智能.md"],
+    "expected_keywords": ["没有天然的词边界"]
+  },
+  {
+    "id": "hard-psych-mindfulness-boundary",
+    "category": "hard-negation",
+    "query": "正念练习是不是必须让大脑完全没有想法，或者把难过强行压下去？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["不评判", "不是要清空头脑"]
+  },
+  {
+    "id": "hard-psych-negative-thoughts",
+    "category": "hard-semantic-rewrite",
+    "query": "我因为一次失误就断定未来全毁了，这类想法可怎样先检验，而不是立刻相信它？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["灾难化"]
+  },
+  {
+    "id": "hard-psych-sleep-hygiene",
+    "category": "hard-semantic-rewrite",
+    "query": "睡前刷刺激内容、晚上喝咖啡和躺着焦虑睡不着，资料建议怎样调整？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["傍晚后摄入咖啡因", "先起身做些放松的事"]
+  },
+  {
+    "id": "hard-psych-boundary-not-selfish",
+    "category": "hard-negation",
+    "query": "在人际关系里适度说“不”是不是自私？怎样避免把别人的情绪都当作自己的责任？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["区分他人的情绪"]
+  },
+  {
+    "id": "hard-psych-first-professional-help",
+    "category": "hard-semantic-rewrite",
+    "query": "学生第一次想找正规心理支持，可以从哪些现实渠道开始？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["心理学.md"],
+    "expected_keywords": ["学校心理中心"]
+  },
+  {
+    "id": "hard-acg-supervisor-role",
+    "category": "hard-domain-terminology",
+    "query": "动画制作表里的“监督”是负责监督员工的人吗，还是对应另一种创作岗位？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["导演"]
+  },
+  {
+    "id": "hard-acg-ova-versus-web",
+    "category": "hard-concept-contrast",
+    "query": "OVA/OAD 和网络动画的发行方式有什么区别？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["不经电视播出", "网络动画"]
+  },
+  {
+    "id": "hard-acg-visual-novel",
+    "category": "hard-multilingual",
+    "query": "Visual Novel 是轻小说吗？玩家通常通过什么机制影响故事走向？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["玩家通过选项影响分支结局"]
+  },
+  {
+    "id": "hard-acg-goods-terms",
+    "category": "hard-domain-terminology",
+    "query": "圈内说“吃谷”时，谷子这个词从哪里来，通常买的是什么？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["Goods", "购买周边"]
+  },
+  {
+    "id": "hard-acg-op-ed-english",
+    "category": "hard-multilingual",
+    "query": "In anime music credits, how do OP and ED differ?",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["片头曲", "片尾曲"]
+  },
+  {
+    "id": "hard-acg-spoiler-boundary",
+    "category": "hard-community-boundary",
+    "query": "和刚入坑的人讨论具体剧情前，知识库建议先确认什么，以免破坏体验？",
+    "expected_outcome": "grounded",
+    "expected_sources": ["二次元.md"],
+    "expected_keywords": ["确认对方进度", "避免剧透"]
+  },
+  {
+    "id": "hard-reject-agi-timeline",
+    "category": "hard-near-domain-insufficient",
+    "query": "AGI 会在 2030 年的哪一天实现？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-reject-next-season-anime",
+    "category": "hard-near-domain-insufficient",
+    "query": "请列出 2026 年十月新番的完整播出表和每集更新时间。",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-reject-specific-plot",
+    "category": "hard-near-domain-insufficient",
+    "query": "某部具体动画第 12 集里主角最后选择了谁？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-reject-medication-dose",
+    "category": "hard-near-domain-insufficient",
+    "query": "我焦虑失眠，今晚应该服用多少毫克褪黑素或处方药？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-reject-rag-production-code",
+    "category": "hard-near-domain-insufficient",
+    "query": "请按这份资料给出一份可直接上线的 FAISS 生产环境 Python 配置和完整代码。",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-reject-latest-embedding-model",
+    "category": "hard-near-domain-insufficient",
+    "query": "今天 BAAI bge 系列最新的嵌入模型版本、价格和排行榜成绩分别是什么？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-reject-therapy-diagnosis",
+    "category": "hard-near-domain-insufficient",
+    "query": "仅根据我这周睡不好和心情低落，能否确诊我患有抑郁症？",
+    "expected_outcome": "insufficient"
+  },
+  {
+    "id": "hard-reject-investment-advice",
+    "category": "hard-near-domain-insufficient",
+    "query": "请根据 AI 行业趋势告诉我今天应该买入哪只股票，以及买多少。",
+    "expected_outcome": "insufficient"
   }
 ]

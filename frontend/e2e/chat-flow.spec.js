@@ -98,12 +98,14 @@ test('a reliable conversation emotion is visible in personal data', async ({ pag
   await expect(page.getByText('0.98', { exact: false })).toBeVisible()
 })
 
-test('mood notes retain paragraph breaks in the check-in history', async ({ page }) => {
+test('mood notes retain leading indentation and paragraph breaks in the check-in history', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Mood check-in' }).click()
 
   const note = page.locator('.record-note')
-  await expect(note).toHaveText('First paragraph.\n\nSecond paragraph.')
+  // toHaveText trims, so assert on textContent to see the leading spaces.
+  await expect(note).toHaveText(/Indented first line\./)
+  expect(await note.textContent()).toBe('    Indented first line.\n\nSecond paragraph.')
   await expect(note).toHaveCSS('white-space', 'pre-wrap')
 })
 

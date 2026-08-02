@@ -5,7 +5,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from config import KNOWLEDGE_DIR, KNOWLEDGE_RETRIEVAL_MODE
+from config import KNOWLEDGE_DIR, KNOWLEDGE_RETRIEVAL_MODE, KNOWLEDGE_RETRIEVAL_MODES
 from json_utils import load_json, save_json
 from knowledge_store import diagnose_knowledge_search, has_usable_evidence
 
@@ -99,7 +99,6 @@ def _evaluate_cases(
     cases: list[dict[str, Any]], *, top_k: int, threshold: float,
     candidate_multiplier: int, retrieval_mode: str,
 ) -> dict[str, Any]:
-
     source_cases = keyword_cases = source_hits = keyword_hits = passed_cases = 0
     insufficient_cases = insufficient_passes = 0
     reciprocal_rank_total = 0.0
@@ -162,25 +161,28 @@ def _evaluate_cases(
         "pass_rate": _percent(passed_cases, len(cases)),
         "source_cases": source_cases, "source_hits": source_hits,
         "source_recall_at_k": _percent(source_hits, source_cases),
-        "recall_at_k": _percent(source_hits, source_cases),
         "mrr": round(reciprocal_rank_total / source_cases, 3) if source_cases else None,
         "keyword_cases": keyword_cases, "keyword_hits": keyword_hits,
         "keyword_coverage": _percent(keyword_hits, keyword_cases),
         "insufficient_cases": insufficient_cases, "insufficient_passes": insufficient_passes,
         "insufficient_refusal_rate": _percent(insufficient_passes, insufficient_cases),
-        "insufficient_refusal_accuracy": _percent(insufficient_passes, insufficient_cases),
         "failures": [item for item in details if not item["passed"]][:10],
     }
     return report
 
 
+COMPARISON_METRICS = ("source_recall_at_k", "mrr", "insufficient_refusal_rate", "pass_rate")
+
+
 def _comparison_summary(report: dict[str, Any]) -> dict[str, Any]:
-    return {
-        "recall_at_k": report["recall_at_k"],
-        "mrr": report["mrr"],
-        "insufficient_refusal_accuracy": report["insufficient_refusal_accuracy"],
-        "pass_rate": report["pass_rate"],
-    }
+    return {key: report[key] for key in COMPARISON_METRICS}
+
+
+def _metric_delta(hybrid: Any, vector: Any) -> float | None:
+    # An undefined metric has no delta; coercing None to 0 would read as "no change".
+    if hybrid is None or vector is None:
+        return None
+    return round(float(hybrid) - float(vector), 3)
 
 
 def run_evaluation(
@@ -191,8 +193,8 @@ def run_evaluation(
     if not cases:
         raise ValueError("还没有评估样本，请先导入 JSON 或 JSONL 评估集。")
     mode = str(retrieval_mode or KNOWLEDGE_RETRIEVAL_MODE).strip().lower()
-    if mode not in {"vector", "hybrid_rrf"}:
-        raise ValueError("检索模式仅支持 vector 或 hybrid_rrf。")
+    if mode not in KNOWLEDGE_RETRIEVAL_MODES:
+        raise ValueError(f"检索模式仅支持 {'、'.join(KNOWLEDGE_RETRIEVAL_MODES)}。")
     report = _evaluate_cases(
         cases, top_k=top_k, threshold=threshold,
         candidate_multiplier=candidate_multiplier, retrieval_mode=mode,
@@ -210,8 +212,8 @@ def run_evaluation(
             "vector": vector_summary,
             "hybrid_rrf": hybrid_summary,
             "delta_hybrid_minus_vector": {
-                key: round(float(hybrid_summary[key] or 0) - float(vector_summary[key] or 0), 3)
-                for key in vector_summary
+                key: _metric_delta(hybrid_summary[key], vector_summary[key])
+                for key in COMPARISON_METRICS
             },
         }
     reports = load_json(RAG_EVALUATION_REPORTS_PATH)
