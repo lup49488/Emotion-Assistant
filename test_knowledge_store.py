@@ -231,6 +231,82 @@ def test_lexical_gate_still_rejects_a_weak_lexical_match(monkeypatch):
     assert diagnostic["results"] == []
 
 
+def test_near_domain_scope_guard_catches_known_out_of_scope_request_shapes():
+    cases = {
+        "请列出 2026 年十月新番的完整播出表和每集更新时间。": "realtime_or_latest_information",
+        "AGI 会在哪一年实现？": "precise_future_prediction",
+        "某部具体动画第 12 集的结局是什么？": "specific_media_detail",
+        "我焦虑失眠，今晚应该服用多少毫克处方药？": "medication_dosage_request",
+        "给我一份可直接上线的 FAISS 生产环境完整代码。": "production_implementation",
+        "请告诉我该买入哪只 AI 股票。": "financial_recommendation",
+        "下一代 iPhone 什么时候发布？": "product_or_software_release",
+        "明天天气怎么样，要不要带伞？": "weather_or_travel_plan",
+    }
+
+    assert {query: knowledge_store.assess_knowledge_query_scope(query) for query in cases} == cases
+    assert knowledge_store.assess_knowledge_query_scope("RAG 为什么能减少幻觉？") is None
+
+
+# Every entry is something a distressed user plausibly writes to an emotional-support
+# chatbot. Blocking any of them replaces support with a "no sources" notice, which is
+# a worse failure than answering without citations. Extend this list when adding rules.
+ORDINARY_SUPPORT_TALK = (
+    "我最近被诊断出抑郁症，很难受",
+    "医生给我开了药，我要不要服用？",
+    "我不敢去医院做诊断，好怕",
+    "我一直在吃药，但还是提不起劲",
+    "我因为股票亏了很多钱，特别焦虑",
+    "朋友劝我卖出手里的东西，我很纠结",
+    "最近工作行程很满，压力好大",
+    "我想去几个景点散散心，能给点建议吗",
+    "看完那部动画的结局我哭了很久",
+    "今天开会我状态很差，一直走神",
+    "我是不是得了焦虑症，好害怕",
+    "I feel stuck in Stockholm and lonely",
+    "How do I handle concurrent model calls?",
+    "My current job is draining me",
+    "什么是认知行为疗法",
+    "RAG 的召回率一般怎么评估？",
+)
+
+
+def test_near_domain_guard_never_blocks_ordinary_support_talk():
+    blocked = {
+        text: knowledge_store.assess_knowledge_query_scope(text)
+        for text in ORDINARY_SUPPORT_TALK
+        if knowledge_store.assess_knowledge_query_scope(text)
+    }
+
+    assert blocked == {}
+
+
+def test_near_domain_scope_guard_returns_structured_insufficient_bundle():
+    with patch.object(knowledge_store, "load_chunks", return_value=[{"source": "a.md", "text": "内容", "chunk_index": 0}]), \
+         patch.object(knowledge_store, "_search_candidates", return_value=[]):
+        bundle = knowledge_store.build_knowledge_bundle("下一代 iPhone 什么时候发布？")
+
+    assert bundle["context"] == ""
+    assert bundle["citations"] == []
+    assert bundle["evidence"]["status"] == "insufficient"
+    assert bundle["evidence"]["reason"] == "product_or_software_release"
+
+
+def test_scope_guard_decision_is_visible_in_the_search_diagnostics():
+    """The panel must explain a blocked query instead of silently returning nothing."""
+    chunks = [{"source": "a.md", "text": "iPhone 与移动端推理", "chunk_index": 0}]
+    candidates = [{**chunks[0], "score": 0.9, "_index": 0}]
+
+    with patch.object(knowledge_store, "load_chunks", return_value=chunks), \
+         patch.object(knowledge_store, "_search_candidates", return_value=candidates):
+        diagnostic = knowledge_store.diagnose_knowledge_search(
+            "下一代 iPhone 什么时候发布？", top_k=1, retrieval_mode="vector",
+        )
+
+    assert diagnostic["scope_reason"] == "product_or_software_release"
+    assert diagnostic["results"] == []
+    assert diagnostic["candidates"], "candidates stay visible so the block can be debugged"
+
+
 def test_bm25_statistics_are_reused_until_the_corpus_changes():
     knowledge_store._BM25_INDEX = None
     chunks = [{"source": "a.md", "text": "认知行为疗法", "chunk_index": 0}]
@@ -265,7 +341,7 @@ def test_build_context_enforces_character_budget_and_shows_scores():
         {"source": "a.txt", "text": "甲" * 300, "score": 0.8},
         {"source": "b.txt", "text": "乙" * 300, "score": 0.7},
     ]
-    with patch.object(knowledge_store, "retrieve_knowledge", return_value=results):
+    with patch.object(knowledge_store, "diagnose_knowledge_search", return_value={"results": results, "scope_reason": None}):
         context = knowledge_store.build_knowledge_context("问题", max_context_chars=200)
 
     assert len(context) <= 200
@@ -277,7 +353,7 @@ def test_knowledge_bundle_only_cites_chunks_that_fit_the_context_budget():
         {"source": "a.txt", "chunk_index": 2, "text": "A" * 300, "score": 0.8},
         {"source": "b.txt", "chunk_index": 3, "text": "B" * 300, "score": 0.7},
     ]
-    with patch.object(knowledge_store, "retrieve_knowledge", return_value=results):
+    with patch.object(knowledge_store, "diagnose_knowledge_search", return_value={"results": results, "scope_reason": None}):
         bundle = knowledge_store.build_knowledge_bundle("question", max_context_chars=200)
 
     assert bundle["citations"]
@@ -294,7 +370,8 @@ def test_results_without_usable_text_are_not_treated_as_evidence():
 
 
 def test_bundle_reports_unusable_excerpts_separately_from_missing_matches():
-    with patch.object(knowledge_store, "retrieve_knowledge", return_value=[{"source": "a.txt", "text": "", "score": 0.9}]):
+    unusable = {"results": [{"source": "a.txt", "text": "", "score": 0.9}], "scope_reason": None}
+    with patch.object(knowledge_store, "diagnose_knowledge_search", return_value=unusable):
         bundle = knowledge_store.build_knowledge_bundle("question")
 
     assert bundle["evidence"]["status"] == "insufficient"
@@ -303,7 +380,7 @@ def test_bundle_reports_unusable_excerpts_separately_from_missing_matches():
 
 
 def test_build_knowledge_bundle_marks_missing_evidence_structurally():
-    with patch.object(knowledge_store, "retrieve_knowledge", return_value=[]), \
+    with patch.object(knowledge_store, "diagnose_knowledge_search", return_value={"results": [], "scope_reason": None}), \
          patch.object(knowledge_store, "load_chunks", return_value=[]):
         bundle = knowledge_store.build_knowledge_bundle("question")
 

@@ -188,6 +188,9 @@ KNOWLEDGE_MIN_CHUNK_CHARS = _env_int("KNOWLEDGE_MIN_CHUNK_CHARS", 40)
 # When a caller explicitly enables RAG, do not let the model answer as though
 # it were grounded if retrieval found no eligible source chunks.
 RAG_REQUIRE_EVIDENCE = os.getenv("RAG_REQUIRE_EVIDENCE", "true").lower() == "true"
+# Reject requests that resemble corpus topics but ask for facts, advice, or
+# implementation detail that the bundled materials cannot substantiate.
+RAG_NEAR_DOMAIN_GUARD_ENABLED = os.getenv("RAG_NEAR_DOMAIN_GUARD_ENABLED", "true").lower() == "true"
 
 STYLE_ENABLED = os.getenv("STYLE_ENABLED", "true").lower() == "true"
 STYLE_TOP_K = _env_int("STYLE_TOP_K", 3)

@@ -38,6 +38,7 @@ from config import (
     RAG_RELEASE_MIN_KEYWORD_COVERAGE,
     RAG_RELEASE_MIN_PASS_RATE,
     RAG_RELEASE_MIN_SOURCE_RECALL,
+    RAG_NEAR_DOMAIN_GUARD_ENABLED,
 )
 from json_utils import load_json, save_json
 from llm_providers import encode_texts, get_embedding_dimension
@@ -57,6 +58,93 @@ from sqlite_store import (
 SUPPORTED_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".pdf", ".docx"}
 RAG_COLLECTION = "knowledge"
 _RELEASE_LOCK = threading.RLock()
+
+
+# Request shapes the bundled overview corpus cannot substantiate even when it
+# shares vocabulary with them.
+#
+# Every rule must match an explicit *request for out-of-scope specifics*, never a
+# bare subject word. This service is an emotional-support chatbot, so its users
+# routinely mention diagnoses, medication, money and travel while describing how
+# they feel — "我被诊断出抑郁症" is a disclosure to respond to, not a request for a
+# diagnosis. Matching such a message would replace support with a "no sources"
+# notice, which is worse than answering without citations. English alternatives
+# carry \b so "stock" cannot fire inside "Stockholm", nor "current" inside
+# "concurrent". Keep test_near_domain_guard_never_blocks_ordinary_support_talk
+# green when adding rules.
+_NEAR_DOMAIN_SCOPE_RULES: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("realtime_or_latest_information", re.compile(
+        r"(?:最新|实时|今天|明天|当前|现在)[^。？?!！]{0,12}"
+        r"(?:价格|股价|排行榜|播出表|更新时间|版本号|新番)"
+        r"|20\d{2}\s*年?[^。？?!！]{0,10}(?:新番|播出表|更新时间)"
+        r"|\b(?:latest|current|real[-\s]?time|today'?s)\b[^.?!]{0,24}"
+        r"\b(?:price|ranking|release\s+date|schedule|version\s+number)\b",
+        re.IGNORECASE,
+    )),
+    ("product_or_software_release", re.compile(
+        r"(?:下一代|下一版|新一代)[^。？?!！]{0,20}(?:什么时候|何时|发布日期|上市日期)"
+        r"|(?:iphone\s*\d*|python\s*\d+(?:\.\d+)?)[^。？?!！]{0,20}"
+        r"(?:什么时候|何时|发布日期|新特性有哪些)"
+        r"|\bnext[-\s]gen(?:eration)?\b[^.?!]{0,24}\brelease\s+date\b",
+        re.IGNORECASE,
+    )),
+    ("precise_future_prediction", re.compile(
+        # Only a demand for an exact date; "AGI 会实现吗" is a discussion, not a lookup.
+        r"(?:agi|通用人工智能)[^。？?!！]{0,24}(?:哪一天|哪一年|具体日期|具体时间|准确时间)"
+        r"|(?:哪一天|哪一年|具体日期)[^。？?!！]{0,24}(?:agi|通用人工智能)"
+        r"|\b(?:agi)\b[^.?!]{0,24}\b(?:exact\s+date|which\s+year)\b",
+        re.IGNORECASE,
+    )),
+    ("specific_media_detail", re.compile(
+        r"(?:第\s*\d+\s*集|具体剧情|结局)[^。？?!！]{0,16}"
+        r"(?:是什么|讲了什么|剧透|告诉我|列出|说一下)"
+        r"|(?:剧透|告诉我|列出)[^。？?!！]{0,16}(?:第\s*\d+\s*集|具体剧情|结局)",
+        re.IGNORECASE,
+    )),
+    ("medication_dosage_request", re.compile(
+        # Dosage and prescription asks only. Mentioning a diagnosis one already has
+        # is disclosure, so 确诊/诊断 alone must never match.
+        r"(?:多少|几)\s*(?:毫克|mg|片|粒)"
+        r"|(?:用药|服用)\s*剂量|剂量\s*(?:是多少|怎么定|多少)"
+        r"|(?:该|应该|需要|要)[^。？?!！]{0,8}(?:吃|服)[^。？?!！]{0,8}(?:多少|几片|几粒)"
+        r"|(?:帮我|给我|请你?|能否|可以)[^。？?!！]{0,8}(?:确诊|诊断)"
+        r"|\b(?:dosage|how\s+many\s+mg|prescription\s+dose|diagnose\s+me)\b",
+        re.IGNORECASE,
+    )),
+    ("production_implementation", re.compile(
+        r"(?:生产环境|可直接上线|完整代码)[^。？?!！]{0,24}(?:代码|配置|部署|faiss)"
+        r"|(?:代码|配置|部署|faiss)[^。？?!！]{0,24}(?:生产环境|可直接上线|完整代码)"
+        r"|\bproduction[-\s]ready\b[^.?!]{0,24}\b(?:code|config|deployment)\b",
+        re.IGNORECASE,
+    )),
+    ("financial_recommendation", re.compile(
+        # An investment recommendation request. Losing money on stocks is a feeling
+        # to talk about, so bare 股票/仓位 must never match.
+        r"(?:该|应该|要不要|建议我|帮我)[^。？?!！]{0,10}(?:买入|卖出|加仓|减仓|抄底)"
+        r"|(?:投资建议|荐股|买哪只|该买哪|值不值得投)"
+        r"|\b(?:should\s+i\s+(?:buy|sell)|investment\s+advice|stock\s+(?:pick|tip))\b",
+        re.IGNORECASE,
+    )),
+    ("weather_or_travel_plan", re.compile(
+        r"(?:今天|明天|后天)[^。？?!！]{0,10}(?:天气|下雨|气温|温度)"
+        r"|(?:推荐|规划|安排|列出)[^。？?!！]{0,10}(?:景点|路线|行程)"
+        r"|(?:地铁|公交)[^。？?!！]{0,6}(?:路线|怎么走|怎么坐)"
+        r"|\b(?:tomorrow|today)'?s?\b[^.?!]{0,16}\b(?:weather|forecast)\b"
+        r"|\b(?:plan|recommend)\b[^.?!]{0,16}\bitinerary\b",
+        re.IGNORECASE,
+    )),
+)
+
+
+def assess_knowledge_query_scope(query: str) -> str | None:
+    """Return a reason when a related-looking query exceeds this corpus's scope."""
+    if not RAG_NEAR_DOMAIN_GUARD_ENABLED:
+        return None
+    normalized = " ".join(str(query or "").split())
+    for reason, pattern in _NEAR_DOMAIN_SCOPE_RULES:
+        if pattern.search(normalized):
+            return reason
+    return None
 
 
 class ReleaseGateRejected(RuntimeError):
@@ -687,7 +775,7 @@ def diagnose_knowledge_search(
     chunks = load_chunks()
     query = (query or "").strip()
     if not query or not chunks:
-        return {"query": query, "results": [], "candidates": [], "reason": "查询或知识库为空"}
+        return {"query": query, "results": [], "candidates": [], "reason": "查询或知识库为空", "scope_reason": None}
 
     top_k = max(1, min(int(top_k), len(chunks)))
     threshold = max(-1.0, min(float(threshold), 1.0))
@@ -746,13 +834,18 @@ def diagnose_knowledge_search(
 
     public_results = [{key: value for key, value in item.items() if key != "_index"} for item in selected]
     public_candidates = [{key: value for key, value in item.items() if key != "_index"} for item in candidates]
+    # The guard is applied here rather than in build_knowledge_bundle so chat, the
+    # evaluation set and the diagnostics panel all see the same decision. Candidates
+    # are still reported, so an operator can see what a blocked query would have hit.
+    scope_reason = assess_knowledge_query_scope(query)
     return {
         "query": query,
-        "results": public_results,
+        "results": [] if scope_reason else public_results,
         "candidates": public_candidates,
         "threshold": threshold,
         "top_k": top_k,
         "retrieval_mode": mode,
+        "scope_reason": scope_reason,
     }
 
 
@@ -854,9 +947,12 @@ def build_knowledge_bundle(
     max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
 ) -> dict[str, Any]:
     """Build prompt context and the matching, display-safe citation metadata."""
-    results = retrieve_knowledge(query, top_k=top_k, threshold=threshold)
+    diagnostic = diagnose_knowledge_search(query, top_k=top_k, threshold=threshold)
+    results = diagnostic["results"]
     if not results:
-        reason = "knowledge_base_empty" if not load_chunks() else "no_relevant_sources"
+        reason = diagnostic.get("scope_reason") or (
+            "knowledge_base_empty" if not load_chunks() else "no_relevant_sources"
+        )
         return _insufficient_bundle(reason, [], threshold)
     lines, citations = _collect_context_blocks(results, max_context_chars)
     if not citations:

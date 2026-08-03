@@ -119,10 +119,13 @@ def _evaluate_cases(
         keyword_pass: bool | None = None
         hit_rank: int | None = None
         insufficient_pass: bool | None = None
+        # Reported for triage only. The scope guard already ran inside
+        # diagnose_knowledge_search, so scoring against it here would let the guard
+        # grade itself and a wrong rule could never fail the regression set.
+        scope_reason = diagnostic.get("scope_reason")
         if case["expected_outcome"] == "insufficient":
             insufficient_cases += 1
-            # Match the chat path: grounded means "yields citable context",
-            # not merely "the index returned rows".
+            # Same rule as the chat path: grounded means "yields citable context".
             insufficient_pass = not has_usable_evidence(results)
             if insufficient_pass:
                 insufficient_passes += 1
@@ -151,7 +154,8 @@ def _evaluate_cases(
             "expected_outcome": case["expected_outcome"], "expected_sources": case["expected_sources"],
             "expected_keywords": case["expected_keywords"], "returned_sources": returned_sources,
             "source_pass": source_pass, "keyword_pass": keyword_pass,
-            "insufficient_pass": insufficient_pass, "hit_rank": hit_rank, "passed": passed,
+            "insufficient_pass": insufficient_pass, "scope_reason": scope_reason,
+            "hit_rank": hit_rank, "passed": passed,
         })
 
     report = {

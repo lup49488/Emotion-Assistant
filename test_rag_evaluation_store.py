@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import gui_knowledge
+import knowledge_store
 import rag_evaluation_store
 
 
@@ -106,6 +107,43 @@ def test_insufficient_case_fails_when_results_carry_usable_text(tmp_path, monkey
 
     assert report["insufficient_passes"] == 0
     assert report["insufficient_refusal_rate"] == 0.0
+
+
+def test_scope_reason_is_reported_but_never_used_as_the_pass_criterion(tmp_path, monkeypatch):
+    """The guard runs inside retrieval, so it is graded — it must not grade itself.
+
+    Reporting a scope_reason while the retrieval still returned usable evidence has
+    to fail the case; otherwise a wrong guard rule could never fail the regression set.
+    """
+    _configure_paths(tmp_path, monkeypatch)
+    source = tmp_path / "evaluation.json"
+    source.write_text('[{"id":"latest-model","query":"最新模型价格是多少？","expected_outcome":"insufficient"}]', encoding="utf-8")
+    rag_evaluation_store.import_evaluation_cases(source)
+
+    leaked = {"results": [{"source": "a.md", "text": "related text"}], "scope_reason": "realtime_or_latest_information"}
+    with patch.object(rag_evaluation_store, "diagnose_knowledge_search", return_value=leaked):
+        report = rag_evaluation_store.run_evaluation(top_k=4, threshold=0.35, candidate_multiplier=3)
+
+    assert report["insufficient_passes"] == 0
+    assert report["failures"][0]["scope_reason"] == "realtime_or_latest_information"
+
+
+def test_guarded_query_passes_an_insufficient_case_through_real_retrieval(tmp_path, monkeypatch):
+    _configure_paths(tmp_path, monkeypatch)
+    source = tmp_path / "evaluation.json"
+    source.write_text('[{"id":"latest-price","query":"最新价格是多少？","expected_outcome":"insufficient"}]', encoding="utf-8")
+    rag_evaluation_store.import_evaluation_cases(source)
+
+    # No patching of the guard: diagnose_knowledge_search applies it and returns no results.
+    chunks = [{"source": "a.md", "text": "价格与成本的一般讨论", "chunk_index": 0}]
+    with patch.object(knowledge_store, "load_chunks", return_value=chunks), \
+         patch.object(knowledge_store, "_search_candidates", return_value=[{**chunks[0], "score": 0.9, "_index": 0}]):
+        report = rag_evaluation_store.run_evaluation(
+            top_k=1, threshold=0.35, candidate_multiplier=3, retrieval_mode="vector",
+        )
+
+    assert report["insufficient_passes"] == 1
+    assert report["insufficient_refusal_rate"] == 100.0
 
 
 def test_evaluation_compares_vector_and_hybrid_metrics(tmp_path, monkeypatch):
