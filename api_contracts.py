@@ -126,6 +126,14 @@ class StylePreferenceResponse(ContractModel):
     available: list[str]
 
 
+class MemorySavePreferenceRequest(ContractModel):
+    mode: Literal["auto", "confirm", "off"]
+
+
+class MemorySavePreferenceResponse(ContractModel):
+    mode: Literal["auto", "confirm", "off"]
+
+
 class ChatResponse(ContractModel):
     reply: str
     memory_receipt: str | None = None
@@ -227,6 +235,7 @@ class MemorySnapshotResponse(ContractModel):
     stable_profile: list[dict[str, Any]]
     interest_memory: list[dict[str, Any]]
     memory_events: list[dict[str, Any]]
+    pending_memory: list[dict[str, Any]]
 
 
 class LongTermMemoryUpdateRequest(ContractModel):
@@ -336,6 +345,7 @@ class ExportResponse(ContractModel):
     long_memory: list[dict[str, Any]]
     stable_profile: list[dict[str, Any]]
     memory_events: list[dict[str, Any]]
+    pending_memory: list[dict[str, Any]]
     interest_memory: list[dict[str, Any]]
     mood_checkins: list[dict[str, Any]]
 

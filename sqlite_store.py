@@ -115,7 +115,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
             section TEXT NOT NULL CHECK (section IN (
                 'history', 'emotion_memory', 'long_memory', 'stable_profile',
-                'interest_memory', 'memory_events'
+                'interest_memory', 'memory_events', 'pending_memory'
             )),
             position INTEGER NOT NULL CHECK (position >= 0),
             payload_json TEXT NOT NULL,
@@ -250,10 +250,55 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             ON background_jobs(user_id, created_at DESC);
         """
     )
+    _ensure_pending_memory_section(conn)
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-        (5, _now()),
+        (6, _now()),
     )
+
+
+def _ensure_pending_memory_section(conn: sqlite3.Connection) -> None:
+    """Upgrade older SQLite databases whose CHECK constraint omits the queue."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'session_items'"
+    ).fetchone()
+    schema_sql = row["sql"] if isinstance(row, sqlite3.Row) else row[0] if row else ""
+    if row is None or "pending_memory" in str(schema_sql or ""):
+        return
+    # Run the table swap as one transaction. executescript() would COMMIT first and
+    # could leave the database with only session_items_legacy if a step failed.
+    statements = (
+        "ALTER TABLE session_items RENAME TO session_items_legacy",
+        """
+        CREATE TABLE session_items (
+            user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+            section TEXT NOT NULL CHECK (section IN (
+                'history', 'emotion_memory', 'long_memory', 'stable_profile',
+                'interest_memory', 'memory_events', 'pending_memory'
+            )),
+            position INTEGER NOT NULL CHECK (position >= 0),
+            payload_json TEXT NOT NULL,
+            PRIMARY KEY (user_id, section, position)
+        )
+        """,
+        """
+        INSERT INTO session_items(user_id, section, position, payload_json)
+            SELECT user_id, section, position, payload_json FROM session_items_legacy
+        """,
+        "DROP TABLE session_items_legacy",
+        """
+        CREATE INDEX IF NOT EXISTS idx_session_items_user_section_position
+            ON session_items(user_id, section, position)
+        """,
+    )
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        for statement in statements:
+            conn.execute(statement)
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
 
 
 def _now() -> str:

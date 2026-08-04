@@ -98,6 +98,17 @@ test('a reliable conversation emotion is visible in personal data', async ({ pag
   await expect(page.getByText('0.98', { exact: false })).toBeVisible()
 })
 
+test('memory saving policy can be changed from personal data', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Personal data' }).click()
+
+  const policy = page.getByLabel('Conversation memory policy')
+  await expect(policy).toHaveValue('confirm')
+  await policy.selectOption('off')
+  await expect(policy).toHaveValue('off')
+  await expect(page.getByText('Conversation memory extraction is disabled. Manual changes remain available.')).toBeVisible()
+})
+
 test('mood notes retain leading indentation and paragraph breaks in the check-in history', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Mood check-in' }).click()

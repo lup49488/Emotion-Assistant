@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import re
+import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,7 +15,9 @@ from config import (
     INTEREST_RETRIEVAL_THRESHOLD,
     INTEREST_SIMILARITY_THRESHOLD,
     LONG_TERM_EXPIRY_DAYS,
+    MEMORY_CONFIRM_LONG_TERM,
     MEMORY_KEYWORDS,
+    MEMORY_PENDING_LIMIT,
     NEGATIVE_EMOTIONS,
     PERSONAL_KEYWORDS,
     SCORE_EMOTION_MULTIPLIER,
@@ -34,6 +37,164 @@ LONG_MEMORY_SUMMARIZE_THRESHOLD = 30
 LONG_MEMORY_KEEP_RECENT = 10
 INTEREST_MERGE_THRESHOLD = 0.80
 MEMORY_EVENT_LIMIT = 100
+
+# Canonical definition, imported by memory_preference_store so the allowed modes
+# and the default are described in exactly one place.
+MEMORY_SAVE_MODES = ("auto", "confirm", "off")
+DEFAULT_MEMORY_SAVE_MODE = "confirm" if MEMORY_CONFIRM_LONG_TERM else "auto"
+
+# Sections whose items live in a durable list, so an audited write can be reversed.
+UNDOABLE_SECTIONS = ("stable", "interest", "long", "emotion")
+
+
+def queue_pending_memory_confirmation(
+    state: Any,
+    *,
+    section: str,
+    candidate: dict[str, Any],
+    source_text: str,
+    reason: str,
+    score: float,
+) -> dict[str, Any]:
+    """Queue an inferred durable-memory candidate until the user approves it."""
+    if section not in {"stable", "interest", "long", "emotion"}:
+        raise ValueError("This memory candidate cannot require confirmation.")
+    text = str(candidate.get("text", "")).strip()
+    if not text:
+        raise ValueError("A pending memory candidate needs text.")
+    existing = next(
+        (
+            item for item in state.pending_memory
+            if item.get("section") == section
+            and str(item.get("candidate", {}).get("text", "")).strip() == text
+        ),
+        None,
+    )
+    if existing is not None:
+        return existing
+    pending = {
+        "id": uuid.uuid4().hex,
+        "section": section,
+        "candidate": {**candidate, "text": text},
+        "source_text": str(source_text).strip()[:2_000],
+        "reason": reason,
+        "score": round(float(score), 3),
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    state.pending_memory.append(pending)
+    record_memory_event(
+        state,
+        section=section,
+        action="pending",
+        text=text,
+        reason=reason,
+        score=score,
+        source_text=source_text,
+    )
+    _expire_overflowing_pending_memory(state)
+    return pending
+
+
+def _expire_overflowing_pending_memory(state: Any) -> None:
+    """Drop the oldest unreviewed candidates, but never silently.
+
+    The point of the queue is that the user decides what is remembered, so a
+    candidate disappearing without a trace would quietly break that promise.
+    """
+    overflow = len(state.pending_memory) - MEMORY_PENDING_LIMIT
+    if overflow <= 0:
+        return
+    expired = state.pending_memory[:overflow]
+    state.pending_memory = state.pending_memory[overflow:]
+    for item in expired:
+        record_memory_event(
+            state,
+            section=str(item.get("section", "long")),
+            action="expired",
+            text=str(item.get("candidate", {}).get("text", "")),
+            reason=(
+                f"待确认队列已满（上限 {MEMORY_PENDING_LIMIT}），该候选在被确认前过期。"
+            ),
+            score=float(item.get("score", 0.0)),
+        )
+
+
+def _pop_pending_memory(state: Any, pending_id: str) -> dict[str, Any]:
+    index = next((i for i, item in enumerate(state.pending_memory) if item.get("id") == pending_id), None)
+    if index is None:
+        raise KeyError("Pending memory candidate was not found.")
+    return state.pending_memory.pop(index)
+
+
+def confirm_pending_memory(state: Any, pending_id: str) -> dict[str, Any]:
+    """Persist one reviewed candidate and record a reversible durable write."""
+    pending = _pop_pending_memory(state, pending_id)
+    section = str(pending.get("section", ""))
+    item = dict(pending.get("candidate", {}))
+    item["text"] = str(item.get("text", "")).strip()
+    if not item["text"]:
+        raise ValueError("This pending memory candidate has no text.")
+    before: dict[str, Any] | None = None
+    after: dict[str, Any] | None = None
+    if section == "stable":
+        before = next((dict(value) for value in state.stable_profile if (
+            item.get("key") and value.get("key") == item.get("key")
+        ) or value.get("text") == item["text"]), None)
+        outcome = update_stable_profile(state, item)
+        after = next((dict(value) for value in state.stable_profile if (
+            item.get("key") and value.get("key") == item.get("key")
+        ) or value.get("text") == item["text"]), None)
+    elif section == "interest":
+        before_items = [dict(value) for value in state.interest_store.items]
+        outcome = save_interest(item, state)
+        after_items = [dict(value) for value in state.interest_store.items]
+        before = next((value for value in before_items if value not in after_items), None)
+        after = next((value for value in after_items if value not in before_items), None)
+    elif section == "long":
+        item.setdefault("time", datetime.now().isoformat(timespec="seconds"))
+        outcome = "added" if update_long_term(state, item) else "unchanged"
+        after = dict(item) if outcome == "added" else None
+    elif section == "emotion":
+        label = str(item.get("label", "")).strip()
+        confidence = float(item.get("confidence", 0.0))
+        if not label:
+            raise ValueError("This pending emotion candidate has no label.")
+        update_mid_term(state, label, confidence)
+        outcome = "added"
+        # The appended reading is the snapshot that makes this write reversible.
+        after = dict(state.emotion_memory[-1]) if state.emotion_memory else None
+    else:
+        raise ValueError("This pending memory candidate cannot be confirmed.")
+    record_memory_event(
+        state,
+        section=section,
+        # Report what the store actually did. Deriving this from ``after`` alone
+        # would call a real emotion write "unchanged" and hide merges and updates.
+        action=outcome if outcome in {"added", "updated", "merged", "unchanged"} else "confirmed",
+        text=item["text"],
+        reason="User confirmed a pending memory candidate.",
+        score=float(pending.get("score", 0.0)),
+        source_text=str(pending.get("source_text", "")),
+        before=before,
+        after=after,
+    )
+    return pending
+
+
+def reject_pending_memory(state: Any, pending_id: str) -> dict[str, Any]:
+    """Discard one reviewed candidate without writing it into durable memory."""
+    pending = _pop_pending_memory(state, pending_id)
+    candidate = pending.get("candidate", {})
+    record_memory_event(
+        state,
+        section=str(pending.get("section", "long")),
+        action="rejected",
+        text=str(candidate.get("text", "")),
+        reason="User discarded a pending memory candidate.",
+        score=float(pending.get("score", 0.0)),
+        source_text=str(pending.get("source_text", "")),
+    )
+    return pending
 
 _faiss_module: Any | None = None
 
@@ -508,9 +669,19 @@ def record_memory_event(
     text: str,
     reason: str,
     score: float | None = None,
+    source_text: str | None = None,
+    before: dict[str, Any] | None = None,
+    after: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """Record a user-visible audit event for a memory decision.
+
+    ``before`` and ``after`` are snapshots of one durable memory item.  Their
+    presence makes a write reversible as long as that item has not changed.
+    """
     event = {
-        "id": datetime.now().strftime("%Y%m%d%H%M%S%f"),
+        # A random id, not a timestamp: undo resolves an event by id, and several
+        # events can now be recorded inside the same turn.
+        "id": uuid.uuid4().hex,
         "time": datetime.now().isoformat(timespec="seconds"),
         "section": section,
         "action": action,
@@ -519,8 +690,85 @@ def record_memory_event(
     }
     if score is not None:
         event["score"] = round(float(score), 3)
+    source = str(source_text or "").strip()
+    # Only worth keeping when it adds something: for long-term and skipped events
+    # the originating message is already the event text, and storing it twice would
+    # double the amount of user content held in the audit log.
+    if source and source != str(text).strip():
+        event["source_text"] = source[:2_000]
+        if len(source) > len(event["source_text"]):
+            event["source_truncated"] = True
+    if before is not None:
+        event["before"] = dict(before)
+    if after is not None:
+        event["after"] = dict(after)
+    event["undoable"] = bool(section in UNDOABLE_SECTIONS and after is not None)
     state.memory_events.append(event)
     state.memory_events = state.memory_events[-MEMORY_EVENT_LIMIT:]
+    return event
+
+
+def _durable_memory_items(state: Any, section: str) -> list[dict[str, Any]]:
+    if section == "stable":
+        return state.stable_profile
+    if section == "interest":
+        return state.interest_store.items
+    if section == "long":
+        return state.long_memory
+    if section == "emotion":
+        return state.emotion_memory
+    raise ValueError("该审计事件不对应可撤销的持久记忆。")
+
+
+def _replace_durable_memory_items(state: Any, section: str, items: list[dict[str, Any]]) -> None:
+    if section == "stable":
+        state.stable_profile = items
+    elif section == "long":
+        state.long_memory = items
+    elif section == "emotion":
+        state.emotion_memory = items
+    elif section == "interest":
+        state.interest_store.replace_all(items)
+        if state.vector_index is not None:
+            state.vector_index.mark_dirty_for_rebuild()
+    else:
+        raise ValueError("该审计事件不对应可撤销的持久记忆。")
+
+
+def undo_memory_event(state: Any, event_id: str) -> dict[str, Any]:
+    """Undo one audited durable-memory write without overwriting later edits."""
+    event = next((item for item in reversed(state.memory_events) if item.get("id") == event_id), None)
+    if event is None:
+        raise KeyError("未找到该记忆审计记录。")
+    if not event.get("undoable") or event.get("undone_at"):
+        raise ValueError("该记忆记录已不可撤销。")
+
+    section = str(event.get("section", ""))
+    after = event.get("after")
+    before = event.get("before")
+    if not isinstance(after, dict):
+        raise ValueError("该记忆记录缺少可撤销快照。")
+    items = [dict(item) for item in _durable_memory_items(state, section)]
+    index = next((i for i, item in enumerate(items) if item == after), None)
+    if index is None:
+        raise ValueError("该记忆已被后续修改或删除，无法安全撤销。")
+    if before is None:
+        del items[index]
+    elif isinstance(before, dict):
+        items[index] = dict(before)
+    else:
+        raise ValueError("该记忆记录的撤销快照无效。")
+    _replace_durable_memory_items(state, section, items)
+    event["undone_at"] = datetime.now().isoformat(timespec="seconds")
+    event["undoable"] = False
+    record_memory_event(
+        state,
+        section=section,
+        action="reverted",
+        text=str(after.get("text", "")),
+        reason=f"用户撤销了审计记录 {event_id}。",
+        source_text=str(event.get("source_text", "")),
+    )
     return event
 
 
@@ -534,6 +782,11 @@ def latest_memory_receipt(state: Any) -> str:
         "merged": "已合并",
         "unchanged": "未重复写入",
         "skipped": "未写入",
+        "pending": "等待确认",
+        "confirmed": "已确认",
+        "rejected": "已丢弃",
+        "reverted": "已撤销",
+        "expired": "已过期未确认",
     }
     section_labels = {
         "stable": "稳定资料",
@@ -552,11 +805,38 @@ def latest_memory_receipt(state: Any) -> str:
 
 def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: float) -> str:
     score = score_memory(user_text, emo_label, emo_score)
+    save_mode = getattr(state, "memory_save_mode", DEFAULT_MEMORY_SAVE_MODE)
+    if save_mode not in MEMORY_SAVE_MODES:
+        save_mode = DEFAULT_MEMORY_SAVE_MODE
+    if save_mode == "off":
+        record_memory_event(
+            state,
+            section="none",
+            action="skipped",
+            # No message content. The user turned memory off, so the audit trail
+            # must not become a verbatim copy of everything it declined to keep.
+            text="",
+            reason="Automatic memory saving is disabled for this user.",
+            score=score,
+        )
+        return "discard"
     emotion_recorded = (
         emo_label != "uncertain"
         and float(emo_score) >= EMOTION_CONFIDENCE_THRESHOLD
     )
-    if emotion_recorded:
+    if emotion_recorded and save_mode == "confirm":
+        queue_pending_memory_confirmation(
+            state,
+            section="emotion",
+            candidate={"text": user_text, "label": emo_label, "confidence": float(emo_score)},
+            source_text=user_text,
+            reason=(
+                f"Emotion confidence {float(emo_score):.2f} reached the recording threshold "
+                f"{EMOTION_CONFIDENCE_THRESHOLD:.2f}."
+            ),
+            score=score,
+        )
+    elif emotion_recorded:
         # Emotion history has its own confidence gate. It should not depend on
         # personal-fact keywords or the unrelated long-term-memory score.
         update_mid_term(state, emo_label, emo_score)
@@ -570,10 +850,27 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
                 f"{EMOTION_CONFIDENCE_THRESHOLD:.2f}"
             ),
             score=score,
+            source_text=user_text,
         )
     profile = extract_personal_profile(user_text)
     if profile is not None:
+        if save_mode == "confirm":
+            queue_pending_memory_confirmation(
+                state,
+                section="stable",
+                candidate=profile,
+                source_text=user_text,
+                reason="An explicit stable-profile candidate is waiting for confirmation.",
+                score=score,
+            )
+            return "stable"
+        previous = next((dict(item) for item in state.stable_profile if (
+            profile.get("key") and item.get("key") == profile.get("key")
+        ) or item.get("text") == profile.get("text")), None)
         action = update_stable_profile(state, profile)
+        current = next((dict(item) for item in state.stable_profile if (
+            profile.get("key") and item.get("key") == profile.get("key")
+        ) or item.get("text") == profile.get("text")), None)
         record_memory_event(
             state,
             section="stable",
@@ -585,10 +882,23 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
                 else "识别到明确的身份或个人背景陈述"
             ),
             score=score,
+            source_text=user_text,
+            before=previous,
+            after=current if action in {"added", "updated"} else None,
         )
         return "stable"
     interest = extract_long_term_interest(user_text)
     if interest is not None:
+        if save_mode == "confirm":
+            queue_pending_memory_confirmation(
+                state,
+                section="interest",
+                candidate=interest,
+                source_text=user_text,
+                reason="An explicit interest-memory candidate is waiting for confirmation.",
+                score=score,
+            )
+            return "interest"
         if memory_exists(interest["text"], state):
             record_memory_event(
                 state,
@@ -597,9 +907,14 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
                 text=interest["text"],
                 reason="相同或高度相似的兴趣已经存在",
                 score=score,
+                source_text=user_text,
             )
             return "discard"
+        before_items = [dict(item) for item in state.interest_store.items]
         outcome = save_interest(interest, state)
+        after_items = [dict(item) for item in state.interest_store.items]
+        removed = next((item for item in before_items if item not in after_items), None)
+        added = next((item for item in after_items if item not in before_items), None)
         record_memory_event(
             state,
             section="interest",
@@ -611,22 +926,39 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
                 else "识别到明确的长期偏好或兴趣陈述"
             ),
             score=score,
+            source_text=user_text,
+            before=removed,
+            after=added if outcome in {"added", "merged"} else None,
         )
         return "interest"
     if score >= SCORE_LONG_TERM_THRESHOLD:
-        added = update_long_term(state, {
+        item = {
             # An unreliable reading must not be stored as an emotion label; the
             # empty string keeps it out of summaries and the memory panel.
             "text": user_text, "emotion": "" if not emotion_recorded else emo_label,
             "score": float(emo_score), "time": datetime.now().isoformat(),
-        })
+        }
+        reason = f"记忆评分 {score:.2f} 达到长期记忆阈值 {SCORE_LONG_TERM_THRESHOLD:.2f}"
+        if save_mode == "confirm":
+            queue_pending_memory_confirmation(
+                state,
+                section="long",
+                candidate=item,
+                source_text=user_text,
+                reason=reason,
+                score=score,
+            )
+            return "long"
+        added = update_long_term(state, item)
         record_memory_event(
             state,
             section="long",
             action="added" if added else "unchanged",
             text=user_text,
-            reason=f"记忆评分 {score:.2f} 达到长期记忆阈值 {SCORE_LONG_TERM_THRESHOLD:.2f}",
+            reason=reason,
             score=score,
+            source_text=user_text,
+            after=dict(item) if added else None,
         )
         return "long"
     if score >= SCORE_MID_TERM_THRESHOLD and not emotion_recorded:
@@ -637,6 +969,7 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
             text=user_text,
             reason="情绪识别置信度不足，不强行写入情绪标签",
             score=score,
+            source_text=user_text,
         )
         return "discard"
     if emotion_recorded:
@@ -651,5 +984,6 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
         text=user_text,
         reason=reason,
         score=score,
+        source_text=user_text,
     )
     return "discard"

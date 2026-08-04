@@ -16,6 +16,7 @@ test_chatbot.py
   python3 -m unittest test_chatbot -v
 """
 
+import json
 import sys
 import unittest
 from datetime import datetime, timedelta
@@ -23,6 +24,7 @@ from unittest.mock import patch
 
 import conftest  # noqa: F401  (确保 stub 在 chatbot 导入前注册)
 import chatbot
+import config
 import memory_store
 from prompt_builder import build_messages
 
@@ -144,6 +146,7 @@ class TestScoreMemory(unittest.TestCase):
 
     def test_reliable_emotion_is_written_without_memory_keywords(self):
         state = self._fresh_state()
+        state.memory_save_mode = "auto"
 
         result = chatbot.smart_memory_filter(state, "今天考试通过了，我很开心", "joy", 0.9)
 
@@ -168,15 +171,57 @@ class TestScoreMemory(unittest.TestCase):
         result = chatbot.smart_memory_filter(state, "我想去旅行", "uncertain", 1.0)
 
         self.assertEqual(result, "long")
-        self.assertEqual(state.long_memory[-1]["text"], "我想去旅行")
-        self.assertEqual(state.long_memory[-1]["emotion"], "")
+        self.assertEqual(state.long_memory, [])
+        self.assertEqual(state.pending_memory[-1]["candidate"]["text"], "我想去旅行")
+        self.assertEqual(state.pending_memory[-1]["candidate"]["emotion"], "")
 
     def test_reliable_emotion_is_stored_on_long_term_memory(self):
         state = self._fresh_state()
 
         chatbot.smart_memory_filter(state, "我想去旅行", "sadness", 1.0)
 
-        self.assertEqual(state.long_memory[-1]["emotion"], "sadness")
+        self.assertEqual(state.long_memory, [])
+        self.assertEqual(state.pending_memory[-1]["candidate"]["emotion"], "sadness")
+
+    def test_pending_long_term_memory_is_written_only_after_confirmation(self):
+        state = self._fresh_state()
+
+        chatbot.smart_memory_filter(state, "我计划明年参加考试", "neutral", 1.0)
+
+        pending = next(item for item in state.pending_memory if item["section"] == "long")
+        self.assertEqual(state.long_memory, [])
+        pending_id = pending["id"]
+        memory_store.confirm_pending_memory(state, pending_id)
+
+        self.assertTrue(all(item["section"] != "long" for item in state.pending_memory))
+        self.assertEqual(state.long_memory[-1]["text"], "我计划明年参加考试")
+        # The audit reports what the store actually did, not merely that a
+        # confirmation happened, so a no-op confirm stays distinguishable.
+        self.assertEqual(state.memory_events[-1]["action"], "added")
+        self.assertTrue(state.memory_events[-1]["undoable"])
+
+    def test_pending_long_term_memory_can_be_discarded(self):
+        state = self._fresh_state()
+        chatbot.smart_memory_filter(state, "我计划明年参加考试", "neutral", 1.0)
+
+        pending = next(item for item in state.pending_memory if item["section"] == "long")
+        memory_store.reject_pending_memory(state, pending["id"])
+
+        self.assertTrue(all(item["section"] != "long" for item in state.pending_memory))
+        self.assertEqual(state.long_memory, [])
+        self.assertEqual(state.memory_events[-1]["action"], "rejected")
+
+    def test_disabled_memory_mode_does_not_write_or_queue_any_memory(self):
+        state = self._fresh_state()
+        state.memory_save_mode = "off"
+
+        result = chatbot.smart_memory_filter(state, "我是一名学生", "joy", 0.95)
+
+        self.assertEqual(result, "discard")
+        self.assertEqual(state.stable_profile, [])
+        self.assertEqual(state.emotion_memory, [])
+        self.assertEqual(state.pending_memory, [])
+        self.assertEqual(state.memory_events[-1]["action"], "skipped")
 
     def test_below_mid_threshold_is_discarded(self):
         # 无关键词、neutral、低分 -> score < 2.0 -> discard
@@ -543,6 +588,7 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
 
     def test_explicit_identity_is_saved_as_stable_profile(self):
         state = chatbot.SessionState()
+        state.memory_save_mode = "auto"
 
         outcome = chatbot.smart_memory_filter(state, "我是学生", "neutral", 0.0)
 
@@ -565,6 +611,7 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
 
     def test_identity_fact_before_question_is_saved_as_profile(self):
         state = chatbot.SessionState()
+        state.memory_save_mode = "auto"
         text = "我是一名学生，请问您觉得我应该如何为未来做准备？"
 
         outcome = chatbot.smart_memory_filter(state, text, "neutral", 0.0)
@@ -573,6 +620,106 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
         self.assertEqual(state.stable_profile[0]["text"], "我是一名学生")
         self.assertEqual(state.memory_events[-1]["text"], "我是一名学生")
         self.assertIn("混合陈述与提问", state.memory_events[-1]["reason"])
+
+    def test_durable_memory_event_keeps_auditable_source_and_undo_snapshot(self):
+        state = chatbot.SessionState()
+        state.memory_save_mode = "auto"
+
+        outcome = chatbot.smart_memory_filter(state, "我是一名学生", "neutral", 0.1)
+
+        event = state.memory_events[-1]
+        self.assertEqual(outcome, "stable")
+        self.assertEqual(event["after"]["text"], "我是一名学生")
+        self.assertTrue(event["undoable"])
+        # The extracted fact is the whole message here, so the originating text is
+        # not stored a second time.
+        self.assertNotIn("source_text", event)
+
+    def test_source_text_is_kept_only_when_it_adds_context(self):
+        state = chatbot.SessionState()
+        state.memory_save_mode = "auto"
+
+        chatbot.smart_memory_filter(state, "我叫张伟，今年28岁", "neutral", 0.1)
+
+        event = state.memory_events[-1]
+        self.assertEqual(event["text"], "我叫张伟")
+        self.assertEqual(event["source_text"], "我叫张伟，今年28岁")
+
+    def test_disabled_memory_saving_does_not_archive_the_message_text(self):
+        """Turning memory off must not turn the audit log into a message transcript."""
+        state = chatbot.SessionState()
+        state.memory_save_mode = "off"
+
+        chatbot.smart_memory_filter(state, "我的手机号是 13800000000，最近失眠很严重", "sadness", 0.9)
+
+        event = state.memory_events[-1]
+        self.assertEqual(event["action"], "skipped")
+        self.assertEqual(event["text"], "")
+        self.assertNotIn("source_text", event)
+        self.assertNotIn("13800000000", json.dumps(state.memory_events, ensure_ascii=False))
+
+    def test_confirming_an_emotion_candidate_reports_and_can_be_undone(self):
+        state = chatbot.SessionState()
+        state.memory_save_mode = "confirm"
+
+        chatbot.smart_memory_filter(state, "今天真的很难过", "sadness", 0.9)
+        pending = next(item for item in state.pending_memory if item["section"] == "emotion")
+        memory_store.confirm_pending_memory(state, pending["id"])
+
+        event = state.memory_events[-1]
+        self.assertEqual(state.emotion_memory[-1]["label"], "sadness")
+        self.assertEqual(event["action"], "added")
+        self.assertTrue(event["undoable"])
+
+        memory_store.undo_memory_event(state, event["id"])
+        self.assertEqual(state.emotion_memory, [])
+
+    def test_expired_pending_candidates_are_audited_rather_than_dropped_silently(self):
+        state = chatbot.SessionState()
+        state.memory_save_mode = "confirm"
+
+        for index in range(config.MEMORY_PENDING_LIMIT + 3):
+            memory_store.queue_pending_memory_confirmation(
+                state,
+                section="long",
+                candidate={"text": f"候选 {index}"},
+                source_text=f"候选 {index}",
+                reason="测试排队。",
+                score=4.0,
+            )
+
+        self.assertEqual(len(state.pending_memory), config.MEMORY_PENDING_LIMIT)
+        expired = [item for item in state.memory_events if item["action"] == "expired"]
+        self.assertEqual([item["text"] for item in expired], ["候选 0", "候选 1", "候选 2"])
+
+    def test_memory_event_ids_stay_unique_within_one_turn(self):
+        state = chatbot.SessionState()
+        for index in range(50):
+            memory_store.record_memory_event(
+                state, section="long", action="skipped", text=f"第 {index} 条", reason="测试。",
+            )
+
+        ids = [item["id"] for item in state.memory_events]
+        self.assertEqual(len(set(ids)), len(ids))
+
+    def test_undo_interest_audit_marks_the_vector_index_for_rebuild(self):
+        state = chatbot.SessionState()
+        item = {"text": "我喜欢爬山", "time": "2026-08-03T10:00:00"}
+        state.interest_store.append(item)
+        event = memory_store.record_memory_event(
+            state,
+            section="interest",
+            action="added",
+            text=item["text"],
+            reason="测试写入。",
+            source_text=item["text"],
+            after=item,
+        )
+
+        memory_store.undo_memory_event(state, event["id"])
+
+        self.assertEqual(state.interest_store.items, [])
+        self.assertTrue(state.vector_index._force_rebuild)
 
     def test_profile_query_with_declarative_prefix_is_still_rejected(self):
         state = chatbot.SessionState()
@@ -619,6 +766,7 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
 
     def test_latest_memory_receipt_describes_write_decision(self):
         state = chatbot.SessionState()
+        state.memory_save_mode = "auto"
         chatbot.smart_memory_filter(state, "我是学生", "neutral", 0.0)
 
         receipt = chatbot.latest_memory_receipt(state)

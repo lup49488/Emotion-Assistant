@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Download, Pencil, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trash2, Upload, X } from 'lucide-react'
+import { Check, Download, Pencil, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { apiFetch, csrfHeaders, readJson } from './api'
 
 const json = (value) => JSON.stringify(value, null, 2)
@@ -19,11 +19,12 @@ export function MemoryPage({ t }) {
   const [loading, setLoading] = useState(true)
   const [editingIndex, setEditingIndex] = useState(null)
   const [memoryDraft, setMemoryDraft] = useState('')
+  const [memorySaveMode, setMemorySaveMode] = useState('confirm')
   const refresh = async () => {
     setLoading(true); setError('')
     try {
-      const [memory, report] = await Promise.all([readJson('/api/v1/memory'), readJson('/api/v1/memory/quality')])
-      setSnapshot(memory); setQuality(report.report)
+      const [memory, report, preference] = await Promise.all([readJson('/api/v1/memory'), readJson('/api/v1/memory/quality'), readJson('/api/v1/memory/preference')])
+      setSnapshot(memory); setQuality(report.report); setMemorySaveMode(preference.mode)
     } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [])
@@ -48,12 +49,63 @@ export function MemoryPage({ t }) {
     setMemoryDraft('')
   }
   const removeMemory = async (index) => { await saveLongTerm(snapshot.long_memory.filter((_, itemIndex) => itemIndex !== index)) }
+  const updateMemorySaveMode = async (mode) => {
+    const previousMode = memorySaveMode
+    setMemorySaveMode(mode); setError('')
+    try {
+      const saved = await readJson('/api/v1/memory/preference', { method: 'PUT', headers: csrfHeaders(), body: JSON.stringify({ mode }) })
+      setMemorySaveMode(saved.mode)
+    } catch (requestError) { setMemorySaveMode(previousMode); setError(requestError.message) }
+  }
+  const undoAudit = async (eventId) => {
+    setError('')
+    try {
+      const updated = await readJson(`/api/v1/memory/audit/${encodeURIComponent(eventId)}/undo`, { method: 'POST', headers: csrfHeaders() })
+      setSnapshot(updated)
+    } catch (requestError) { setError(requestError.message) }
+  }
+  const resolvePending = async (pendingId, action) => {
+    setError('')
+    const suffix = action === 'confirm' ? '/confirm' : ''
+    const method = action === 'confirm' ? 'POST' : 'DELETE'
+    try {
+      const updated = await readJson(`/api/v1/memory/pending/${encodeURIComponent(pendingId)}${suffix}`, { method, headers: csrfHeaders() })
+      setSnapshot(updated)
+    } catch (requestError) { setError(requestError.message) }
+  }
+  const pendingMemory = snapshot?.pending_memory || []
   const summary = snapshot ? [
-    [t('history'), snapshot.history.length], [t('emotion'), snapshot.emotion_memory.length], [t('longTerm'), snapshot.long_memory.length], [t('stableProfile'), snapshot.stable_profile.length], [t('interests'), snapshot.interest_memory.length],
+    [t('history'), snapshot.history.length], [t('emotion'), snapshot.emotion_memory.length], [t('longTerm'), snapshot.long_memory.length], [t('pendingMemories'), pendingMemory.length], [t('stableProfile'), snapshot.stable_profile.length], [t('interests'), snapshot.interest_memory.length],
   ] : []
-  return <section className="feature-page"><PageHeader title={t('memoryTitle')} description={t('memoryDescription')} action={<button className="secondary-button" onClick={refresh}><RefreshCw size={16} />{t('refresh')}</button>} /><ErrorText error={error} /><Loading loading={loading} t={t} />
-    {snapshot && <><div className="stat-grid">{summary.map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div><div className="two-column"><section className="data-panel"><h2>{t('memoryQuality')}</h2><p className="report-text">{quality || t('noQualityResult')}</p></section><section className="data-panel"><h2>{t('stableProfile')}</h2><JsonPreview value={snapshot.stable_profile} empty={t('noStable')} /></section></div><section className="data-panel"><div className="panel-title-row"><h2>{t('longTermMemory')}</h2><button className="icon-button" title={t('addMemory')} onClick={addMemory}><Plus size={17} /></button></div><p className="data-panel-copy">{t('longTermDescription')}</p>{snapshot.long_memory.length === 0 ? <p className="empty-state">{t('noLongTerm')}</p> : <div className="memory-list">{snapshot.long_memory.map((item, index) => <article className="memory-row" key={`${item.time || 'manual'}-${index}`}>{editingIndex === index ? <><textarea value={memoryDraft} rows="3" aria-label={t('memoryText')} onChange={(event) => setMemoryDraft(event.target.value)} /><div className="memory-row-actions"><button className="primary-button" onClick={() => saveEdit(index)}>{t('saveMemory')}</button><button className="secondary-button" onClick={() => { setEditingIndex(null); if (!item.text) setSnapshot((current) => ({ ...current, long_memory: current.long_memory.filter((_, itemIndex) => itemIndex !== index) })) }}><X size={15} />{t('cancel')}</button></div></> : <><div><p>{item.text}</p><span>{item.kind || 'memory'} {item.time ? `· ${String(item.time).slice(0, 10)}` : ''}</span></div><div className="memory-row-actions"><button className="icon-button" title={t('editMemory')} onClick={() => startEdit(index)}><Pencil size={15} /></button><button className="danger-icon" title={t('deleteMemory')} onClick={() => removeMemory(index)}><Trash2 size={16} /></button></div></>}</article>)}</div>}</section><section className="data-panel"><h2>{t('interests')}</h2><JsonPreview value={snapshot.interest_memory} empty={t('noInterests')} /></section><section className="data-panel"><h2>{t('emotionHistory')}</h2><EmotionMemoryList items={snapshot.emotion_memory} t={t} /></section><section className="data-panel"><h2>{t('recentEvents')}</h2><JsonPreview value={snapshot.memory_events.slice(-12)} empty={t('noEvents')} /></section></>}
+  return <section className="feature-page">
+    <PageHeader title={t('memoryTitle')} description={t('memoryDescription')} action={<button className="secondary-button" onClick={refresh}><RefreshCw size={16} />{t('refresh')}</button>} />
+    <ErrorText error={error} /><Loading loading={loading} t={t} />
+    {snapshot && <>
+      <div className="stat-grid">{summary.map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+      <div className="two-column"><section className="data-panel"><h2>{t('memoryQuality')}</h2><p className="report-text">{quality || t('noQualityResult')}</p></section><section className="data-panel"><h2>{t('memorySaveMode')}</h2><label className="memory-mode-field">{t('memorySaveModeLabel')}<select value={memorySaveMode} onChange={(event) => updateMemorySaveMode(event.target.value)}><option value="auto">{t('memorySaveAuto')}</option><option value="confirm">{t('memorySaveConfirm')}</option><option value="off">{t('memorySaveOff')}</option></select></label><p className="data-panel-copy">{t(`memorySaveMode_${memorySaveMode}`)}</p></section></div>
+      <section className="data-panel"><h2>{t('pendingMemories')}</h2><PendingMemoryList items={pendingMemory} onResolve={resolvePending} t={t} /></section>
+      <section className="data-panel"><div className="panel-title-row"><h2>{t('longTermMemory')}</h2><button className="icon-button" title={t('addMemory')} onClick={addMemory}><Plus size={17} /></button></div><p className="data-panel-copy">{t('longTermDescription')}</p>{snapshot.long_memory.length === 0 ? <p className="empty-state">{t('noLongTerm')}</p> : <div className="memory-list">{snapshot.long_memory.map((item, index) => <article className="memory-row" key={`${item.time || 'manual'}-${index}`}>{editingIndex === index ? <><textarea value={memoryDraft} rows="3" aria-label={t('memoryText')} onChange={(event) => setMemoryDraft(event.target.value)} /><div className="memory-row-actions"><button className="primary-button" onClick={() => saveEdit(index)}>{t('saveMemory')}</button><button className="secondary-button" onClick={() => { setEditingIndex(null); if (!item.text) setSnapshot((current) => ({ ...current, long_memory: current.long_memory.filter((_, itemIndex) => itemIndex !== index) })) }}><X size={15} />{t('cancel')}</button></div></> : <><div><p>{item.text}</p><span>{item.kind || 'memory'} {item.time ? `· ${String(item.time).slice(0, 10)}` : ''}</span></div><div className="memory-row-actions"><button className="icon-button" title={t('editMemory')} onClick={() => startEdit(index)}><Pencil size={15} /></button><button className="danger-icon" title={t('deleteMemory')} onClick={() => removeMemory(index)}><Trash2 size={16} /></button></div></>}</article>)}</div>}</section>
+      <section className="data-panel"><h2>{t('interests')}</h2><JsonPreview value={snapshot.interest_memory} empty={t('noInterests')} /></section>
+      <section className="data-panel"><h2>{t('emotionHistory')}</h2><EmotionMemoryList items={snapshot.emotion_memory} t={t} /></section>
+      <section className="data-panel"><h2>{t('recentEvents')}</h2><MemoryAuditList events={snapshot.memory_events} onUndo={undoAudit} t={t} /></section>
+    </>}
   </section>
+}
+
+function PendingMemoryList({ items, onResolve, t }) {
+  if (items.length === 0) return <p className="empty-state">{t('noPendingMemories')}</p>
+  return <div className="memory-list">{items.map((item) => {
+    const candidate = item.candidate || {}
+    return <article className="memory-row" key={item.id}><div><p>{candidate.text || t('memoryTitle')}</p><span>{item.created_at} · {item.reason}</span>{item.source_text && <span>{t('memorySource')}: {item.source_text}</span>}</div><div className="memory-row-actions pending-memory-actions"><button className="primary-button" title={t('confirmMemory')} onClick={() => onResolve(item.id, 'confirm')}><Check size={15} />{t('confirmMemory')}</button><button className="secondary-button" title={t('discardMemory')} onClick={() => onResolve(item.id, 'discard')}><X size={15} />{t('discardMemory')}</button></div></article>
+  })}</div>
+}
+
+function MemoryAuditList({ events, onUndo, t }) {
+  const sections = { stable: t('stableProfile'), interest: t('interests'), long: t('longTerm'), emotion: t('emotion'), none: t('memoryTitle') }
+  const actions = { added: t('memoryEventAdded'), updated: t('memoryEventUpdated'), merged: t('memoryEventMerged'), unchanged: t('memoryEventUnchanged'), skipped: t('memoryEventSkipped'), pending: t('memoryEventPending'), confirmed: t('memoryEventConfirmed'), rejected: t('memoryEventRejected'), reverted: t('memoryEventReverted') }
+  const visibleEvents = [...events].reverse().slice(0, 20)
+  if (visibleEvents.length === 0) return <p className="empty-state">{t('noEvents')}</p>
+  return <div className="memory-list">{visibleEvents.map((event) => <article className="memory-row memory-audit-row" key={event.id}><div><p><strong>{sections[event.section] || event.section} · {actions[event.action] || event.action}</strong></p><p>{event.text || t('memoryTitle')}</p><span>{event.time} · {event.reason}</span>{event.source_text && <span>{t('memorySource')}: {event.source_text}</span>}{event.undone_at && <span>{t('memoryEventReverted')}</span>}</div>{event.undoable && <button className="secondary-button" title={t('undoMemory')} onClick={() => onUndo(event.id)}><Undo2 size={15} />{t('undoMemory')}</button>}</article>)}</div>
 }
 
 export function MoodPage({ t }) {

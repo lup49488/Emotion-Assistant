@@ -394,6 +394,57 @@ def test_conversation_rename_delete_and_long_term_memory_edit_are_protected(monk
     assert removed.status_code == 204
 
 
+def test_audited_memory_write_can_be_undone_through_api(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with api_server.session_store.session("api-alice") as state:
+            item = {"text": "I prefer concise answers.", "time": "2026-08-03T10:00:00"}
+            state.long_memory.append(item)
+            event = api_server.record_memory_event(
+                state, section="long", action="added", text=item["text"],
+                reason="Explicit preference.", source_text="I prefer concise answers.", after=item,
+            )
+        undone = client.post(f"/api/v1/memory/audit/{event['id']}/undo", headers=headers)
+        repeated = client.post(f"/api/v1/memory/audit/{event['id']}/undo", headers=headers)
+
+    assert undone.status_code == 200
+    assert undone.json()["long_memory"] == []
+    assert undone.json()["memory_events"][-1]["action"] == "reverted"
+    assert repeated.status_code == 409
+
+
+def test_pending_memory_can_be_confirmed_or_discarded_through_api(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with api_server.session_store.session("api-alice") as state:
+            first = {"id": "first", "section": "long", "candidate": {"text": "I am studying.", "time": "2026-08-03T10:00:00"}, "source_text": "I am studying.", "reason": "Test", "score": 4.0, "created_at": "2026-08-03T10:00:00"}
+            second = {"id": "second", "section": "long", "candidate": {"text": "I enjoy hiking.", "time": "2026-08-03T10:00:00"}, "source_text": "I enjoy hiking.", "reason": "Test", "score": 4.0, "created_at": "2026-08-03T10:00:00"}
+            state.pending_memory.extend([first, second])
+        confirmed = client.post("/api/v1/memory/pending/first/confirm", headers=headers)
+        discarded = client.delete("/api/v1/memory/pending/second", headers=headers)
+
+    assert confirmed.status_code == 200
+    assert confirmed.json()["long_memory"][-1]["text"] == "I am studying."
+    assert confirmed.json()["pending_memory"][0]["id"] == "second"
+    assert discarded.status_code == 200
+    assert discarded.json()["pending_memory"] == []
+    assert discarded.json()["memory_events"][-1]["action"] == "rejected"
+
+
+def test_memory_save_preference_is_persisted_per_user(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        initial = client.get("/api/v1/memory/preference")
+        saved = client.put("/api/v1/memory/preference", json={"mode": "off"}, headers=headers)
+        restored = client.get("/api/v1/memory/preference")
+        missing_csrf = client.put("/api/v1/memory/preference", json={"mode": "auto"})
+
+    assert initial.json() == {"mode": "confirm"}
+    assert saved.json() == {"mode": "off"}
+    assert restored.json() == {"mode": "off"}
+    assert missing_csrf.status_code == 403
+
+
 def test_usage_export_and_privacy_api_are_authenticated(monkeypatch, tmp_path):
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)

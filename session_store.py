@@ -11,9 +11,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from config import MAX_CACHED_SESSIONS, USERS_DIR, _USER_ID_PATTERN
+from config import MAX_CACHED_SESSIONS, MEMORY_PENDING_LIMIT, USERS_DIR, _USER_ID_PATTERN
 from json_utils import load_json, save_json
 from memory_store import (
+    DEFAULT_MEMORY_SAVE_MODE,
     InterestMemoryStore,
     VectorIndexManager,
     clean_long_term,
@@ -42,6 +43,7 @@ SESSION_SECTIONS = (
     "stable_profile",
     "interest_memory",
     "memory_events",
+    "pending_memory",
 )
 
 
@@ -70,6 +72,7 @@ def user_paths(user_id: str) -> dict[str, Path]:
         "long_memory": d / "long_memory.json",
         "stable_profile": d / "stable_profile.json",
         "memory_events": d / "memory_events.json",
+        "pending_memory": d / "pending_memory.json",
         "mood_checkins": d / "mood_checkins.json",
         "vector_index": d / "memory.index",
         "lock": d / ".lock",
@@ -134,11 +137,13 @@ class SessionState:
     long_memory: list[dict[str, Any]] = field(default_factory=list)
     stable_profile: list[dict[str, Any]] = field(default_factory=list)
     memory_events: list[dict[str, Any]] = field(default_factory=list)
+    pending_memory: list[dict[str, Any]] = field(default_factory=list)
     interest_store: InterestMemoryStore = field(default_factory=InterestMemoryStore)
     vector_index: VectorIndexManager | None = None
     preferences: dict[str, str | None] = field(
         default_factory=lambda: {"language": None, "tone": None}
     )
+    memory_save_mode: str = DEFAULT_MEMORY_SAVE_MODE
     last_accessed: datetime = field(default_factory=datetime.now)
 
     def __post_init__(self) -> None:
@@ -163,6 +168,13 @@ def _hydrate_state(state: SessionState, sections: dict[str, list[dict[str, Any]]
         if isinstance(item, dict) and str(item.get("text", "")).strip()
     ]
     state.memory_events = [item for item in sections["memory_events"] if isinstance(item, dict)][-100:]
+    state.pending_memory = [
+        item for item in sections["pending_memory"]
+        if isinstance(item, dict)
+        and str(item.get("id", "")).strip()
+        and isinstance(item.get("candidate"), dict)
+        and str(item["candidate"].get("text", "")).strip()
+    ][-MEMORY_PENDING_LIMIT:]
 
     # Move profiles created before the dedicated stable-profile store existed.
     legacy_profiles = [
@@ -192,6 +204,7 @@ def _state_sections(state: SessionState) -> dict[str, list[dict[str, Any]]]:
         "stable_profile": list(state.stable_profile),
         "interest_memory": list(state.interest_store.items),
         "memory_events": list(state.memory_events[-100:]),
+        "pending_memory": list(state.pending_memory[-MEMORY_PENDING_LIMIT:]),
     }
 
 
@@ -219,22 +232,31 @@ def migrate_legacy_session_state(user_id: str) -> int:
 
 
 def _load_json_state(user_id: str) -> SessionState:
+    from memory_preference_store import get_memory_save_mode
+
+    mode = get_memory_save_mode(user_id)
     with user_file_lock(user_id):
         state = SessionState(user_id=user_id)
+        state.memory_save_mode = mode
         _hydrate_state(state, _legacy_sections(user_id))
         paths = user_paths(user_id)
         save_json(paths["long_memory"], state.long_memory)
         save_json(paths["stable_profile"], state.stable_profile)
         save_json(paths["interest_memory"], state.interest_store.items)
         save_json(paths["memory_events"], state.memory_events)
+        save_json(paths["pending_memory"], state.pending_memory)
     return state
 
 
 def _load_sqlite_state(user_id: str) -> SessionState:
+    from memory_preference_store import get_memory_save_mode
+
+    mode = get_memory_save_mode(user_id)
     with user_file_lock(user_id):
         with sqlite_connection() as conn:
             _migrate_legacy_session_unlocked(conn, user_id)
             state = SessionState(user_id=user_id)
+            state.memory_save_mode = mode
             sections = {
                 section: list_session_items(conn, user_id, section)
                 for section in SESSION_SECTIONS

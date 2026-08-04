@@ -43,6 +43,8 @@ from api_contracts import (
     LoginRequest,
     LoginResponse,
     LongTermMemoryUpdateRequest,
+    MemorySavePreferenceRequest,
+    MemorySavePreferenceResponse,
     MemoryQualityResponse,
     MemorySnapshotResponse,
     MoodCheckinListResponse,
@@ -94,7 +96,14 @@ from knowledge_store import (
 )
 from job_store import get_job, job_manager, list_jobs, mark_interrupted_jobs
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
-from memory_store import reconcile_memory_ownership, record_memory_event
+from memory_store import (
+    confirm_pending_memory,
+    reconcile_memory_ownership,
+    record_memory_event,
+    reject_pending_memory,
+    undo_memory_event,
+)
+from memory_preference_store import get_memory_save_mode, set_memory_save_mode
 from model_warmup import start_api_background_warmup, warmup_status
 from observability import chat_finished, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
 from observability_store import observability_summary, record_http_event
@@ -111,7 +120,7 @@ from sqlite_store import connection, storage_backend
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-07-31.1"
+API_CONTRACT_VERSION = "2026-08-03.3"
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -495,6 +504,21 @@ def update_style_preference(request: StylePreferenceRequest, user_id: CsrfCurren
     return {"style_prefix": set_style_prefix(user_id, request.style_prefix), "available": style_prefixes()}
 
 
+@app.get("/api/v1/memory/preference", response_model=MemorySavePreferenceResponse)
+def read_memory_save_preference(user_id: CurrentUser) -> dict[str, str]:
+    return {"mode": get_memory_save_mode(user_id)}
+
+
+@app.put("/api/v1/memory/preference", response_model=MemorySavePreferenceResponse)
+def update_memory_save_preference(
+    request: MemorySavePreferenceRequest, user_id: CsrfCurrentUser,
+) -> dict[str, str]:
+    mode = set_memory_save_mode(user_id, request.mode)
+    with session_store.session(user_id) as state:
+        state.memory_save_mode = mode
+    return {"mode": mode}
+
+
 @app.get("/api/v1/auth/session", response_model=SessionResponse)
 def session_info(user_id: CurrentUser) -> dict[str, Any]:
     allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
@@ -804,14 +828,19 @@ def remove_conversation(conversation_id: str, user_id: CsrfCurrentUser) -> None:
 @app.get("/api/v1/memory", response_model=MemorySnapshotResponse)
 def memory_snapshot(user_id: CurrentUser) -> dict[str, Any]:
     with session_store.session(user_id) as state:
-        return {
-            "history": list(state.history),
-            "emotion_memory": list(state.emotion_memory),
-            "long_memory": list(state.long_memory),
-            "stable_profile": list(state.stable_profile),
-            "interest_memory": list(state.interest_store.items),
-            "memory_events": list(state.memory_events),
-        }
+        return _memory_snapshot_payload(state)
+
+
+def _memory_snapshot_payload(state: Any) -> dict[str, Any]:
+    return {
+        "history": list(state.history),
+        "emotion_memory": list(state.emotion_memory),
+        "long_memory": list(state.long_memory),
+        "stable_profile": list(state.stable_profile),
+        "interest_memory": list(state.interest_store.items),
+        "memory_events": list(state.memory_events),
+        "pending_memory": list(state.pending_memory),
+    }
 
 
 @app.put("/api/v1/memory/long-term", response_model=MemorySnapshotResponse)
@@ -840,14 +869,41 @@ def update_long_term_memory(request: LongTermMemoryUpdateRequest, user_id: CsrfC
             text=f"Long-term memories updated ({len(normalized_items)})",
             reason="User edited long-term memory from the personal-data panel.",
         )
-        return {
-            "history": list(state.history),
-            "emotion_memory": list(state.emotion_memory),
-            "long_memory": list(state.long_memory),
-            "stable_profile": list(state.stable_profile),
-            "interest_memory": list(state.interest_store.items),
-            "memory_events": list(state.memory_events),
-        }
+        return _memory_snapshot_payload(state)
+
+
+@app.post("/api/v1/memory/audit/{event_id}/undo", response_model=MemorySnapshotResponse)
+def undo_audited_memory_write(event_id: str, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    with session_store.session(user_id) as state:
+        try:
+            undo_memory_event(state, event_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _memory_snapshot_payload(state)
+
+
+@app.post("/api/v1/memory/pending/{pending_id}/confirm", response_model=MemorySnapshotResponse)
+def confirm_pending_memory_write(pending_id: str, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    with session_store.session(user_id) as state:
+        try:
+            confirm_pending_memory(state, pending_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _memory_snapshot_payload(state)
+
+
+@app.delete("/api/v1/memory/pending/{pending_id}", response_model=MemorySnapshotResponse)
+def discard_pending_memory_write(pending_id: str, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    with session_store.session(user_id) as state:
+        try:
+            reject_pending_memory(state, pending_id)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return _memory_snapshot_payload(state)
 
 
 @app.get("/api/v1/rag/status", response_model=RagStatusResponse)

@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 let loggedIn = false
 const conversations = []
 const moodRecords = []
+let memorySaveMode = 'confirm'
 const memorySnapshot = {
   history: [],
   emotion_memory: [],
@@ -11,10 +12,12 @@ const memorySnapshot = {
   stable_profile: [],
   interest_memory: [],
   memory_events: [],
+  pending_memory: [],
 }
 
 function resetState() {
   loggedIn = false
+  memorySaveMode = 'confirm'
   conversations.splice(0, conversations.length)
   moodRecords.splice(0, moodRecords.length, {
     date: '2026-07-29', mood: 'calm', intensity: 3,
@@ -22,7 +25,7 @@ function resetState() {
     created_at: '2026-07-29T09:00:00', updated_at: '2026-07-29T09:00:00',
   })
   Object.assign(memorySnapshot, {
-    history: [], emotion_memory: [], long_memory: [], stable_profile: [], interest_memory: [], memory_events: [],
+    history: [], emotion_memory: [], long_memory: [], stable_profile: [], interest_memory: [], memory_events: [], pending_memory: [],
   })
 }
 
@@ -85,6 +88,11 @@ const server = http.createServer(async (request, response) => {
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/memory') return send(response, 200, memorySnapshot)
   if (request.method === 'GET' && url.pathname === '/api/v1/memory/quality') return send(response, 200, { report: 'Memory quality is healthy.' })
+  if (request.method === 'GET' && url.pathname === '/api/v1/memory/preference') return send(response, 200, { mode: memorySaveMode })
+  if (request.method === 'PUT' && url.pathname === '/api/v1/memory/preference') {
+    memorySaveMode = ['auto', 'confirm', 'off'].includes(body.mode) ? body.mode : 'confirm'
+    return send(response, 200, { mode: memorySaveMode })
+  }
   if (request.method === 'GET' && url.pathname === '/api/v1/mood/checkins') return send(response, 200, { records: moodRecords })
   if (request.method === 'GET' && url.pathname === '/api/v1/mood/weekly') return send(response, 200, { points: [], summary: 'No weekly summary available.', analysis: '' })
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {

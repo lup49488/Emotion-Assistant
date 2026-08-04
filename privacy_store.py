@@ -25,7 +25,7 @@ def privacy_summary(user_id: str) -> dict[str, Any]:
         "history_count": len(state.history),
         "memory_count": sum([
             len(state.emotion_memory), len(state.long_memory), len(state.stable_profile),
-            len(state.interest_store.items), len(state.memory_events),
+            len(state.interest_store.items), len(state.memory_events), len(state.pending_memory),
         ]),
         "mood_count": len(load_mood_checkins(user_id)),
         "api_request_count": int(usage["month"]["requests"]),

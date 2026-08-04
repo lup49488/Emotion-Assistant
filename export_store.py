@@ -23,7 +23,7 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
     state = load_state(user_id)
     mood_checkins = load_mood_checkins(user_id)
     return {
-        "schema_version": 3,
+        "schema_version": 4,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "user_id": user_id,
         "notes": [
@@ -39,6 +39,7 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
         "long_memory": list(state.long_memory),
         "stable_profile": list(state.stable_profile),
         "memory_events": list(state.memory_events),
+        "pending_memory": list(state.pending_memory),
         "interest_memory": list(state.interest_store.items),
         "mood_checkins": mood_checkins,
     }
