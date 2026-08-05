@@ -4,7 +4,7 @@
     "title": "Emotion-Aware Chat API",
     "description": "Versioned API contract for the Emotion-Aware Chat application.",
     "version": "1.0.0",
-    "x-contract-version": "2026-08-03.3",
+    "x-contract-version": "2026-08-04.1",
     "x-api-version": "v1"
   },
   "paths": {
@@ -2869,6 +2869,105 @@
         }
       }
     },
+    "/api/v1/import": {
+      "post": {
+        "summary": "Import Data",
+        "operationId": "import_data_api_v1_import_post",
+        "parameters": [
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^(merge|replace)$",
+              "default": "merge",
+              "title": "Mode"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_import_data_api_v1_import_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataImportResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/privacy/data": {
       "delete": {
         "summary": "Delete Privacy Data",
@@ -3082,6 +3181,20 @@
           "job"
         ],
         "title": "BackgroundJobResponse"
+      },
+      "Body_import_data_api_v1_import_post": {
+        "properties": {
+          "file": {
+            "type": "string",
+            "contentMediaType": "application/octet-stream",
+            "title": "File"
+          }
+        },
+        "type": "object",
+        "required": [
+          "file"
+        ],
+        "title": "Body_import_data_api_v1_import_post"
       },
       "Body_upload_rag_document_api_v1_rag_documents_post": {
         "properties": {
@@ -3431,6 +3544,39 @@
           "conversation"
         ],
         "title": "ConversationResponse"
+      },
+      "DataImportResponse": {
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "merge",
+              "replace"
+            ],
+            "title": "Mode"
+          },
+          "conversations": {
+            "type": "integer",
+            "title": "Conversations"
+          },
+          "mood_checkins": {
+            "type": "integer",
+            "title": "Mood Checkins"
+          },
+          "memories": {
+            "type": "integer",
+            "title": "Memories"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "mode",
+          "conversations",
+          "mood_checkins",
+          "memories"
+        ],
+        "title": "DataImportResponse"
       },
       "ExportResponse": {
         "properties": {

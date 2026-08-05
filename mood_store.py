@@ -208,6 +208,43 @@ def delete_mood_checkin(user_id: str, checkin_date: str) -> bool:
         return True
 
 
+def restore_mood_checkins(user_id: str, records: list[dict[str, Any]], *, mode: str) -> int:
+    """Restore validated mood records; merge keeps an existing date unchanged."""
+    user_id = validate_user_id(user_id or "local")
+    if mode not in {"merge", "replace"}:
+        raise ValueError("Import mode must be merge or replace.")
+    normalized = [
+        {
+            "date": _normalize_date(str(item.get("date", ""))),
+            "mood": _normalize_mood(str(item.get("mood", ""))),
+            "intensity": _normalize_intensity(item.get("intensity")),
+            "note": _clean_note(str(item.get("note", ""))),
+            "source": str(item.get("source") or "checkin"),
+            "created_at": str(item.get("created_at") or datetime.now().isoformat(timespec="seconds")),
+            "updated_at": str(item.get("updated_at") or datetime.now().isoformat(timespec="seconds")),
+        }
+        for item in records
+    ]
+    if sqlite_enabled():
+        with user_file_lock(user_id):
+            with sqlite_connection() as conn:
+                _migrate_legacy_moods_unlocked(conn, user_id)
+                if mode == "replace":
+                    conn.execute("DELETE FROM mood_checkins WHERE user_id = ?", (user_id,))
+                existing_dates = {item["date"] for item in list_sqlite_mood_checkins(conn, user_id)}
+                additions = [item for item in normalized if item["date"] not in existing_dates]
+                for item in additions:
+                    upsert_mood_checkin(conn, user_id, item)
+        return len(additions)
+
+    with user_file_lock(user_id):
+        existing = [] if mode == "replace" else _load_records_unlocked(user_id)
+        dates = {item["date"] for item in existing}
+        additions = [item for item in normalized if item["date"] not in dates]
+        save_json(user_paths(user_id)["mood_checkins"], sorted([*existing, *additions], key=lambda item: item["date"]))
+    return len(additions)
+
+
 def format_mood_checkins(user_id: str, limit: int = 14) -> str:
     user_id = validate_user_id(user_id or "local")
     records = load_mood_checkins(user_id)

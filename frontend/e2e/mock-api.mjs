@@ -50,7 +50,8 @@ const server = http.createServer(async (request, response) => {
 
   const chunks = []
   for await (const chunk of request) chunks.push(chunk)
-  const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {}
+  const contentType = request.headers['content-type'] || ''
+  const body = chunks.length && contentType.includes('application/json') ? JSON.parse(Buffer.concat(chunks).toString()) : {}
   const url = new URL(request.url, 'http://127.0.0.1:18000')
 
   if (request.method === 'POST' && url.pathname === '/__test/reset') {
@@ -93,6 +94,9 @@ const server = http.createServer(async (request, response) => {
     memorySaveMode = ['auto', 'confirm', 'off'].includes(body.mode) ? body.mode : 'confirm'
     return send(response, 200, { mode: memorySaveMode })
   }
+  if (request.method === 'GET' && url.pathname === '/api/v1/privacy') return send(response, 200, { backend: 'json', conversation_count: conversations.length, message_count: 0, history_count: memorySnapshot.history.length, memory_count: memorySnapshot.long_memory.length, mood_count: moodRecords.length, api_request_count: 0 })
+  if (request.method === 'GET' && url.pathname === '/api/v1/export') return send(response, 200, { schema_version: 4, exported_at: '2026-08-04T00:00:00', user_id: 'e2e-user', notes: [], ...memorySnapshot, conversations, mood_checkins: moodRecords })
+  if (request.method === 'POST' && url.pathname === '/api/v1/import') return send(response, 200, { mode: url.searchParams.get('mode') || 'merge', conversations: 1, mood_checkins: 1, memories: 1 })
   if (request.method === 'GET' && url.pathname === '/api/v1/mood/checkins') return send(response, 200, { records: moodRecords })
   if (request.method === 'GET' && url.pathname === '/api/v1/mood/weekly') return send(response, 200, { points: [], summary: 'No weekly summary available.', analysis: '' })
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {

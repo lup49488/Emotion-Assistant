@@ -38,6 +38,7 @@ from api_contracts import (
     ConversationListResponse,
     ConversationRenameRequest,
     ConversationResponse,
+    DataImportResponse,
     ExportResponse,
     HealthResponse,
     LoginRequest,
@@ -113,6 +114,7 @@ from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from rag_feedback_store import create_citation_trace, feedback_summary, submit_feedback
 from style_preference_store import get_style_prefix, set_style_prefix
 from style_store import style_prefixes
+from user_data_import import import_user_export
 from service_errors import ServiceError
 from sqlite_store import connection, storage_backend
 
@@ -120,7 +122,7 @@ from sqlite_store import connection, storage_backend
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-08-03.3"
+API_CONTRACT_VERSION = "2026-08-04.1"
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -1050,6 +1052,21 @@ def privacy(user_id: CurrentUser) -> dict[str, Any]:
 @app.get("/api/v1/export", response_model=ExportResponse)
 def export_data(user_id: CurrentUser) -> dict[str, Any]:
     return build_user_export_payload(user_id)
+
+
+@app.post("/api/v1/import", response_model=DataImportResponse)
+async def import_data(
+    file: Annotated[UploadFile, File(...)],
+    user_id: CsrfCurrentUser,
+    mode: str = Query(default="merge", pattern="^(merge|replace)$"),
+) -> dict[str, int | str]:
+    if not (file.filename or "").lower().endswith(".json"):
+        raise HTTPException(status_code=422, detail="Import file must be a JSON export.")
+    raw = await file.read()
+    try:
+        return import_user_export(user_id, raw, mode=mode)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.delete("/api/v1/privacy/data", response_model=PrivacyDeletionResponse)

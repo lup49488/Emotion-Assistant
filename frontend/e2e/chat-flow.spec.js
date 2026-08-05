@@ -109,6 +109,15 @@ test('memory saving policy can be changed from personal data', async ({ page }) 
   await expect(page.getByText('Conversation memory extraction is disabled. Manual changes remain available.')).toBeVisible()
 })
 
+test('a Serenova export file can be selected and imported', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Privacy & export' }).click()
+  await page.getByLabel('Export JSON file').setInputFiles({ name: 'serenova-export.json', mimeType: 'application/json', buffer: Buffer.from('{"schema_version":4}') })
+  await page.getByRole('button', { name: 'Import data' }).click()
+
+  await expect(page.getByText('Imported 1 conversations, 1 memories, and 1 Mood Check-ins.')).toBeVisible()
+})
+
 test('mood notes retain leading indentation and paragraph breaks in the check-in history', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Mood check-in' }).click()

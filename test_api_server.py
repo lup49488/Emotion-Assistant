@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -462,6 +463,43 @@ def test_usage_export_and_privacy_api_are_authenticated(monkeypatch, tmp_path):
     assert export.json()["user_id"] == "api-alice"
     assert privacy.status_code == 200
     assert invalid_delete.status_code == 422
+
+
+def test_user_export_can_be_imported_for_the_same_authenticated_user(monkeypatch, tmp_path):
+    payload = {
+        "schema_version": 4,
+        "user_id": "api-alice",
+        "history": [{"role": "user", "content": "Imported history"}],
+        "conversations": [{
+            "id": "imported_chat", "title": "Imported chat", "created_at": "2026-08-04T09:00:00", "updated_at": "2026-08-04T09:01:00",
+            "messages": [{"role": "user", "content": "Hello", "created_at": "2026-08-04T09:00:00"}],
+        }],
+        "emotion_memory": [{"label": "joy", "score": 0.9, "time": "2026-08-04T09:00:00"}],
+        "long_memory": [{"text": "I am a student.", "time": "2026-08-04T09:00:00"}],
+        "stable_profile": [], "interest_memory": [], "memory_events": [], "pending_memory": [],
+        "mood_checkins": [{"date": "2026-08-04", "mood": "calm", "intensity": 4, "note": "Imported", "source": "checkin"}],
+    }
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        response = client.post(
+            "/api/v1/import?mode=replace", headers=headers,
+            files={"file": ("serenova-export.json", json.dumps(payload), "application/json")},
+        )
+        memory = client.get("/api/v1/memory")
+        conversations = client.get("/api/v1/conversations")
+        moods = client.get("/api/v1/mood/checkins")
+        wrong_owner = {**payload, "user_id": "someone-else"}
+        rejected = client.post(
+            "/api/v1/import", headers=headers,
+            files={"file": ("serenova-export.json", json.dumps(wrong_owner), "application/json")},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"mode": "replace", "conversations": 1, "mood_checkins": 1, "memories": 1}
+    assert memory.json()["long_memory"][0]["text"] == "I am a student."
+    assert conversations.json()["conversations"][0]["id"] == "imported_chat"
+    assert moods.json()["records"][0]["mood"] == "calm"
+    assert rejected.status_code == 422
 
 
 def test_rag_api_exposes_status_quality_and_protected_search(monkeypatch, tmp_path):

@@ -261,3 +261,56 @@ def rename_conversation(user_id: str, conversation_id: str, title: str) -> dict[
                 _save_json_conversations(user_id, conversations)
                 return _summary(record)
     return None
+
+
+def restore_conversations(user_id: str, records: list[dict[str, Any]], *, mode: str) -> int:
+    """Restore validated exported conversations, preserving their timestamps and messages."""
+    user_id = validate_user_id(user_id)
+    if mode not in {"merge", "replace"}:
+        raise ValueError("Import mode must be merge or replace.")
+    restored = [
+        {
+            "id": str(item["id"]),
+            "title": _title_from_text(str(item.get("title", "New conversation"))),
+            "created_at": str(item.get("created_at") or _now()),
+            "updated_at": str(item.get("updated_at") or _now()),
+            "messages": [dict(message) for message in item.get("messages", [])],
+        }
+        for item in records
+    ]
+    if sqlite_enabled():
+        with user_file_lock(user_id):
+            with sqlite_connection() as conn:
+                ensure_user(conn, user_id)
+                if mode == "replace":
+                    conn.execute("DELETE FROM conversations WHERE user_id = ?", (user_id,))
+                existing = {
+                    row["id"] for row in conn.execute(
+                        "SELECT id FROM conversations WHERE user_id = ?", (user_id,)
+                    ).fetchall()
+                }
+                added = 0
+                for record in restored:
+                    if record["id"] in existing:
+                        continue
+                    conn.execute(
+                        "INSERT INTO conversations(id, user_id, title, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                        (record["id"], user_id, record["title"], record["created_at"], record["updated_at"]),
+                    )
+                    conn.executemany(
+                        "INSERT INTO conversation_messages(conversation_id, position, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+                        [
+                            (record["id"], position, message["role"], message["content"], message["created_at"])
+                            for position, message in enumerate(record["messages"])
+                        ],
+                    )
+                    existing.add(record["id"])
+                    added += 1
+        return added
+
+    with user_file_lock(user_id):
+        existing_records = [] if mode == "replace" else _load_json_conversations(user_id)
+        existing_ids = {str(item.get("id", "")) for item in existing_records}
+        additions = [record for record in restored if record["id"] not in existing_ids]
+        _save_json_conversations(user_id, [*existing_records, *additions])
+    return len(additions)

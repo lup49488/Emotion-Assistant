@@ -350,6 +350,13 @@ class ExportResponse(ContractModel):
     mood_checkins: list[dict[str, Any]]
 
 
+class DataImportResponse(ContractModel):
+    mode: Literal["merge", "replace"]
+    conversations: int
+    mood_checkins: int
+    memories: int
+
+
 class PrivacyDeletionResponse(ContractModel):
     deleted: dict[str, Any]
 
