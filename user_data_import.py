@@ -5,16 +5,22 @@ import json
 import re
 from typing import Any
 
+import logging
+
+from config import SHORT_TERM_LIMIT
 from conversation_store import restore_conversations
-from memory_store import reconcile_memory_ownership
+from export_store import build_user_export_payload
+from memory_backup import create_memory_backup
+from memory_store import MEMORY_SECTIONS, expire_overflowing_pending_memory, reconcile_memory_ownership
 from mood_store import restore_mood_checkins
 from session_store import validate_user_id
 
 
+logger = logging.getLogger(__name__)
+
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 _CONVERSATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MESSAGE_ROLES = {"user", "assistant", "system"}
-_MEMORY_SECTIONS = {"stable", "interest", "long", "emotion"}
 
 
 def _list_of_objects(payload: dict[str, Any], key: str, *, limit: int = 2_000) -> list[dict[str, Any]]:
@@ -98,7 +104,7 @@ def parse_export_bytes(raw: bytes, user_id: str) -> dict[str, Any]:
     pending = _list_of_objects(payload, "pending_memory")
     for item in pending:
         candidate = item.get("candidate")
-        if str(item.get("section", "")) not in _MEMORY_SECTIONS or not isinstance(candidate, dict) or not str(candidate.get("text", "")).strip():
+        if str(item.get("section", "")) not in MEMORY_SECTIONS or not isinstance(candidate, dict) or not str(candidate.get("text", "")).strip():
             raise ValueError("Exported pending memory is invalid.")
     events = _list_of_objects(payload, "memory_events")
     moods = _list_of_objects(payload, "mood_checkins", limit=5_000)
@@ -126,16 +132,16 @@ def parse_export_bytes(raw: bytes, user_id: str) -> dict[str, Any]:
     }
 
 
-def import_user_export(user_id: str, raw: bytes, *, mode: str) -> dict[str, int | str]:
-    if mode not in {"merge", "replace"}:
-        raise ValueError("Import mode must be merge or replace.")
-    user_id = validate_user_id(user_id)
-    imported = parse_export_bytes(raw, user_id)
+def _durable_memory_count(state: Any) -> int:
+    return len(state.long_memory) + len(state.stable_profile) + len(state.interest_store.items)
 
-    # Import only after the full file has passed validation.
+
+def _apply_memory_import(user_id: str, imported: dict[str, Any], *, mode: str) -> int:
+    """Write the memory sections and report how many durable memories were added."""
     from chatbot import session_store
 
     with session_store.session(user_id) as state:
+        before = _durable_memory_count(state)
         if mode == "replace":
             state.history = imported["history"]
             state.emotion_memory = imported["emotion_memory"]
@@ -143,11 +149,10 @@ def import_user_export(user_id: str, raw: bytes, *, mode: str) -> dict[str, int 
             state.stable_profile = imported["stable_profile"]
             state.interest_store.replace_all(imported["interest_memory"])
             state.memory_events = imported["memory_events"][-100:]
-            state.pending_memory = imported["pending_memory"]
+            state.pending_memory = list(imported["pending_memory"])
         else:
             history_keys = {(item.get("role"), item.get("content")) for item in state.history}
             state.history.extend(item for item in imported["history"] if (item.get("role"), item.get("content")) not in history_keys)
-            state.history = state.history[-1_000:]
             state.emotion_memory.extend(
                 item for item in imported["emotion_memory"]
                 if (item.get("label"), item.get("time")) not in {(value.get("label"), value.get("time")) for value in state.emotion_memory}
@@ -159,15 +164,71 @@ def import_user_export(user_id: str, raw: bytes, *, mode: str) -> dict[str, int 
             state.memory_events = [*state.memory_events, *(item for item in imported["memory_events"] if str(item.get("id", "")) not in event_ids)][-100:]
             pending_ids = {str(item.get("id", "")) for item in state.pending_memory}
             state.pending_memory.extend(item for item in imported["pending_memory"] if str(item.get("id", "")) not in pending_ids)
+        # An import must leave the same invariants a normal turn would. Without the
+        # trim the next request would send the whole imported transcript to the
+        # model, and the queue would be truncated at save time with no audit trail.
+        state.history = state.history[-SHORT_TERM_LIMIT:]
+        expire_overflowing_pending_memory(state)
         if state.vector_index is not None:
             state.vector_index.mark_dirty_for_rebuild()
         reconcile_memory_ownership(state)
+        return max(0, _durable_memory_count(state) - before)
 
+
+def _apply_import(user_id: str, imported: dict[str, Any], *, mode: str) -> dict[str, int | str]:
+    memories = _apply_memory_import(user_id, imported, mode=mode)
     conversations = restore_conversations(user_id, imported["conversations"], mode=mode)
     moods = restore_mood_checkins(user_id, imported["mood_checkins"], mode=mode)
     return {
         "mode": mode,
         "conversations": conversations,
         "mood_checkins": moods,
-        "memories": len(imported["long_memory"]) + len(imported["stable_profile"]) + len(imported["interest_memory"]),
+        # Actual additions, so all three counts mean the same thing. Re-importing
+        # the same file reports zeros instead of the file's own size.
+        "memories": memories,
     }
+
+
+def _snapshot_for_rollback(user_id: str) -> dict[str, Any]:
+    snapshot = build_user_export_payload(user_id)
+    return {
+        "history": list(snapshot["history"]),
+        "conversations": _validate_conversations(snapshot["conversations"]),
+        "emotion_memory": list(snapshot["emotion_memory"]),
+        "long_memory": list(snapshot["long_memory"]),
+        "stable_profile": list(snapshot["stable_profile"]),
+        "interest_memory": list(snapshot["interest_memory"]),
+        "memory_events": list(snapshot["memory_events"]),
+        "pending_memory": list(snapshot["pending_memory"]),
+        "mood_checkins": list(snapshot["mood_checkins"]),
+    }
+
+
+def import_user_export(user_id: str, raw: bytes, *, mode: str) -> dict[str, int | str]:
+    if mode not in {"merge", "replace"}:
+        raise ValueError("Import mode must be merge or replace.")
+    user_id = validate_user_id(user_id)
+    imported = parse_export_bytes(raw, user_id)
+
+    if mode != "replace":
+        # Merge only ever adds, so a failure part-way leaves the account usable.
+        return _apply_import(user_id, imported, mode=mode)
+
+    # Replace overwrites memories, conversations and Mood Check-ins in three
+    # separate stores. Without a rollback a failure between them would leave the
+    # account half replaced, with the discarded half unrecoverable.
+    snapshot = _snapshot_for_rollback(user_id)
+    from chatbot import session_store
+
+    with session_store.session(user_id) as state:
+        backup_path = create_memory_backup(user_id, state, reason="pre_restore")
+    try:
+        return _apply_import(user_id, imported, mode=mode)
+    except Exception:
+        try:
+            _apply_import(user_id, snapshot, mode="replace")
+        except Exception:
+            logger.exception(
+                "导入失败后回滚也失败，导入前的记忆备份保存在 %s。user=%s", backup_path, user_id,
+            )
+        raise

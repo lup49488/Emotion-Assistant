@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient

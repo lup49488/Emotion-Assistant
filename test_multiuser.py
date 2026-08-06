@@ -29,10 +29,14 @@ class MultiUserTestBase(unittest.TestCase):
         cb.USERS_DIR = cb.BASE_DIR / "users"
         cb.USERS_DIR.mkdir(parents=True, exist_ok=True)
         self.cb = cb
-        # 每个测试都用全新的 SessionStore，避免跨测试缓存串台
+        # 每个测试都用全新的 SessionStore，避免跨测试缓存串台。
+        # chatbot_multiuser 就是 chatbot 本身，这里替换的是进程级单例，
+        # 必须在 tearDown 还原，否则后续测试里持有旧引用的模块会读到过期缓存。
+        self._original_session_store = cb.session_store
         self.cb.session_store = cb.SessionStore()
 
     def tearDown(self):
+        self.cb.session_store = self._original_session_store
         shutil.rmtree(self._tmp_dir, ignore_errors=True)
 
 

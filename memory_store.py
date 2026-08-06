@@ -43,8 +43,9 @@ MEMORY_EVENT_LIMIT = 100
 MEMORY_SAVE_MODES = ("auto", "confirm", "off")
 DEFAULT_MEMORY_SAVE_MODE = "confirm" if MEMORY_CONFIRM_LONG_TERM else "auto"
 
-# Sections whose items live in a durable list, so an audited write can be reversed.
-UNDOABLE_SECTIONS = ("stable", "interest", "long", "emotion")
+# The durable memory sections. Each keeps its items in a list, which is what makes
+# a candidate queueable, an audited write reversible, and an imported record valid.
+MEMORY_SECTIONS = ("stable", "interest", "long", "emotion")
 
 
 def queue_pending_memory_confirmation(
@@ -57,7 +58,7 @@ def queue_pending_memory_confirmation(
     score: float,
 ) -> dict[str, Any]:
     """Queue an inferred durable-memory candidate until the user approves it."""
-    if section not in {"stable", "interest", "long", "emotion"}:
+    if section not in MEMORY_SECTIONS:
         raise ValueError("This memory candidate cannot require confirmation.")
     text = str(candidate.get("text", "")).strip()
     if not text:
@@ -91,11 +92,11 @@ def queue_pending_memory_confirmation(
         score=score,
         source_text=source_text,
     )
-    _expire_overflowing_pending_memory(state)
+    expire_overflowing_pending_memory(state)
     return pending
 
 
-def _expire_overflowing_pending_memory(state: Any) -> None:
+def expire_overflowing_pending_memory(state: Any) -> None:
     """Drop the oldest unreviewed candidates, but never silently.
 
     The point of the queue is that the user decides what is remembered, so a
@@ -702,7 +703,7 @@ def record_memory_event(
         event["before"] = dict(before)
     if after is not None:
         event["after"] = dict(after)
-    event["undoable"] = bool(section in UNDOABLE_SECTIONS and after is not None)
+    event["undoable"] = bool(section in MEMORY_SECTIONS and after is not None)
     state.memory_events.append(event)
     state.memory_events = state.memory_events[-MEMORY_EVENT_LIMIT:]
     return event
