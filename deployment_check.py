@@ -17,7 +17,10 @@ from env_loader import load_project_env
 
 BASE_DIR = Path(__file__).resolve().parent
 load_project_env(BASE_DIR)
-REQUIRED_PROJECT_FILES = ("Web_GUI.py", "api_server.py", "config.py", "requirements.txt", "sqlite_store.py")
+REQUIRED_PROJECT_FILES = (
+    "Web_GUI.py", "api_server.py", "config.py", "requirements.txt", "sqlite_store.py",
+    "Dockerfile", "Dockerfile.frontend", "docker-compose.yml", "docker/nginx.conf",
+)
 REQUIRED_MODULES = ("fastapi", "gradio", "numpy", "openai", "pytest")
 FRONTEND_DIR = BASE_DIR / "frontend"
 
@@ -52,6 +55,47 @@ def check_project_files(reporter: CheckReporter) -> None:
         reporter.fail(f"Missing required project file(s): {', '.join(missing)}")
     else:
         reporter.ok("Required project files are present")
+
+
+def check_docker_configuration(reporter: CheckReporter) -> None:
+    frontend_dockerfile = (BASE_DIR / "Dockerfile.frontend").read_text(encoding="utf-8")
+    compose_file = (BASE_DIR / "docker-compose.yml").read_text(encoding="utf-8")
+    nginx_config = (BASE_DIR / "docker" / "nginx.conf").read_text(encoding="utf-8")
+
+    if "VITE_API_BASE_URL=/" not in frontend_dockerfile:
+        reporter.fail("Docker frontend build must set VITE_API_BASE_URL=/ for same-origin API requests.")
+    else:
+        reporter.ok("Docker frontend build uses same-origin API requests")
+
+    if "proxy_pass http://api:8000" not in nginx_config or "location /api/" not in nginx_config:
+        reporter.fail("Docker Nginx config must proxy /api/ to the api service.")
+    else:
+        reporter.ok("Docker Nginx proxies /api/ to the api service")
+
+    if nginx_config.count("proxy_set_header Host $host;") < 4:
+        reporter.fail("Docker Nginx API proxy locations must preserve the original Host header.")
+    else:
+        reporter.ok("Docker Nginx preserves Host headers for API proxy locations")
+
+    if "headers={'Host': host}" not in compose_file:
+        reporter.fail("Docker Compose healthcheck must send an API_TRUSTED_HOSTS-compatible Host header.")
+    else:
+        reporter.ok("Docker Compose healthcheck uses a trusted Host header")
+
+    if "API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}" not in compose_file:
+        reporter.fail("Docker Compose must provide local-safe API_TRUSTED_HOSTS defaults.")
+    else:
+        reporter.ok("Docker Compose provides local-safe trusted-host defaults")
+
+    if '"127.0.0.1:8080:80"' not in compose_file:
+        reporter.fail("Docker Compose web service should bind to 127.0.0.1:8080 for Tunnel/reverse-proxy deployments.")
+    else:
+        reporter.ok("Docker Compose web service is bound to localhost")
+
+    if "./users:/app/users" not in compose_file or "./data:/app/data" not in compose_file:
+        reporter.fail("Docker Compose must persist user and data directories with host volumes.")
+    else:
+        reporter.ok("Docker Compose persists user and data directories")
 
 
 def check_dependencies(reporter: CheckReporter) -> None:
@@ -221,6 +265,7 @@ def main() -> int:
     reporter = CheckReporter()
     check_python(reporter)
     check_project_files(reporter)
+    check_docker_configuration(reporter)
     if not args.skip_dependencies:
         check_dependencies(reporter)
     check_runtime_configuration(reporter)

@@ -1,0 +1,44 @@
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      API_SERVER_HOST: 0.0.0.0
+      API_SERVER_PORT: 8000
+      API_SESSION_SECRET: ${API_SESSION_SECRET:?Set API_SESSION_SECRET in .env before starting Docker}
+      API_PUBLIC_MODE: ${API_PUBLIC_MODE:-false}
+      API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
+      API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}
+      HF_HOME: /app/data/hf_cache
+      STORAGE_BACKEND: ${STORAGE_BACKEND:-sqlite}
+      SQLITE_DATABASE_PATH: ${SQLITE_DATABASE_PATH:-/app/data/chatbot.db}
+    volumes:
+      - ./data:/app/data
+      - ./users:/app/users
+      - ./exports:/app/exports
+      - ./logs:/app/logs
+      - ./knowledge_base:/app/knowledge_base
+      - ./style_base:/app/style_base
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os; from urllib.request import Request, urlopen; host=(os.getenv('API_TRUSTED_HOSTS') or 'localhost').split(',')[0].strip() or 'localhost'; urlopen(Request('http://127.0.0.1:8000/health', headers={'Host': host}), timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 45s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:80"
+    restart: unless-stopped

@@ -22,8 +22,6 @@ API_SESSION_SECRET=replace-with-a-unique-random-value-at-least-32-characters
 API_COOKIE_SECURE=true
 API_COOKIE_SAMESITE=lax
 API_CORS_ORIGINS=https://chat.example.com
-API_SERVER_HOST=127.0.0.1
-API_SERVER_PORT=8000
 API_PRELOAD_MODELS=true
 API_PUBLIC_MODE=true
 API_TRUSTED_HOSTS=chat.example.com
@@ -40,33 +38,24 @@ Public mode refuses to start unless secure cookies, a fixed session secret, and
 an explicit public host allowlist are configured. The API also applies strict
 security response headers, a request-size limit, and failed-login rate limits.
 
-## 2. Build and run the frontend locally on the server
+## 2. Start the Docker stack
 
-The production frontend must call the same public origin, so set the API base
-to `/` while building:
+Docker Compose runs the FastAPI container behind the frontend Nginx container.
+Nginx serves React at `/` and proxies API requests to the internal `api:8000`
+service. The host only needs to expose the web container on loopback:
 
 ```bash
-cd /path/to/NLP_Project/frontend
-VITE_API_BASE_URL=/ npm run build
-npm run preview -- --host 127.0.0.1 --port 4173
+cd /path/to/NLP_Project
+docker compose up --build -d
 ```
 
-For a long-running deployment, run the preview process under a service manager
-or replace it with a dedicated static server such as Nginx. `vite preview` is
-appropriate for a small public test but is not a full production web server.
-
-Start FastAPI separately from the repository root:
+Verify locally before exposing the service:
 
 ```bash
-python3 -m uvicorn api_server:app --host 127.0.0.1 --port 8000
-```
-
-Verify locally before exposing either service:
-
-```bash
-curl http://127.0.0.1:8000/health
-curl http://127.0.0.1:8000/api/v1/status
-curl -I http://127.0.0.1:4173/
+curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8080/api/v1/status
+curl -I http://127.0.0.1:8080/
+docker compose ps
 ```
 
 `/health` is safe for a reverse proxy or uptime monitor. It reports storage,
@@ -78,18 +67,17 @@ server log.
 Run the same checks used by CI before a manual deployment:
 
 ```bash
-python3 deployment_check.py --skip-dependencies --smoke-api --frontend-build
+python3 deployment_check.py --skip-dependencies
 ```
 
 ## 3. Configure Cloudflare Tunnel
 
-In Cloudflare Zero Trust, create or select a named Tunnel and add the following
-two published application routes in this order:
+In Cloudflare Zero Trust, create or select a named Tunnel and add one published
+application route:
 
 | Public hostname | Path | Local service |
 | --- | --- | --- |
-| `chat.example.com` | `/api/*` | `http://127.0.0.1:8000` |
-| `chat.example.com` | `/*` | `http://127.0.0.1:4173` |
+| `chat.example.com` | `/*` | `http://127.0.0.1:8080` |
 
 The dashboard creates the DNS record for the hostname. If you use a locally
 managed tunnel, the equivalent `config.yml` is:
@@ -100,10 +88,7 @@ credentials-file: /home/YOUR_USER/.cloudflared/YOUR_TUNNEL_UUID.json
 
 ingress:
   - hostname: chat.example.com
-    path: ^/api/.*
-    service: http://127.0.0.1:8000
-  - hostname: chat.example.com
-    service: http://127.0.0.1:4173
+    service: http://127.0.0.1:8080
   - service: http_status:404
 ```
 
@@ -111,7 +96,7 @@ Validate the rule order before running it:
 
 ```bash
 cloudflared tunnel ingress validate
-cloudflared tunnel ingress rule https://chat.example.com/api/v1/session
+cloudflared tunnel ingress rule https://chat.example.com/api/v1/status
 cloudflared tunnel ingress rule https://chat.example.com/
 ```
 

@@ -1,0 +1,70 @@
+name: Deploy Emotion Assistant
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: emotion-assistant-production
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Configure SSH
+        shell: bash
+        env:
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/known_hosts
+
+      - name: Deploy to VPS
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          ssh \
+            -i ~/.ssh/deploy_key \
+            -p "$VPS_PORT" \
+            "$VPS_USER@$VPS_HOST" << 'EOF'
+              set -euo pipefail
+
+              cd /opt/Emotion-Assistant
+
+              echo "Updating repository..."
+              git fetch origin main
+              git checkout main
+              git pull --ff-only origin main
+
+              echo "Validating Docker Compose configuration..."
+              docker compose config --quiet
+
+              echo "Building and starting Docker services..."
+              docker compose up --build -d
+
+              echo "Checking Docker services..."
+              docker compose ps
+
+              echo "Checking local HTTP endpoints..."
+              curl --fail --silent --show-error http://127.0.0.1:8080/health >/dev/null
+              curl --fail --silent --show-error http://127.0.0.1:8080/api/v1/status >/dev/null
+
+              echo "Deployment completed."
+          EOF

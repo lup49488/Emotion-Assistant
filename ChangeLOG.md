@@ -79,3 +79,6 @@ August 4, 2026
 
 August 5， 2026
 优化数据导入
+
+August 6, 2026
+增加Docker支持，准备VPS部署

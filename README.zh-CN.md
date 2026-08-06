@@ -162,6 +162,27 @@ npm run dev
 
 打开 `http://127.0.0.1:5173`。前端从 `frontend/.env.local` 读取 `VITE_API_BASE_URL`；示例默认指向 `http://127.0.0.1:8000`。
 
+## Docker 部署
+
+Docker Compose 会启动 FastAPI 和 React 前端。前端的 Nginx 会同源反代 `/api`，因此签名 Cookie 与 CSRF Cookie 保持第一方访问。
+
+```powershell
+Copy-Item docker.env.example .env
+# 编辑 .env：填写 API_SESSION_SECRET 和服务商 API Key。
+docker compose up --build -d
+```
+
+打开 `http://127.0.0.1:8080`，可使用以下命令查看状态：
+
+```powershell
+docker compose ps
+docker compose logs -f api
+```
+
+Compose 会将 `data/`、`users/`、`exports/`、`logs/`、`knowledge_base/` 和 `style_base/` 挂载到宿主机，因此重建容器不会删除用户数据或 RAG 内容。请勿提交 `.env`。
+
+公网 HTTPS 域名部署时，请设置 `API_PUBLIC_MODE=true`、`API_COOKIE_SECURE=true`，并将 `API_TRUSTED_HOSTS` 设置为准确的公网域名。Docker 前端可置于 Tunnel 或反向代理后，不要直接暴露 API 容器。
+
 ## 用户访问
 
 应用使用每个用户独立的 access key。Gradio 中输入 User ID 和 access key 后可保存/验证；FastAPI 前端通过 `/api/v1/auth/login` 登录，然后使用 API 颁发的签名 session cookie 和 CSRF token。

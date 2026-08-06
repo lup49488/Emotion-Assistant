@@ -17,6 +17,7 @@ data/*.db-wal
 data/observability_events.json
 data/job_uploads/
 data/model_offload/
+data/hf_cache/
 logs/
 # Indexes and source documents are local; the regression set is versioned.
 knowledge_base/*

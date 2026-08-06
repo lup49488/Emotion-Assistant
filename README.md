@@ -162,6 +162,27 @@ npm run dev
 
 Open `http://127.0.0.1:5173`. The frontend reads `VITE_API_BASE_URL` from `frontend/.env.local`; the example default points to `http://127.0.0.1:8000`.
 
+## Docker Deployment
+
+Docker Compose runs the FastAPI service behind the React frontend's Nginx server. The browser uses same-origin `/api` requests, so signed session and CSRF cookies stay first-party.
+
+```powershell
+Copy-Item docker.env.example .env
+# Edit .env: set API_SESSION_SECRET and your provider API key.
+docker compose up --build -d
+```
+
+Open `http://127.0.0.1:8080`, then inspect service status with:
+
+```powershell
+docker compose ps
+docker compose logs -f api
+```
+
+The Compose file bind-mounts `data/`, `users/`, `exports/`, `logs/`, `knowledge_base/`, and `style_base/`, so rebuilding a container does not remove user data or RAG content. Do not commit `.env`.
+
+For a public HTTPS domain, set `API_PUBLIC_MODE=true`, `API_COOKIE_SECURE=true`, and set `API_TRUSTED_HOSTS` to the exact public hostname. Put the Docker frontend behind your Tunnel or reverse proxy; do not expose the API container directly.
+
 ## User Access
 
 The app uses a per-user access key. In the GUI, enter a User ID and access key, then save/verify it. The FastAPI frontend authenticates with `/api/v1/auth/login`, then uses the signed session cookie plus CSRF token issued by the API.
