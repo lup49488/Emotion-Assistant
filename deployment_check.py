@@ -132,6 +132,11 @@ def check_docker_configuration(reporter: CheckReporter) -> None:
             "Docker API image drops root before running the server",
             "Docker API image must run the server as a non-root user.",
         ),
+        (
+            "APP_UID: ${APP_UID:-1000}" in compose_file and "APP_GID: ${APP_GID:-1000}" in compose_file,
+            "Docker Compose passes host UID/GID into the API image",
+            "Docker Compose must pass APP_UID/APP_GID so bind mounts are writable.",
+        ),
     ]
     for passed, ok_message, fail_message in checks:
         reporter.ok(ok_message) if passed else reporter.fail(fail_message)
