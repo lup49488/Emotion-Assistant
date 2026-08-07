@@ -181,7 +181,13 @@ docker compose logs -f api
 
 Compose 会将 `data/`、`users/`、`exports/`、`logs/`、`knowledge_base/` 和 `style_base/` 挂载到宿主机，因此重建容器不会删除用户数据或 RAG 内容。请勿提交 `.env`。
 
-公网 HTTPS 域名部署时，请设置 `API_PUBLIC_MODE=true`、`API_COOKIE_SECURE=true`，并将 `API_TRUSTED_HOSTS` 设置为准确的公网域名。Docker 前端可置于 Tunnel 或反向代理后，不要直接暴露 API 容器。
+API 容器以 UID/GID 1000 的非 root 用户运行。如果宿主机目录属于其他用户，请用匹配的 id 重新构建，否则容器无法写入：
+
+```bash
+docker compose build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g) api
+```
+
+公网 HTTPS 域名部署时，请设置 `API_PUBLIC_MODE=true`、`API_COOKIE_SECURE=true`，并将 `API_TRUSTED_HOSTS` 设置为准确的公网域名。Docker 前端可置于 Tunnel 或反向代理后，不要直接暴露 API 容器。由于 Nginx 会反代 `/docs`，`API_ENABLE_DOCS` 默认保持 `false`。
 
 ## 用户访问
 

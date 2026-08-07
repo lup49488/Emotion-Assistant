@@ -8,6 +8,7 @@ import json
 import base64
 import hashlib
 import hmac
+import ipaddress
 import logging
 import os
 import secrets
@@ -197,10 +198,23 @@ def _request_id_from_header(request: Request) -> str:
 
 
 def _client_ip(request: Request) -> str:
+    """Resolve the caller's address for per-IP login rate limiting.
+
+    Only consulted when API_TRUST_PROXY_HEADERS is set, which requires the API to
+    be reachable exclusively through the reverse proxy. Headers are read in the
+    order the proxy chain writes them: Cloudflare first, then the value Nginx sets
+    from its own peer. Values that are not addresses are ignored so a malformed
+    header cannot merge unrelated callers into one rate-limit bucket.
+    """
     if API_TRUST_PROXY_HEADERS:
-        forwarded = request.headers.get("CF-Connecting-IP") or request.headers.get("X-Forwarded-For", "")
-        if forwarded:
-            return forwarded.split(",", 1)[0].strip()
+        for header in ("CF-Connecting-IP", "X-Real-IP", "X-Forwarded-For"):
+            candidate = request.headers.get(header, "").split(",", 1)[0].strip()
+            if not candidate:
+                continue
+            try:
+                return str(ipaddress.ip_address(candidate))
+            except ValueError:
+                logger.warning("忽略非法的客户端 IP 头。header=%s", header)
     return request.client.host if request.client else "unknown"
 
 

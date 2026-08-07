@@ -181,7 +181,13 @@ docker compose logs -f api
 
 The Compose file bind-mounts `data/`, `users/`, `exports/`, `logs/`, `knowledge_base/`, and `style_base/`, so rebuilding a container does not remove user data or RAG content. Do not commit `.env`.
 
-For a public HTTPS domain, set `API_PUBLIC_MODE=true`, `API_COOKIE_SECURE=true`, and set `API_TRUSTED_HOSTS` to the exact public hostname. Put the Docker frontend behind your Tunnel or reverse proxy; do not expose the API container directly.
+The API container runs as a non-root user with UID/GID 1000. If the host directories belong to a different user, rebuild with matching ids so the container can write to them:
+
+```bash
+docker compose build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g) api
+```
+
+For a public HTTPS domain, set `API_PUBLIC_MODE=true`, `API_COOKIE_SECURE=true`, and set `API_TRUSTED_HOSTS` to the exact public hostname. Put the Docker frontend behind your Tunnel or reverse proxy; do not expose the API container directly. `API_ENABLE_DOCS` stays `false` by default because Nginx proxies `/docs`.
 
 ## User Access
 

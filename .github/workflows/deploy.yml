@@ -1,9 +1,12 @@
 name: Deploy Emotion Assistant
 
 on:
-  push:
-    branches:
-      - main
+  # Deploy only after CI has passed on main, so a red test suite never ships.
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -16,6 +19,8 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # workflow_run fires for failed runs too; a manual dispatch has no conclusion.
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       - name: Configure SSH
@@ -27,11 +32,41 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-          printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
+          test -n "$VPS_SSH_KEY"
+          test -n "$VPS_KNOWN_HOSTS"
+
+          printf '%s\n' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
 
-          printf '%s\n' "$VPS_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh-keygen -y -f ~/.ssh/deploy_key >/dev/null
+          ssh-keygen -lf ~/.ssh/deploy_key
+
+          printf '%s\n' "$VPS_KNOWN_HOSTS" | tr -d '\r' > ~/.ssh/known_hosts
           chmod 600 ~/.ssh/known_hosts
+
+          printf 'StrictHostKeyChecking yes\nUserKnownHostsFile ~/.ssh/known_hosts\nIdentitiesOnly yes\nBatchMode yes\nConnectTimeout 15\n' > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Test SSH authentication
+        shell: bash
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT }}
+        run: |
+          test -n "$VPS_HOST"
+          test -n "$VPS_USER"
+          test -n "$VPS_PORT"
+          echo "Testing SSH login for ${VPS_USER}@${VPS_HOST}:${VPS_PORT}"
+          ssh \
+            -vv \
+            -i ~/.ssh/deploy_key \
+            -p "$VPS_PORT" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
+            -o PasswordAuthentication=no \
+            "$VPS_USER@$VPS_HOST" \
+            "echo ssh-auth-ok"
 
       - name: Deploy to VPS
         shell: bash
@@ -43,6 +78,8 @@ jobs:
           ssh \
             -i ~/.ssh/deploy_key \
             -p "$VPS_PORT" \
+            -o IdentitiesOnly=yes \
+            -o BatchMode=yes \
             "$VPS_USER@$VPS_HOST" << 'EOF'
               set -euo pipefail
 
@@ -63,8 +100,14 @@ jobs:
               docker compose ps
 
               echo "Checking local HTTP endpoints..."
-              curl --fail --silent --show-error http://127.0.0.1:8080/health >/dev/null
-              curl --fail --silent --show-error http://127.0.0.1:8080/api/v1/status >/dev/null
+              app_host="$(grep -E '^API_TRUSTED_HOSTS=' .env | head -n 1 | cut -d= -f2- | cut -d, -f1)"
+              test -n "$app_host"
+              curl --fail --silent --show-error --header "Host: ${app_host}" http://127.0.0.1:8080/health >/dev/null
+              curl --fail --silent --show-error --header "Host: ${app_host}" http://127.0.0.1:8080/api/v1/status >/dev/null
 
               echo "Deployment completed."
           EOF
+
+      - name: Remove deploy key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key

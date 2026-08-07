@@ -12,6 +12,14 @@ services:
       API_PUBLIC_MODE: ${API_PUBLIC_MODE:-false}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
       API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}
+      # The api service is only reachable through the web service, and Nginx
+      # overwrites the address headers, so the forwarded address is trustworthy.
+      # Without this every caller shares the Nginx container IP and one attacker
+      # could hold any known account inside the login rate limit.
+      API_TRUST_PROXY_HEADERS: ${API_TRUST_PROXY_HEADERS:-true}
+      # The interactive OpenAPI page is off unless explicitly requested, since
+      # Nginx proxies /docs to whatever the API exposes.
+      API_ENABLE_DOCS: ${API_ENABLE_DOCS:-false}
       HF_HOME: /app/data/hf_cache
       STORAGE_BACKEND: ${STORAGE_BACKEND:-sqlite}
       SQLITE_DATABASE_PATH: ${SQLITE_DATABASE_PATH:-/app/data/chatbot.db}

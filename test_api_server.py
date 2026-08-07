@@ -794,3 +794,49 @@ def test_style_preference_update_requires_csrf(monkeypatch, tmp_path):
         response = client.put("/api/v1/style/preference", json={"style_prefix": "温柔型"})
 
     assert response.status_code == 403
+
+
+class _StubRequest:
+    def __init__(self, headers: dict[str, str], peer: str | None = "10.0.0.9"):
+        self.headers = headers
+        self.client = type("Peer", (), {"host": peer})() if peer else None
+
+
+def test_client_ip_ignores_proxy_headers_unless_they_are_trusted(monkeypatch):
+    monkeypatch.setattr(api_server, "API_TRUST_PROXY_HEADERS", False)
+
+    resolved = api_server._client_ip(_StubRequest({"X-Forwarded-For": "203.0.113.7"}))
+
+    assert resolved == "10.0.0.9"
+
+
+def test_client_ip_prefers_the_proxy_written_address_over_a_forged_chain(monkeypatch):
+    """Nginx overwrites X-Real-IP, so it outranks anything a caller can append."""
+    monkeypatch.setattr(api_server, "API_TRUST_PROXY_HEADERS", True)
+
+    resolved = api_server._client_ip(_StubRequest({
+        "X-Real-IP": "203.0.113.7",
+        "X-Forwarded-For": "1.2.3.4, 203.0.113.7",
+    }))
+
+    assert resolved == "203.0.113.7"
+
+
+def test_client_ip_rejects_a_header_that_is_not_an_address(monkeypatch):
+    """A junk header must not merge unrelated callers into one rate-limit bucket."""
+    monkeypatch.setattr(api_server, "API_TRUST_PROXY_HEADERS", True)
+
+    resolved = api_server._client_ip(_StubRequest({"X-Forwarded-For": "not-an-ip"}))
+
+    assert resolved == "10.0.0.9"
+
+
+def test_client_ip_uses_cloudflare_header_when_a_tunnel_fronts_the_deployment(monkeypatch):
+    monkeypatch.setattr(api_server, "API_TRUST_PROXY_HEADERS", True)
+
+    resolved = api_server._client_ip(_StubRequest({
+        "CF-Connecting-IP": "198.51.100.4",
+        "X-Real-IP": "172.18.0.3",
+    }))
+
+    assert resolved == "198.51.100.4"

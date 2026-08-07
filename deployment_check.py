@@ -5,6 +5,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -57,45 +58,83 @@ def check_project_files(reporter: CheckReporter) -> None:
         reporter.ok("Required project files are present")
 
 
+def _normalized(text: str) -> str:
+    """Collapse whitespace so a reformatted config file does not fail the checks."""
+    return re.sub(r"\s+", " ", text)
+
+
 def check_docker_configuration(reporter: CheckReporter) -> None:
-    frontend_dockerfile = (BASE_DIR / "Dockerfile.frontend").read_text(encoding="utf-8")
+    frontend_dockerfile = _normalized((BASE_DIR / "Dockerfile.frontend").read_text(encoding="utf-8"))
+    api_dockerfile = _normalized((BASE_DIR / "Dockerfile").read_text(encoding="utf-8"))
     compose_file = (BASE_DIR / "docker-compose.yml").read_text(encoding="utf-8")
-    nginx_config = (BASE_DIR / "docker" / "nginx.conf").read_text(encoding="utf-8")
+    compose_flat = _normalized(compose_file)
+    nginx_config = _normalized((BASE_DIR / "docker" / "nginx.conf").read_text(encoding="utf-8"))
 
-    if "VITE_API_BASE_URL=/" not in frontend_dockerfile:
-        reporter.fail("Docker frontend build must set VITE_API_BASE_URL=/ for same-origin API requests.")
-    else:
-        reporter.ok("Docker frontend build uses same-origin API requests")
-
-    if "proxy_pass http://api:8000" not in nginx_config or "location /api/" not in nginx_config:
-        reporter.fail("Docker Nginx config must proxy /api/ to the api service.")
-    else:
-        reporter.ok("Docker Nginx proxies /api/ to the api service")
-
-    if nginx_config.count("proxy_set_header Host $host;") < 4:
-        reporter.fail("Docker Nginx API proxy locations must preserve the original Host header.")
-    else:
-        reporter.ok("Docker Nginx preserves Host headers for API proxy locations")
-
-    if "headers={'Host': host}" not in compose_file:
-        reporter.fail("Docker Compose healthcheck must send an API_TRUSTED_HOSTS-compatible Host header.")
-    else:
-        reporter.ok("Docker Compose healthcheck uses a trusted Host header")
-
-    if "API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}" not in compose_file:
-        reporter.fail("Docker Compose must provide local-safe API_TRUSTED_HOSTS defaults.")
-    else:
-        reporter.ok("Docker Compose provides local-safe trusted-host defaults")
-
-    if '"127.0.0.1:8080:80"' not in compose_file:
-        reporter.fail("Docker Compose web service should bind to 127.0.0.1:8080 for Tunnel/reverse-proxy deployments.")
-    else:
-        reporter.ok("Docker Compose web service is bound to localhost")
-
-    if "./users:/app/users" not in compose_file or "./data:/app/data" not in compose_file:
-        reporter.fail("Docker Compose must persist user and data directories with host volumes.")
-    else:
-        reporter.ok("Docker Compose persists user and data directories")
+    checks: list[tuple[bool, str, str]] = [
+        (
+            "VITE_API_BASE_URL=/" in frontend_dockerfile,
+            "Docker frontend build uses same-origin API requests",
+            "Docker frontend build must set VITE_API_BASE_URL=/ for same-origin API requests.",
+        ),
+        (
+            "proxy_pass http://api:8000" in nginx_config and "location /api/" in nginx_config,
+            "Docker Nginx proxies /api/ to the api service",
+            "Docker Nginx config must proxy /api/ to the api service.",
+        ),
+        (
+            nginx_config.count("proxy_set_header Host $host;") >= 4,
+            "Docker Nginx preserves Host headers for API proxy locations",
+            "Docker Nginx API proxy locations must preserve the original Host header.",
+        ),
+        (
+            # Nginx defaults to 1 MB, which is smaller than every upload the API accepts.
+            re.search(r"client_max_body_size\s+\d+m", nginx_config) is not None,
+            "Docker Nginx allows uploads as large as the API accepts",
+            "Docker Nginx must raise client_max_body_size above the 1 MB default.",
+        ),
+        (
+            "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for" not in nginx_config,
+            "Docker Nginx overwrites the forwarded client address",
+            "Docker Nginx must overwrite X-Forwarded-For so callers cannot forge the rate-limit address.",
+        ),
+        (
+            "headers={'Host': host}" in compose_flat,
+            "Docker Compose healthcheck uses a trusted Host header",
+            "Docker Compose healthcheck must send an API_TRUSTED_HOSTS-compatible Host header.",
+        ),
+        (
+            "API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}" in compose_file,
+            "Docker Compose provides local-safe trusted-host defaults",
+            "Docker Compose must provide local-safe API_TRUSTED_HOSTS defaults.",
+        ),
+        (
+            "API_TRUST_PROXY_HEADERS" in compose_file,
+            "Docker Compose forwards the real client address to the API",
+            "Docker Compose must set API_TRUST_PROXY_HEADERS so login rate limiting sees real addresses.",
+        ),
+        (
+            "API_ENABLE_DOCS: ${API_ENABLE_DOCS:-false}" in compose_file,
+            "Docker Compose keeps the OpenAPI page closed by default",
+            "Docker Compose must default API_ENABLE_DOCS to false.",
+        ),
+        (
+            '"127.0.0.1:8080:80"' in compose_file,
+            "Docker Compose web service is bound to localhost",
+            "Docker Compose web service should bind to 127.0.0.1:8080 for Tunnel/reverse-proxy deployments.",
+        ),
+        (
+            "./users:/app/users" in compose_file and "./data:/app/data" in compose_file,
+            "Docker Compose persists user and data directories",
+            "Docker Compose must persist user and data directories with host volumes.",
+        ),
+        (
+            "USER app" in api_dockerfile,
+            "Docker API image drops root before running the server",
+            "Docker API image must run the server as a non-root user.",
+        ),
+    ]
+    for passed, ok_message, fail_message in checks:
+        reporter.ok(ok_message) if passed else reporter.fail(fail_message)
 
 
 def check_dependencies(reporter: CheckReporter) -> None:
