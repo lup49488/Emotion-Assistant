@@ -57,6 +57,7 @@ from gui_model_options import (
     MODEL_CHOICES,
     PROVIDER_API_KEYS,
     PROVIDER_CHOICES,
+    provider_dropdown_choices,
 )
 from gui_theme import LOAD_THEME_JS, REFRESH_CHART_THEME_JS, THEME_CSS
 from gui_event_bindings import bind_gui_events
@@ -949,7 +950,7 @@ with gr.Blocks(title="Serenova") as demo:
     locale_probe_input = gr.Textbox(value="zh-CN", visible=False, render=False)
     provider_input = gr.Dropdown(
         label="Provider",
-        choices=PROVIDER_CHOICES,
+        choices=provider_dropdown_choices(),
         value=initial_provider,
         render=False,
     )

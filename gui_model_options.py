@@ -14,6 +14,25 @@ PROVIDER_CHOICES = [
     "custom",
 ]
 
+# Dropdown labels. The stored value stays the provider id, so .env files, the API
+# contract, and everything keyed on PROVIDER_CHOICES are unaffected — this only
+# changes what the operator reads. "anthropic" in particular is hard to find when
+# you are looking for Claude.
+PROVIDER_LABELS = {
+    "anthropic": "Anthropic (Claude)",
+    "deepseek": "DeepSeek",
+    "openai": "OpenAI",
+    "openrouter": "OpenRouter",
+    "openai_compatible": "OpenAI-compatible",
+    "custom": "Custom endpoint",
+}
+
+
+def provider_dropdown_choices() -> list[tuple[str, str]]:
+    """Return (label, value) pairs for the Provider dropdown."""
+    return [(PROVIDER_LABELS.get(provider, provider), provider) for provider in PROVIDER_CHOICES]
+
+
 PROVIDER_API_KEYS = {
     "anthropic": ["ANTHROPIC_API_KEY", "LLM_API_KEY"],
     "deepseek": ["DEEPSEEK_API_KEY", "LLM_API_KEY"],

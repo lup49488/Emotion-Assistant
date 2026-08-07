@@ -784,3 +784,16 @@ def test_chat_error_is_localized_under_english_locale(tmp_path, monkeypatch):
     # 界面把抛出的异常本地化为英文的“请求失败”提示。
     assert outputs[-1].startswith("Request failed: ")
     assert "请求失败" not in outputs[-1]
+
+
+def test_provider_dropdown_labels_claude_by_name_without_changing_the_stored_value():
+    """The stored value stays "anthropic"; only the label an operator reads changes."""
+    from gui_model_options import provider_dropdown_choices
+
+    choices = provider_dropdown_choices()
+    labels = {label for label, _ in choices}
+    values = [value for _, value in choices]
+
+    assert ("Anthropic (Claude)", "anthropic") in choices
+    assert any("Claude" in label for label in labels)
+    assert values == PROVIDER_CHOICES
