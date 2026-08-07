@@ -55,6 +55,7 @@ _API_PROVIDERS = {"deepseek", "openai", "openrouter", "openai_compatible", "cust
 # Anthropic speaks the Messages API, not the OpenAI chat-completions shape, so it
 # gets its own streaming path instead of joining _API_PROVIDERS.
 ANTHROPIC_PROVIDER = "anthropic"
+ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 
 
 class ProviderRequestError(ServiceError):
@@ -687,9 +688,12 @@ def _stream_anthropic(
         # on its own and bill the request twice.
         "max_retries": 0,
     }
-    base_url = config.resolved_base_url()
-    if base_url:
-        client_kwargs["base_url"] = base_url
+    # Always pass an explicit endpoint. Left unset, the SDK falls back to the
+    # ANTHROPIC_BASE_URL environment variable — and an empty value there (which is
+    # what `ANTHROPIC_BASE_URL=` in a .env file injects) is not None, so the SDK
+    # would build a scheme-less URL and fail with an opaque "Connection error".
+    endpoint = config.resolved_base_url() or ANTHROPIC_DEFAULT_BASE_URL
+    client_kwargs["base_url"] = endpoint
     client = Anthropic(**client_kwargs)
 
     request: dict[str, Any] = {
@@ -735,6 +739,12 @@ def _stream_anthropic(
                     success=False,
                     error_kind=error_kind,
                 )
+                # The client only ever sees a generic message per error kind, so the
+                # endpoint and the underlying exception type have to reach the log.
+                logger.warning(
+                    "event=provider_failed request_id=%s provider=%s model=%s endpoint=%s error_kind=%s error_type=%s error=%s",
+                    get_request_id(), provider, model, endpoint, error_kind, type(exc).__name__, exc,
+                )
                 raise ProviderRequestError(
                     f"API 请求失败（{error_kind}）：{exc}",
                     kind=error_kind,
@@ -743,8 +753,8 @@ def _stream_anthropic(
                 ) from exc
             delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
             logger.warning(
-                "event=provider_retry request_id=%s provider=%s model=%s attempt=%s/%s delay_seconds=%.1f error=%s",
-                get_request_id(), provider, model, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
+                "event=provider_retry request_id=%s provider=%s model=%s endpoint=%s attempt=%s/%s delay_seconds=%.1f error=%s",
+                get_request_id(), provider, model, endpoint, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
             )
             if delay:
                 time.sleep(delay)
@@ -793,7 +803,32 @@ def _raise_for_anthropic_stop_reason(final: Any, emitted_content: bool) -> None:
         )
 
 
+def _sdk_error_kind(exc: Exception) -> str | None:
+    """Classify by the SDK's own exception type before falling back to message text.
+
+    Both SDKs raise typed errors; matching on the type is exact, whereas the text
+    heuristics below can mislabel a localized or reworded message.
+    """
+    name = type(exc).__name__
+    if name in {"APITimeoutError", "Timeout"}:
+        return "timeout"
+    if name in {"APIConnectionError", "ConnectError", "ConnectTimeout", "ProxyError"}:
+        return "network"
+    if name in {"AuthenticationError", "PermissionDeniedError"}:
+        return "authentication"
+    if name == "RateLimitError":
+        return "rate_limit"
+    if name in {"InternalServerError", "APIStatusError"}:
+        status_code = getattr(exc, "status_code", None)
+        if isinstance(status_code, int) and status_code >= 500:
+            return "server"
+    return None
+
+
 def _api_error_kind(exc: Exception) -> str:
+    typed_kind = _sdk_error_kind(exc)
+    if typed_kind:
+        return typed_kind
     raw_status_code = getattr(exc, "status_code", None)
     try:
         status_code = int(raw_status_code) if raw_status_code is not None else None

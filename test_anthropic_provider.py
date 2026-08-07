@@ -254,3 +254,72 @@ def test_an_explicit_base_url_override_is_normalized():
 
     with patch.object(llm_providers, "ANTHROPIC_BASE_URL", "gateway.internal/v1"):
         assert config.resolved_base_url() == "https://gateway.internal/v1"
+
+
+def test_sdk_exception_types_are_classified_before_message_text():
+    """Message-text heuristics mislabel reworded or localized errors."""
+    import anthropic
+    import httpx
+
+    request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
+    cases = {
+        anthropic.APIConnectionError(request=request): "network",
+        anthropic.APITimeoutError(request=request): "timeout",
+        anthropic.RateLimitError("", response=httpx.Response(429, request=request), body=None): "rate_limit",
+        anthropic.AuthenticationError("", response=httpx.Response(401, request=request), body=None): "authentication",
+        anthropic.InternalServerError("", response=httpx.Response(503, request=request), body=None): "server",
+    }
+
+    assert {llm_providers._api_error_kind(exc) for exc in cases} == set(cases.values())
+    for exc, kind in cases.items():
+        assert llm_providers._api_error_kind(exc) == kind
+    # Only the credential failure is worth failing over on.
+    assert not llm_providers._is_retryable_api_error(
+        anthropic.AuthenticationError("", response=httpx.Response(401, request=request), body=None)
+    )
+
+
+def test_failure_log_records_the_endpoint_that_was_actually_used(caplog):
+    """An OS env var can override .env, so the log must show where it connected."""
+    client = Mock()
+    client.messages.stream.side_effect = TimeoutError("request timeout")
+    config = llm_providers.ModelRuntimeConfig(provider="anthropic", api_key="test-key")
+
+    with caplog.at_level("WARNING"), pytest.raises(Exception):
+        _run(client, [{"role": "user", "content": "hi"}], config,
+             ANTHROPIC_BASE_URL="https://gateway.internal", API_MAX_RETRIES=0)
+
+    assert "endpoint=https://gateway.internal" in caplog.text
+    assert "error_type=TimeoutError" in caplog.text
+    assert "test-key" not in caplog.text
+
+
+def test_endpoint_is_always_passed_so_an_empty_env_var_cannot_poison_the_sdk():
+    """`ANTHROPIC_BASE_URL=` in a .env injects "", which the SDK treats as a real
+    base URL and turns into a scheme-less request — an opaque "Connection error".
+    """
+    client = _fake_client(["ok"])
+    factory = Mock(return_value=client)
+    config = llm_providers.ModelRuntimeConfig(provider="anthropic", api_key="test-key")
+
+    with patch.object(llm_providers, "require_anthropic_client", return_value=factory), \
+         patch.object(llm_providers, "ANTHROPIC_BASE_URL", ""), \
+         patch.object(llm_providers, "record_usage"), \
+         patch.object(llm_providers, "check_request_allowed"):
+        list(llm_providers._stream_anthropic([{"role": "user", "content": "hi"}], config))
+
+    assert factory.call_args.kwargs["base_url"] == llm_providers.ANTHROPIC_DEFAULT_BASE_URL
+
+
+def test_an_explicit_endpoint_still_wins_over_the_default():
+    client = _fake_client(["ok"])
+    factory = Mock(return_value=client)
+    config = llm_providers.ModelRuntimeConfig(provider="anthropic", api_key="test-key")
+
+    with patch.object(llm_providers, "require_anthropic_client", return_value=factory), \
+         patch.object(llm_providers, "ANTHROPIC_BASE_URL", "https://gateway.internal"), \
+         patch.object(llm_providers, "record_usage"), \
+         patch.object(llm_providers, "check_request_allowed"):
+        list(llm_providers._stream_anthropic([{"role": "user", "content": "hi"}], config))
+
+    assert factory.call_args.kwargs["base_url"] == "https://gateway.internal"
