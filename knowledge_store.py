@@ -27,6 +27,8 @@ from config import (
     KNOWLEDGE_MAX_PER_SOURCE,
     KNOWLEDGE_MIN_CHUNK_CHARS,
     KNOWLEDGE_BM25_MIN_SCORE,
+    KNOWLEDGE_PREFIX_CANDIDATE_MULTIPLIER,
+    KNOWLEDGE_SOURCE_PREFIX,
     KNOWLEDGE_RETRIEVAL_THRESHOLD,
     KNOWLEDGE_RETRIEVAL_MODE,
     KNOWLEDGE_RETRIEVAL_MODES,
@@ -41,8 +43,9 @@ from config import (
     RAG_NEAR_DOMAIN_GUARD_ENABLED,
 )
 from json_utils import load_json, save_json
-from llm_providers import encode_texts, get_embedding_dimension
+from llm_providers import encode_passages, encode_queries, get_embedding_dimension
 from memory_store import require_faiss
+from rag_filters import allowed_positions, family_prefixes, normalize_prefix, resolve_sources
 from sqlite_store import (
     connection as sqlite_connection,
     list_rag_chunks,
@@ -586,7 +589,7 @@ def _write_index(chunks: list[dict[str, Any]]) -> None:
     index = faiss.IndexFlatIP(get_embedding_dimension())
     texts = [chunk["text"] for chunk in chunks if chunk.get("text")]
     if texts:
-        embeddings = encode_texts(texts)
+        embeddings = encode_passages(texts)
         index.add(np.asarray(embeddings, dtype=np.float32))
     faiss.write_index(index, str(KNOWLEDGE_INDEX_PATH))
 
@@ -606,6 +609,16 @@ def _read_index(chunks: list[dict[str, Any]]) -> Any:
     return index
 
 
+def knowledge_prefixes() -> list[str]:
+    """Selectable knowledge families, for populating an experiment condition."""
+    return family_prefixes(list_documents())
+
+
+def resolve_knowledge_sources(source_prefix: str | None) -> list[str]:
+    """Documents a prefix actually selects; verify this before an experiment run."""
+    return resolve_sources(list_documents(), source_prefix)
+
+
 def _normalized_chunk_key(text: str) -> str:
     return re.sub(r"\s+", "", text).casefold()
 
@@ -616,18 +629,31 @@ def _search_candidates(
     *,
     top_k: int,
     candidate_multiplier: int,
+    allowed: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     index = _read_index(chunks)
     candidate_count = min(len(chunks), max(top_k, top_k * max(1, int(candidate_multiplier))))
-    similarities, indices = index.search(encode_texts([query]), candidate_count)
+    # The FAISS index covers every document, so a source filter must search a
+    # wider pool; otherwise the nearest neighbours may all belong to excluded
+    # documents and the filtered result would be empty.
+    search_k = (
+        min(len(chunks), candidate_count * KNOWLEDGE_PREFIX_CANDIDATE_MULTIPLIER)
+        if allowed is not None
+        else candidate_count
+    )
+    similarities, indices = index.search(encode_queries([query]), search_k)
     candidates: list[dict[str, Any]] = []
     for score, i in zip(similarities[0], indices[0]):
         if i < 0 or i >= len(chunks):
+            continue
+        if allowed is not None and int(i) not in allowed:
             continue
         item = dict(chunks[int(i)])
         item["score"] = float(score)
         item["_index"] = int(i)
         candidates.append(item)
+        if len(candidates) >= candidate_count:
+            break
     return candidates
 
 
@@ -683,7 +709,11 @@ def _bm25_index(chunks: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _bm25_search_candidates(
-    query: str, chunks: list[dict[str, Any]], *, candidate_count: int
+    query: str,
+    chunks: list[dict[str, Any]],
+    *,
+    candidate_count: int,
+    allowed: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     query_tokens = _bm25_tokens(query)
     if not query_tokens or not chunks:
@@ -696,6 +726,11 @@ def _bm25_search_candidates(
     ranked: list[tuple[float, int]] = []
     for position, tokens in enumerate(documents):
         if not tokens:
+            continue
+        # Filtering here rather than after ranking keeps the excluded documents
+        # out of the candidate budget; corpus statistics still come from the whole
+        # base, so a term's rarity does not change with the active condition.
+        if allowed is not None and position not in allowed:
             continue
         frequencies = index["frequencies"][position]
         score = 0.0
@@ -721,12 +756,15 @@ def _hybrid_search_candidates(
     *,
     top_k: int,
     candidate_multiplier: int,
+    allowed: set[int] | None = None,
 ) -> list[dict[str, Any]]:
     candidate_count = min(len(chunks), max(top_k, top_k * max(1, int(candidate_multiplier))))
     vector_candidates = _search_candidates(
-        query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier,
+        query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier, allowed=allowed,
     )
-    bm25_candidates = _bm25_search_candidates(query, chunks, candidate_count=candidate_count)
+    bm25_candidates = _bm25_search_candidates(
+        query, chunks, candidate_count=candidate_count, allowed=allowed,
+    )
     merged: dict[int, dict[str, Any]] = {}
     for rank, candidate in enumerate(vector_candidates, start=1):
         index = int(candidate["_index"])
@@ -771,17 +809,37 @@ def diagnose_knowledge_search(
     candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
     max_per_source: int = KNOWLEDGE_MAX_PER_SOURCE,
     retrieval_mode: str | None = None,
+    source_prefix: str | None = KNOWLEDGE_SOURCE_PREFIX,
 ) -> dict[str, Any]:
     chunks = load_chunks()
     query = (query or "").strip()
+    prefix = normalize_prefix(source_prefix)
     if not query or not chunks:
-        return {"query": query, "results": [], "candidates": [], "reason": "查询或知识库为空", "scope_reason": None}
+        return {
+            "query": query,
+            "results": [],
+            "candidates": [],
+            "reason": "查询或知识库为空",
+            "scope_reason": None,
+            "source_prefix": prefix,
+        }
 
-    top_k = max(1, min(int(top_k), len(chunks)))
+    allowed = allowed_positions(chunks, prefix)
+    if allowed is not None and not allowed:
+        return {
+            "query": query,
+            "results": [],
+            "candidates": [],
+            "reason": f"没有匹配前缀 {prefix!r} 的知识文档",
+            "scope_reason": None,
+            "source_prefix": prefix,
+        }
+
+    top_k = max(1, min(int(top_k), len(allowed) if allowed is not None else len(chunks)))
     threshold = max(-1.0, min(float(threshold), 1.0))
     max_per_source = max(1, int(max_per_source))
     mode = _normalize_retrieval_mode(retrieval_mode)
-    candidates = _hybrid_search_candidates(query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier) if mode == "hybrid_rrf" else _search_candidates(query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier)
+    candidates = _hybrid_search_candidates(query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier, allowed=allowed) if mode == "hybrid_rrf" else _search_candidates(query, chunks, top_k=top_k, candidate_multiplier=candidate_multiplier, allowed=allowed)
 
     eligible: list[dict[str, Any]] = []
     seen_texts: set[str] = set()
@@ -846,6 +904,7 @@ def diagnose_knowledge_search(
         "top_k": top_k,
         "retrieval_mode": mode,
         "scope_reason": scope_reason,
+        "source_prefix": prefix,
     }
 
 
@@ -857,6 +916,7 @@ def retrieve_knowledge(
     candidate_multiplier: int = KNOWLEDGE_CANDIDATE_MULTIPLIER,
     max_per_source: int = KNOWLEDGE_MAX_PER_SOURCE,
     retrieval_mode: str | None = None,
+    source_prefix: str | None = KNOWLEDGE_SOURCE_PREFIX,
 ) -> list[dict[str, Any]]:
     return diagnose_knowledge_search(
         query,
@@ -865,6 +925,7 @@ def retrieve_knowledge(
         candidate_multiplier=candidate_multiplier,
         max_per_source=max_per_source,
         retrieval_mode=retrieval_mode,
+        source_prefix=source_prefix,
     )["results"]
 
 
@@ -874,9 +935,14 @@ def build_knowledge_context(
     top_k: int = KNOWLEDGE_TOP_K,
     threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
     max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
+    source_prefix: str | None = KNOWLEDGE_SOURCE_PREFIX,
 ) -> str:
     return build_knowledge_bundle(
-        query, top_k=top_k, threshold=threshold, max_context_chars=max_context_chars,
+        query,
+        top_k=top_k,
+        threshold=threshold,
+        max_context_chars=max_context_chars,
+        source_prefix=source_prefix,
     )["context"]
 
 
@@ -945,9 +1011,12 @@ def build_knowledge_bundle(
     top_k: int = KNOWLEDGE_TOP_K,
     threshold: float = KNOWLEDGE_RETRIEVAL_THRESHOLD,
     max_context_chars: int = KNOWLEDGE_MAX_CONTEXT_CHARS,
+    source_prefix: str | None = KNOWLEDGE_SOURCE_PREFIX,
 ) -> dict[str, Any]:
     """Build prompt context and the matching, display-safe citation metadata."""
-    diagnostic = diagnose_knowledge_search(query, top_k=top_k, threshold=threshold)
+    diagnostic = diagnose_knowledge_search(
+        query, top_k=top_k, threshold=threshold, source_prefix=source_prefix,
+    )
     results = diagnostic["results"]
     if not results:
         reason = diagnostic.get("scope_reason") or (

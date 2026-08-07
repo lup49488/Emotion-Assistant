@@ -59,6 +59,7 @@ def upsert_env_values(path: Path, updates: dict[str, str]) -> None:
 
 def provider_key_name(provider: str) -> str:
     return {
+        "anthropic": "ANTHROPIC_API_KEY",
         "deepseek": "DEEPSEEK_API_KEY",
         "openai": "OPENAI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
@@ -91,7 +92,7 @@ def save_model_config_to_env(
         updates["LLM_API_MODEL"] = model
         if base_url:
             updates["LLM_API_BASE_URL"] = base_url
-        model_key = {"deepseek": "DEEPSEEK_MODEL", "openai": "OPENAI_MODEL", "openrouter": "OPENROUTER_MODEL"}.get(provider)
+        model_key = {"anthropic": "ANTHROPIC_MODEL", "deepseek": "DEEPSEEK_MODEL", "openai": "OPENAI_MODEL", "openrouter": "OPENROUTER_MODEL"}.get(provider)
         if model_key:
             updates[model_key] = model
 

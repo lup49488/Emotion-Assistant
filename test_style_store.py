@@ -129,7 +129,7 @@ def test_retrieve_style_filters_by_source_prefix(monkeypatch):
     chunks = _prefix_chunks()
     monkeypatch.setattr(style_store, "load_chunks", lambda: chunks)
     monkeypatch.setattr(style_store, "_read_index", lambda _chunks: _FakeIndex(len(chunks)))
-    monkeypatch.setattr(style_store, "encode_texts", lambda _texts: [[0.0]])
+    monkeypatch.setattr(style_store, "encode_queries", lambda _texts: [[0.0]])
 
     results = style_store.retrieve_style("你好", top_k=3, threshold=0.0, source_prefix="温柔型")
 
@@ -140,9 +140,12 @@ def test_retrieve_style_without_prefix_keeps_every_family(monkeypatch):
     chunks = _prefix_chunks()
     monkeypatch.setattr(style_store, "load_chunks", lambda: chunks)
     monkeypatch.setattr(style_store, "_read_index", lambda _chunks: _FakeIndex(len(chunks)))
-    monkeypatch.setattr(style_store, "encode_texts", lambda _texts: [[0.0]])
+    monkeypatch.setattr(style_store, "encode_queries", lambda _texts: [[0.0]])
 
-    results = style_store.retrieve_style("你好", top_k=3, threshold=0.0)
+    # Explicit None rather than omitting it: the parameter now defaults to
+    # STYLE_SOURCE_PREFIX, so an operator's env would otherwise change what this
+    # asserts.
+    results = style_store.retrieve_style("你好", top_k=3, threshold=0.0, source_prefix=None)
 
     assert len(results) == 3
 
@@ -151,6 +154,6 @@ def test_unknown_prefix_returns_no_style_samples(monkeypatch):
     chunks = _prefix_chunks()
     monkeypatch.setattr(style_store, "load_chunks", lambda: chunks)
     monkeypatch.setattr(style_store, "_read_index", lambda _chunks: _FakeIndex(len(chunks)))
-    monkeypatch.setattr(style_store, "encode_texts", lambda _texts: [[0.0]])
+    monkeypatch.setattr(style_store, "encode_queries", lambda _texts: [[0.0]])
 
     assert style_store.retrieve_style("你好", top_k=3, threshold=0.0, source_prefix="不存在型") == []

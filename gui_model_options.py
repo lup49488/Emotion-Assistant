@@ -6,6 +6,7 @@ from config import DEFAULT_API_BASE_URL, DEFAULT_API_MODEL
 
 
 PROVIDER_CHOICES = [
+    "anthropic",
     "deepseek",
     "openai",
     "openrouter",
@@ -14,6 +15,7 @@ PROVIDER_CHOICES = [
 ]
 
 PROVIDER_API_KEYS = {
+    "anthropic": ["ANTHROPIC_API_KEY", "LLM_API_KEY"],
     "deepseek": ["DEEPSEEK_API_KEY", "LLM_API_KEY"],
     "openai": ["OPENAI_API_KEY", "LLM_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY", "LLM_API_KEY"],
@@ -36,6 +38,12 @@ MODEL_CHOICES = {
         "Qwen/Qwen2.5-1.5B-Instruct",
         "Qwen/Qwen2.5-3B-Instruct",
         "Qwen/Qwen2.5-7B-Instruct",
+    ]),
+    "anthropic": unique_choices([
+        os.getenv("ANTHROPIC_MODEL", "claude-opus-5"),
+        "claude-opus-5",
+        "claude-sonnet-5",
+        "claude-haiku-4-5",
     ]),
     "deepseek": unique_choices([
         os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
@@ -74,6 +82,8 @@ DEFAULT_MODELS = {
 
 DEFAULT_BASE_URLS = {
     "local_hf": "",
+    # Empty means the Anthropic SDK's own endpoint.
+    "anthropic": "",
     "deepseek": "https://api.deepseek.com",
     "openai": "",
     "openrouter": "https://openrouter.ai/api/v1",

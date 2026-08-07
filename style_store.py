@@ -18,10 +18,11 @@ from config import (
     STYLE_INDEX_PATH,
     STYLE_RETRIEVAL_THRESHOLD,
     STYLE_PREFIX_CANDIDATE_MULTIPLIER,
+    STYLE_SOURCE_PREFIX,
     STYLE_TOP_K,
 )
 from json_utils import load_json, save_json
-from llm_providers import encode_texts, get_embedding_dimension
+from llm_providers import encode_passages, encode_queries, get_embedding_dimension
 from memory_store import require_faiss
 from sqlite_store import (
     connection as sqlite_connection,
@@ -264,7 +265,7 @@ def _write_index(chunks: list[dict[str, Any]]) -> None:
     index = faiss.IndexFlatIP(get_embedding_dimension())
     texts = [chunk["text"] for chunk in chunks if chunk.get("text")]
     if texts:
-        index.add(np.asarray(encode_texts(texts), dtype=np.float32))
+        index.add(np.asarray(encode_passages(texts), dtype=np.float32))
     faiss.write_index(index, str(STYLE_INDEX_PATH))
 
 
@@ -298,7 +299,7 @@ def retrieve_style(
     *,
     top_k: int = STYLE_TOP_K,
     threshold: float = STYLE_RETRIEVAL_THRESHOLD,
-    source_prefix: str | None = None,
+    source_prefix: str | None = STYLE_SOURCE_PREFIX,
 ) -> list[dict[str, Any]]:
     chunks = load_chunks()
     if not query.strip() or not chunks:
@@ -310,7 +311,7 @@ def retrieve_style(
     # a wider candidate pool; otherwise the nearest neighbours may all belong to
     # other style families and the filtered result would be empty.
     search_k = min(len(chunks), top_k * STYLE_PREFIX_CANDIDATE_MULTIPLIER) if prefix else top_k
-    similarities, indices = index.search(encode_texts([query]), search_k)
+    similarities, indices = index.search(encode_queries([query]), search_k)
     results: list[dict[str, Any]] = []
     for score, i in zip(similarities[0], indices[0]):
         if i < 0 or i >= len(chunks) or float(score) < threshold:
@@ -326,7 +327,7 @@ def retrieve_style(
 
 
 def build_style_context(
-    query: str, *, top_k: int = STYLE_TOP_K, source_prefix: str | None = None
+    query: str, *, top_k: int = STYLE_TOP_K, source_prefix: str | None = STYLE_SOURCE_PREFIX
 ) -> str:
     results = retrieve_style(query, top_k=top_k, source_prefix=source_prefix)
     if not results:

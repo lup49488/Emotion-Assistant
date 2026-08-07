@@ -108,10 +108,25 @@ LLM_API_MODEL=deepseek-chat
 
 Provider-specific alternatives are also supported:
 
+- `ANTHROPIC_API_KEY` with `LLM_PROVIDER=anthropic`
 - `DEEPSEEK_API_KEY` with `LLM_PROVIDER=deepseek`
 - `OPENAI_API_KEY` with `LLM_PROVIDER=openai`
 - `OPENROUTER_API_KEY` with `LLM_PROVIDER=openrouter`
 - `LLM_PROVIDER=local_hf` to load `CHAT_MODEL_NAME` locally
+
+### Anthropic (Claude)
+
+`LLM_PROVIDER=anthropic` calls Claude through the official `anthropic` package and the Messages API, not an OpenAI-compatible shim. Install the dependency and set a key:
+
+```env
+ANTHROPIC_API_KEY=replace-with-your-key
+ANTHROPIC_MODEL=claude-opus-5
+```
+
+Two differences from the OpenAI-compatible providers are worth knowing:
+
+- **`LLM_TEMPERATURE` and `LLM_TOP_P` are ignored.** Current Claude models reject sampling parameters, so the request omits them; steer tone through the system prompt instead.
+- **Thinking is off by default** (`ANTHROPIC_THINKING=off`). Thinking shares the `LLM_MAX_NEW_TOKENS` budget with the reply, and the default budget of 300 is sized for short supportive answers. Raise `LLM_MAX_NEW_TOKENS` well above 4000 before setting `ANTHROPIC_THINKING=adaptive`, or the reasoning will consume the budget and truncate the answer. `ANTHROPIC_EFFORT` (`low`–`max`) controls depth; with thinking off it is capped at `high`, which the API requires.
 
 Keep secrets in `.env`, `.env.local`, or the server environment. Do not put API keys in `frontend/.env*`, because `VITE_*` variables are bundled into browser JavaScript.
 

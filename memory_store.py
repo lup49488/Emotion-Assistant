@@ -28,7 +28,7 @@ from config import (
     SCORE_PERSONAL_KEYWORD_BONUS,
 )
 from json_utils import safe_extract_json_array
-from llm_providers import encode_texts, get_embedding_dimension, get_llm
+from llm_providers import encode_passages, encode_queries, get_embedding_dimension, get_llm
 
 
 logger = logging.getLogger(__name__)
@@ -293,13 +293,13 @@ class VectorIndexManager:
         self._index = faiss.IndexFlatIP(get_embedding_dimension())
         texts = [m["text"] for m in store.items if m.get("text")]
         if texts:
-            self._index.add(encode_texts(texts))
+            self._index.add(encode_passages(texts))
         faiss.write_index(self._index, str(self._index_path))
 
     def add_one(self, text: str, store: InterestMemoryStore) -> None:
         faiss = require_faiss()
         idx = self.get(store)
-        idx.add(encode_texts([text]))
+        idx.add(encode_passages([text]))
         faiss.write_index(idx, str(self._index_path))
         store.mark_clean()
 
@@ -493,7 +493,11 @@ def memory_exists(text: str, state: Any) -> bool:
     if state.interest_store.exact_exists(text):
         return True
     try:
-        embedding = encode_texts([text])
+        # Deduplication compares a candidate memory against stored memories, so
+        # both sides are passages. Encoding this one as a query would offset the
+        # scores against INTEREST_SIMILARITY_THRESHOLD, which is calibrated for
+        # like-for-like text.
+        embedding = encode_passages([text])
         idx = state.vector_index.get(state.interest_store)
         similarities, _ = idx.search(embedding, 1)
         return bool(similarities.size and similarities[0][0] > INTEREST_SIMILARITY_THRESHOLD)
@@ -506,7 +510,8 @@ def find_similar_interest(text: str, state: Any) -> tuple[dict[str, Any], float]
     if not state.interest_store:
         return None
     try:
-        embedding = encode_texts([text])
+        # Passage-to-passage, for the same reason as memory_exists.
+        embedding = encode_passages([text])
         idx = state.vector_index.get(state.interest_store)
         similarities, indices = idx.search(embedding, 1)
     except RuntimeError:
@@ -561,7 +566,7 @@ def retrieve_interests(query: str, state: Any, top_k: int = 5) -> list[dict[str,
     top_k = min(top_k, len(state.interest_store))
     try:
         idx = state.vector_index.get(state.interest_store)
-        similarities, indices = idx.search(encode_texts([query]), top_k)
+        similarities, indices = idx.search(encode_queries([query]), top_k)
     except RuntimeError:
         return []
     results: list[dict[str, Any]] = []

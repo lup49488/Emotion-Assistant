@@ -24,6 +24,8 @@ from config import (
     LLM_FALLBACKS_JSON,
     HF_TOKEN,
     EMBEDDING_MODEL_NAME,
+    EMBEDDING_PASSAGE_PREFIX,
+    EMBEDDING_QUERY_PREFIX,
     LOCAL_MODEL_ATTN_IMPLEMENTATION,
     LOCAL_MODEL_COMPILE,
     LOCAL_MODEL_CPU_THREADS,
@@ -38,6 +40,10 @@ from config import (
     API_REQUEST_TIMEOUT_SECONDS,
     API_MAX_RETRIES,
     API_RETRY_BACKOFF_SECONDS,
+    ANTHROPIC_BASE_URL,
+    ANTHROPIC_EFFORT,
+    ANTHROPIC_MODEL,
+    ANTHROPIC_THINKING,
 )
 from api_usage_store import check_request_allowed, estimate_input_tokens, estimate_tokens, record_usage
 from observability import get_request_id
@@ -46,6 +52,9 @@ from service_errors import ServiceError
 logger = logging.getLogger(__name__)
 
 _API_PROVIDERS = {"deepseek", "openai", "openrouter", "openai_compatible", "custom"}
+# Anthropic speaks the Messages API, not the OpenAI chat-completions shape, so it
+# gets its own streaming path instead of joining _API_PROVIDERS.
+ANTHROPIC_PROVIDER = "anthropic"
 
 
 class ProviderRequestError(ServiceError):
@@ -191,6 +200,8 @@ class ModelRuntimeConfig:
         provider = self.normalized_provider()
         if provider == "local_hf":
             return CHAT_MODEL_NAME
+        if provider == ANTHROPIC_PROVIDER:
+            return ANTHROPIC_MODEL
         if provider == "deepseek":
             return os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
         if provider == "openai":
@@ -203,6 +214,10 @@ class ModelRuntimeConfig:
         if self.base_url and self.base_url.strip():
             return _normalize_api_base_url(self.base_url)
         provider = self.normalized_provider()
+        if provider == ANTHROPIC_PROVIDER:
+            # Empty means the SDK's own default endpoint; only an explicit override
+            # (a gateway or proxy) needs normalizing.
+            return _normalize_api_base_url(ANTHROPIC_BASE_URL) if ANTHROPIC_BASE_URL else None
         if provider == "deepseek":
             return "https://api.deepseek.com"
         if provider == "openai":
@@ -217,6 +232,8 @@ class ModelRuntimeConfig:
         if self.api_key and self.api_key.strip():
             return self.api_key.strip()
         provider = self.normalized_provider()
+        if provider == ANTHROPIC_PROVIDER:
+            return os.getenv("ANTHROPIC_API_KEY") or os.getenv("LLM_API_KEY")
         if provider == "deepseek":
             return os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY")
         if provider == "openai":
@@ -318,6 +335,14 @@ def require_openai_client():
     return OpenAI
 
 
+def require_anthropic_client():
+    try:
+        from anthropic import Anthropic
+    except ModuleNotFoundError as exc:
+        raise RuntimeError("缺少依赖 anthropic，请先安装后再使用 Anthropic Provider。") from exc
+    return Anthropic
+
+
 def require_sentence_transformer():
     try:
         from sentence_transformers import SentenceTransformer
@@ -346,9 +371,33 @@ def get_embedding_dimension() -> int:
     return int(model.get_sentence_embedding_dimension())
 
 
-def encode_texts(texts: list[str]) -> np.ndarray:
-    embeddings = get_embedding_model().encode(texts, normalize_embeddings=True)
+def encode_texts(texts: list[str], *, prefix: str = "") -> np.ndarray:
+    """Encode raw texts, optionally prepending an instruction prefix.
+
+    Prefer ``encode_queries``/``encode_passages``: asymmetric retrieval models
+    (the multilingual e5 family, and bge with its retrieval instruction) are
+    trained with different prefixes on the two sides, and encoding a query the
+    way a passage is encoded quietly costs recall. Symmetric models such as
+    bge-m3 leave both prefixes empty, which makes this the same call as before.
+    """
+    prepared = [f"{prefix}{text}" for text in texts] if prefix else texts
+    embeddings = get_embedding_model().encode(prepared, normalize_embeddings=True)
     return np.asarray(embeddings, dtype=np.float32)
+
+
+def encode_queries(texts: list[str]) -> np.ndarray:
+    """Encode search queries — the side a user types."""
+    return encode_texts(texts, prefix=EMBEDDING_QUERY_PREFIX)
+
+
+def encode_passages(texts: list[str]) -> np.ndarray:
+    """Encode stored documents — the side that goes into a FAISS index.
+
+    An index must be rebuilt whenever this prefix changes: chunks already stored
+    were embedded under the old one, and mixing the two silently skews scores.
+    """
+    return encode_texts(texts, prefix=EMBEDDING_PASSAGE_PREFIX)
+
 
 def get_llm() -> tuple[Any, Any]:
     global _tokenizer, _llm_model
@@ -556,6 +605,194 @@ def _stream_openai_compatible(
                 time.sleep(delay)
 
 
+def split_anthropic_messages(
+    full_messages: list[dict[str, str]],
+) -> tuple[str, list[dict[str, str]]]:
+    """Convert the OpenAI-shaped message list into the Messages API's two halves.
+
+    The Messages API takes the system prompt as its own top-level field, and its
+    ``messages`` array must start with a user turn. Leading assistant turns are
+    dropped rather than reordered, so a trimmed history cannot desynchronise the
+    conversation.
+    """
+    system_parts: list[str] = []
+    turns: list[dict[str, str]] = []
+    for message in full_messages:
+        role = str(message.get("role", "")).strip()
+        content = str(message.get("content", ""))
+        if role == "system":
+            if content.strip():
+                system_parts.append(content)
+            continue
+        if role not in {"user", "assistant"}:
+            continue
+        if not turns and role != "user":
+            continue
+        if not content.strip():
+            continue
+        turns.append({"role": role, "content": content})
+    return "\n\n".join(system_parts), turns
+
+
+def _anthropic_request_options(config: ModelRuntimeConfig) -> dict[str, Any]:
+    """Build the model-shaping half of the request.
+
+    Sampling parameters are deliberately absent: current Claude models reject
+    ``temperature``/``top_p``/``top_k`` with a 400, so the config's values are
+    honoured only on the OpenAI-compatible providers.
+    """
+    effort = ANTHROPIC_EFFORT
+    options: dict[str, Any] = {}
+    if ANTHROPIC_THINKING == "adaptive":
+        options["thinking"] = {"type": "adaptive"}
+    else:
+        # Disabling thinking is rejected above "high", so cap the effort rather
+        # than letting a valid-looking pair of settings fail at request time.
+        if effort in {"xhigh", "max"}:
+            logger.warning(
+                "ANTHROPIC_EFFORT=%s 不能与关闭思考同时使用，本次降级为 high。", effort,
+            )
+            effort = "high"
+        options["thinking"] = {"type": "disabled"}
+    options["output_config"] = {"effort": effort}
+    return options
+
+
+def _stream_anthropic(
+    full_messages: list[dict[str, str]], config: ModelRuntimeConfig
+) -> Generator[str, None, None]:
+    api_key = config.resolved_api_key()
+    if not api_key:
+        raise ServiceError(
+            "provider_api_key_missing",
+            "当前 API Provider 缺少 API Key。请在 GUI 中填写 API Key，或设置服务端 API Key。",
+        )
+
+    system_prompt, turns = split_anthropic_messages(full_messages)
+    if not turns:
+        raise ServiceError("provider_empty_request", "本次请求没有可发送给模型的用户消息。")
+
+    input_tokens = estimate_input_tokens(full_messages)
+    check_request_allowed(
+        config.user_id,
+        projected_input_tokens=input_tokens,
+        projected_output_tokens=config.max_new_tokens,
+    )
+
+    Anthropic = require_anthropic_client()
+    client_kwargs: dict[str, Any] = {
+        "api_key": api_key,
+        "timeout": API_REQUEST_TIMEOUT_SECONDS,
+        # The app retries only before the first token, so the SDK must not retry
+        # on its own and bill the request twice.
+        "max_retries": 0,
+    }
+    base_url = config.resolved_base_url()
+    if base_url:
+        client_kwargs["base_url"] = base_url
+    client = Anthropic(**client_kwargs)
+
+    request: dict[str, Any] = {
+        "model": config.resolved_model(),
+        "max_tokens": config.max_new_tokens,
+        "messages": turns,
+        **_anthropic_request_options(config),
+    }
+    if system_prompt:
+        request["system"] = system_prompt
+
+    started = time.perf_counter()
+    provider = config.normalized_provider()
+    model = request["model"]
+
+    for attempt in range(API_MAX_RETRIES + 1):
+        emitted_content = False
+        chunks: list[str] = []
+        try:
+            with client.messages.stream(**request) as stream:
+                for text in stream.text_stream:
+                    if text:
+                        emitted_content = True
+                        chunks.append(text)
+                        yield text
+                final = stream.get_final_message()
+            _record_anthropic_usage(config, provider, model, final, input_tokens, chunks, started)
+            _raise_for_anthropic_stop_reason(final, emitted_content)
+            return
+        except ServiceError:
+            raise
+        except Exception as exc:
+            retryable = _is_retryable_api_error(exc)
+            if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
+                error_kind = _api_error_kind(exc)
+                record_usage(
+                    config.user_id,
+                    provider=provider,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
+                    duration_ms=int((time.perf_counter() - started) * 1000),
+                    success=False,
+                    error_kind=error_kind,
+                )
+                raise ProviderRequestError(
+                    f"API 请求失败（{error_kind}）：{exc}",
+                    kind=error_kind,
+                    retryable=retryable,
+                    emitted_content=emitted_content,
+                ) from exc
+            delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
+            logger.warning(
+                "event=provider_retry request_id=%s provider=%s model=%s attempt=%s/%s delay_seconds=%.1f error=%s",
+                get_request_id(), provider, model, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
+            )
+            if delay:
+                time.sleep(delay)
+
+
+def _record_anthropic_usage(
+    config: ModelRuntimeConfig,
+    provider: str,
+    model: str,
+    final: Any,
+    estimated_input_tokens: int,
+    chunks: list[str],
+    started: float,
+) -> None:
+    """Record the run, preferring the API's own token counts over local estimates."""
+    usage = getattr(final, "usage", None)
+    input_tokens = int(getattr(usage, "input_tokens", 0) or 0) or estimated_input_tokens
+    output_tokens = int(getattr(usage, "output_tokens", 0) or 0)
+    if not output_tokens and chunks:
+        output_tokens = estimate_tokens("".join(chunks))
+    record_usage(
+        config.user_id,
+        provider=provider,
+        model=model,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        duration_ms=int((time.perf_counter() - started) * 1000),
+        success=True,
+    )
+
+
+def _raise_for_anthropic_stop_reason(final: Any, emitted_content: bool) -> None:
+    """Surface the two stop reasons that produce an unusable or partial reply."""
+    stop_reason = str(getattr(final, "stop_reason", "") or "")
+    if stop_reason == "refusal":
+        # A safety classifier declined; retrying the same request cannot help.
+        raise ServiceError(
+            "provider_refusal",
+            "模型出于安全策略拒绝了本次请求，请调整表述后重试。",
+            retryable=False,
+        )
+    if stop_reason == "max_tokens":
+        logger.warning(
+            "event=model_output_truncated request_id=%s stop_reason=max_tokens emitted_content=%s",
+            get_request_id(), emitted_content,
+        )
+
+
 def _api_error_kind(exc: Exception) -> str:
     raw_status_code = getattr(exc, "status_code", None)
     try:
@@ -586,6 +823,16 @@ def _is_retryable_api_error(exc: Exception) -> bool:
     return _api_error_kind(exc) in {"timeout", "network", "server", "rate_limit"}
 
 
+def _stream_for_provider(
+    full_messages: list[dict[str, str]], config: ModelRuntimeConfig
+) -> Generator[str, None, None]:
+    """Route one API-provider attempt to the wire format that provider speaks."""
+    if config.normalized_provider() == ANTHROPIC_PROVIDER:
+        yield from _stream_anthropic(full_messages, config)
+    else:
+        yield from _stream_openai_compatible(full_messages, config)
+
+
 def stream_model_response(
     full_messages: list[dict[str, str]], config: ModelRuntimeConfig
 ) -> Generator[str, None, None]:
@@ -597,9 +844,9 @@ def stream_model_response(
             raise
         except Exception as exc:
             raise ServiceError("local_model_failed", f"本地模型运行失败：{exc}", retryable=True) from exc
-    elif provider in _API_PROVIDERS:
+    elif provider in _API_PROVIDERS or provider == ANTHROPIC_PROVIDER:
         try:
-            yield from _stream_openai_compatible(full_messages, config)
+            yield from _stream_for_provider(full_messages, config)
             return
         except ProviderRequestError as primary_error:
             if not primary_error.retryable or primary_error.emitted_content:
@@ -615,7 +862,7 @@ def stream_model_response(
                     fallback.resolved_model(), primary_error.kind,
                 )
                 try:
-                    yield from _stream_openai_compatible(full_messages, fallback)
+                    yield from _stream_for_provider(full_messages, fallback)
                     return
                 except ProviderRequestError as fallback_error:
                     if not fallback_error.retryable or fallback_error.emitted_content:

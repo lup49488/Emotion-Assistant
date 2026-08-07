@@ -37,6 +37,11 @@ def _env_int(name: str, default: int) -> int:
         _logger.warning("环境变量 %s=%r 不是合法的整数，使用默认值 %s", name, raw, default)
         return default
 
+def _env_prefix(name: str) -> str:
+    """A source-filter prefix; empty string means retrieval is not restricted."""
+    return (os.getenv(name) or "").strip()
+
+
 def _env_choice(name: str, default: str, allowed: tuple[str, ...]) -> str:
     raw = (os.getenv(name) or "").strip().lower()
     if not raw:
@@ -76,6 +81,14 @@ MEMORY_CONFIRM_LONG_TERM      = os.getenv("MEMORY_CONFIRM_LONG_TERM", "true").lo
 MEMORY_PENDING_LIMIT          = max(1, _env_int("MEMORY_PENDING_LIMIT", 30))
 
 EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5")
+# 非对称检索模型（multilingual-e5 系列等）要求给查询和文档加不同的指令前缀，
+# 缺少前缀会损失召回。对称模型（bge-m3、paraphrase-multilingual 等）留空即可，
+# 此时行为与不加前缀完全一致。
+# 注意：前缀结尾的空格是模型约定的一部分，而 env_loader 会 strip 未加引号的值，
+# 所以在 .env 里必须写成 EMBEDDING_QUERY_PREFIX="query: "（带引号）。
+# 改动 EMBEDDING_PASSAGE_PREFIX 后必须重建全部索引，否则新旧编码方式混用。
+EMBEDDING_QUERY_PREFIX = os.getenv("EMBEDDING_QUERY_PREFIX", "")
+EMBEDDING_PASSAGE_PREFIX = os.getenv("EMBEDDING_PASSAGE_PREFIX", "")
 CHAT_MODEL_NAME      = os.getenv("CHAT_MODEL_NAME", "Qwen/Qwen2.5-3B-Instruct")
 HF_TOKEN             = os.getenv("HF_TOKEN") or None
 
@@ -115,6 +128,23 @@ DEFAULT_MAX_NEW_TOKENS = _env_int("LLM_MAX_NEW_TOKENS", 300)
 # JSON array of server-managed API fallback targets. Credentials remain in the
 # provider-specific environment variables and are never accepted here.
 LLM_FALLBACKS_JSON = os.getenv("LLM_FALLBACKS_JSON", "").strip()
+
+# Native Anthropic provider. The Messages API differs from the OpenAI-compatible
+# shape in ways that need their own settings, so they live here rather than being
+# folded into the shared LLM_* values.
+ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "").strip()
+# Thinking is off by default for this app. It shares the max_tokens budget with the
+# reply, and LLM_MAX_NEW_TOKENS is small (300) because the assistant writes short
+# supportive replies — with thinking on, reasoning would consume that budget and the
+# user would get a truncated answer. Raise LLM_MAX_NEW_TOKENS well above 4000 before
+# switching this to "adaptive".
+ANTHROPIC_THINKING = _env_choice("ANTHROPIC_THINKING", "off", ("off", "adaptive"))
+# Reasoning depth and overall token spend. Anthropic rejects a disabled-thinking
+# request above "high", so the two settings are validated together at request time.
+ANTHROPIC_EFFORT = _env_choice(
+    "ANTHROPIC_EFFORT", "low", ("low", "medium", "high", "xhigh", "max")
+)
 
 # API 稳定性与成本控制。限额默认关闭，单价由实际使用的服务商账单填写。
 API_REQUEST_TIMEOUT_SECONDS = _env_float("API_REQUEST_TIMEOUT_SECONDS", 60.0)
@@ -187,6 +217,11 @@ KNOWLEDGE_CANDIDATE_MULTIPLIER = _env_int("KNOWLEDGE_CANDIDATE_MULTIPLIER", 4)
 KNOWLEDGE_MAX_PER_SOURCE = _env_int("KNOWLEDGE_MAX_PER_SOURCE", 2)
 KNOWLEDGE_MAX_CONTEXT_CHARS = _env_int("KNOWLEDGE_MAX_CONTEXT_CHARS", 4000)
 KNOWLEDGE_MIN_CHUNK_CHARS = _env_int("KNOWLEDGE_MIN_CHUNK_CHARS", 40)
+# 按文件名前缀限定检索范围，使实验可以在不改调用点的情况下固定知识条件。
+# 留空表示检索全部文档。
+KNOWLEDGE_SOURCE_PREFIX = _env_prefix("KNOWLEDGE_SOURCE_PREFIX")
+# 前缀过滤时需要更大的候选池，理由同 STYLE_PREFIX_CANDIDATE_MULTIPLIER。
+KNOWLEDGE_PREFIX_CANDIDATE_MULTIPLIER = max(1, _env_int("KNOWLEDGE_PREFIX_CANDIDATE_MULTIPLIER", 8))
 # When a caller explicitly enables RAG, do not let the model answer as though
 # it were grounded if retrieval found no eligible source chunks.
 RAG_REQUIRE_EVIDENCE = os.getenv("RAG_REQUIRE_EVIDENCE", "true").lower() == "true"
@@ -201,6 +236,9 @@ STYLE_RETRIEVAL_THRESHOLD = _env_float("STYLE_RETRIEVAL_THRESHOLD", 0.30)
 STYLE_PREFIX_CANDIDATE_MULTIPLIER = max(1, _env_int("STYLE_PREFIX_CANDIDATE_MULTIPLIER", 8))
 STYLE_CHUNK_SIZE = _env_int("STYLE_CHUNK_SIZE", 900)
 STYLE_CHUNK_OVERLAP = _env_int("STYLE_CHUNK_OVERLAP", 120)
+# 同 KNOWLEDGE_SOURCE_PREFIX。风格库把多种互相竞争的风格放在同一个索引里，
+# 只有能把检索固定到某一风格族，"施加了哪种风格"才是一个受控变量。
+STYLE_SOURCE_PREFIX = _env_prefix("STYLE_SOURCE_PREFIX")
 
 # 同时允许的最大会话缓存数（防止长期运行的服务内存无限增长）
 MAX_CACHED_SESSIONS = _env_int("MAX_CACHED_SESSIONS", 1000)
