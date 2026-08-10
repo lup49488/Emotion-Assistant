@@ -38,3 +38,7 @@ imdb_reviews/
 .claude
 frontend/test-results/
 frontend/playwright-report/
+evaluation/编码手册.md
+evaluation/初版实验设计.md
+.gitignore
+evaluation/EXPERIMENT_DESIGN.md
