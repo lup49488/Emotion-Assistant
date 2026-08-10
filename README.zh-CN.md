@@ -126,7 +126,7 @@ ANTHROPIC_MODEL=claude-opus-5
 与 OpenAI 兼容 Provider 有两点差异需要注意：
 
 - **`LLM_TEMPERATURE` 与 `LLM_TOP_P` 不生效。** 当前 Claude 模型会拒绝采样参数，因此请求中不会带上它们；语气请通过系统提示词调节。
-- **思考默认关闭**（`ANTHROPIC_THINKING=off`）。思考与回复共用 `LLM_MAX_NEW_TOKENS` 预算，而默认的 300 是按简短陪伴式回复设定的。改为 `adaptive` 前请先把 `LLM_MAX_NEW_TOKENS` 提到 4000 以上，否则推理会吃掉预算、回复被截断。`ANTHROPIC_EFFORT`（`low`–`max`）控制深度；思考关闭时会被限制到 `high`，这是 API 的要求。
+- **思考默认关闭**（`ANTHROPIC_THINKING=off`）。思考与回复共用 `LLM_MAX_NEW_TOKENS` 预算，而默认的 1024 是按正常陪伴式回复设定的。改为 `adaptive` 前请先把 `LLM_MAX_NEW_TOKENS` 提到 4000 以上，否则推理会吃掉预算、回复被截断。`ANTHROPIC_EFFORT`（`low`–`max`）控制深度；思考关闭时会被限制到 `high`，这是 API 的要求。
 
 请把密钥保存在 `.env`、`.env.local` 或服务端环境变量里。不要把 API Key 写进 `frontend/.env*`，因为 `VITE_*` 变量会被打包到浏览器代码中。
 

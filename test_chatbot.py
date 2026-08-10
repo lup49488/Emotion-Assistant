@@ -797,6 +797,7 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
         messages = build_messages(chatbot.SessionState(), "你叫什么名字？", "neutral", 0.0)
 
         assert "你的名字是 Serenova" in messages[0]["content"]
+        assert "普通回答不要主动反复强调自己的名字或身份" in messages[0]["content"]
 
     def test_prompt_does_not_present_uncertain_as_an_emotion_label(self):
         messages = build_messages(chatbot.SessionState(), "I feel okay", "uncertain", 0.59)

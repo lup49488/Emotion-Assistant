@@ -31,6 +31,7 @@ def test_identity_and_language_cases_are_present_in_the_system_prompt():
     system_prompt = build_messages(chatbot.SessionState(), cases["identity_serenova"]["input"], "neutral", 0.0)[0]["content"]
 
     assert "你的名字是 Serenova" in system_prompt
+    assert "普通回答不要主动反复强调自己的名字或身份" in system_prompt
     assert '"Hi"、"Hello" 或 "Hey"' in system_prompt
 
 

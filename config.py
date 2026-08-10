@@ -124,7 +124,7 @@ DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
 DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")
 DEFAULT_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.8)
 DEFAULT_TOP_P = _env_float("LLM_TOP_P", 0.9)
-DEFAULT_MAX_NEW_TOKENS = _env_int("LLM_MAX_NEW_TOKENS", 300)
+DEFAULT_MAX_NEW_TOKENS = _env_int("LLM_MAX_NEW_TOKENS", 1024)
 # JSON array of server-managed API fallback targets. Credentials remain in the
 # provider-specific environment variables and are never accepted here.
 LLM_FALLBACKS_JSON = os.getenv("LLM_FALLBACKS_JSON", "").strip()
@@ -134,11 +134,11 @@ LLM_FALLBACKS_JSON = os.getenv("LLM_FALLBACKS_JSON", "").strip()
 # folded into the shared LLM_* values.
 ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "").strip()
-# Thinking is off by default for this app. It shares the max_tokens budget with the
-# reply, and LLM_MAX_NEW_TOKENS is small (300) because the assistant writes short
-# supportive replies — with thinking on, reasoning would consume that budget and the
-# user would get a truncated answer. Raise LLM_MAX_NEW_TOKENS well above 4000 before
-# switching this to "adaptive".
+# Thinking is off by default for this app. It shares the max_tokens budget with
+# the reply, and the default output budget is sized for normal supportive
+# answers. Raise LLM_MAX_NEW_TOKENS well above 4000 before switching this to
+# "adaptive", because reasoning would otherwise consume the reply budget and the
+# user could get a truncated answer.
 ANTHROPIC_THINKING = _env_choice("ANTHROPIC_THINKING", "off", ("off", "adaptive"))
 # Reasoning depth and overall token spend. Anthropic rejects a disabled-thinking
 # request above "high", so the two settings are validated together at request time.

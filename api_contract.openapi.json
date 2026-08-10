@@ -3281,7 +3281,7 @@
             "maximum": 8192.0,
             "minimum": 1.0,
             "title": "Max New Tokens",
-            "default": 300
+            "default": 1024
           },
           "use_knowledge": {
             "type": "boolean",

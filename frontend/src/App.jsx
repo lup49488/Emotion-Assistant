@@ -45,9 +45,9 @@ const NAVIGATION = [
 
 const ASSISTANT_NAME = 'Serenova'
 const MODEL_PROFILES = {
-  fast: { temperature: 0.4, maxNewTokens: 500 },
-  balanced: { temperature: 0.7, maxNewTokens: 900 },
-  detailed: { temperature: 0.6, maxNewTokens: 1400 },
+  fast: { temperature: 0.4, maxNewTokens: 800 },
+  balanced: { temperature: 0.7, maxNewTokens: 1600 },
+  detailed: { temperature: 0.6, maxNewTokens: 2400 },
 }
 
 function App() {
