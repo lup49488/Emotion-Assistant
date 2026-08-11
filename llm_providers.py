@@ -51,7 +51,7 @@ from service_errors import ServiceError
 
 logger = logging.getLogger(__name__)
 
-_API_PROVIDERS = {"deepseek", "openai", "openrouter", "openai_compatible", "custom"}
+_API_PROVIDERS = {"deepseek", "openai", "openrouter", "nvidia_nim", "openai_compatible", "custom"}
 # Anthropic speaks the Messages API, not the OpenAI chat-completions shape, so it
 # gets its own streaming path instead of joining _API_PROVIDERS.
 ANTHROPIC_PROVIDER = "anthropic"
@@ -209,6 +209,8 @@ class ModelRuntimeConfig:
             return os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
         if provider == "openrouter":
             return os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
+        if provider == "nvidia_nim":
+            return os.getenv("NVIDIA_NIM_MODEL", "openai/gpt-oss-20b")
         return DEFAULT_API_MODEL
 
     def resolved_base_url(self) -> str | None:
@@ -225,6 +227,10 @@ class ModelRuntimeConfig:
             return None
         if provider == "openrouter":
             return "https://openrouter.ai/api/v1"
+        if provider == "nvidia_nim":
+            return _normalize_api_base_url(
+                os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+            )
         if provider in {"openai_compatible", "custom"}:
             return _normalize_api_base_url(DEFAULT_API_BASE_URL)
         return _normalize_api_base_url(self.base_url)
@@ -241,6 +247,8 @@ class ModelRuntimeConfig:
             return os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
         if provider == "openrouter":
             return os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY")
+        if provider == "nvidia_nim":
+            return os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("LLM_API_KEY")
         return os.getenv("LLM_API_KEY")
 
 

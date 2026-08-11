@@ -122,6 +122,7 @@ def test_test_model_connection_reports_missing_api_key():
 def test_gui_provider_choices_hide_local_hf():
     assert "local_hf" not in PROVIDER_CHOICES
     assert "deepseek" in PROVIDER_CHOICES
+    assert "nvidia_nim" in PROVIDER_CHOICES
 
 
 def test_test_model_connection_api_success():
@@ -193,6 +194,27 @@ def test_save_model_config_to_env_writes_explicit_api_key(tmp_path):
     text = env_path.read_text(encoding="utf-8")
     assert "OPENAI_API_KEY=new-key" in text
     assert "OPENAI_MODEL=gpt-4.1-mini" in text
+
+
+def test_save_model_config_to_env_writes_nvidia_nim_settings(tmp_path):
+    env_path = tmp_path / ".env.local"
+
+    with patch.object(Web_GUI, "LOCAL_ENV_PATH", env_path):
+        Web_GUI.save_model_config_to_env(
+            provider="nvidia_nim",
+            model="openai/gpt-oss-20b",
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key="nim-key",
+            temperature=0.5,
+            top_p=1,
+            max_new_tokens=256,
+        )
+
+    text = env_path.read_text(encoding="utf-8")
+    assert "LLM_PROVIDER=nvidia_nim" in text
+    assert "NVIDIA_NIM_API_KEY=nim-key" in text
+    assert "NVIDIA_NIM_MODEL=openai/gpt-oss-20b" in text
+    assert "NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1" in text
 
 
 def test_save_local_runtime_config_writes_supported_values(tmp_path):
@@ -403,7 +425,8 @@ def test_interface_mode_visibility_shows_all_advanced_sections():
     assert "selected" not in updates[7]
 
 
-def test_dismiss_onboarding_hides_the_session_guide():
+def test_dismiss_onboarding_hides_the_session_guide(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
     Web_GUI.save_access_key_from_gui("alice", "alice-secret")
 
     update = Web_GUI.dismiss_onboarding("alice", "alice-secret")
@@ -412,7 +435,8 @@ def test_dismiss_onboarding_hides_the_session_guide():
     assert onboarding_completed("alice") is True
 
 
-def test_saved_onboarding_preference_hides_guide_after_login():
+def test_saved_onboarding_preference_hides_guide_after_login(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
     Web_GUI.save_access_key_from_gui("alice", "alice-secret")
     Web_GUI.dismiss_onboarding("alice", "alice-secret")
 

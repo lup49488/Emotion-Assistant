@@ -97,13 +97,13 @@ Copy `.env.example` to `.env` and fill only the values you need:
 Copy-Item .env.example .env
 ```
 
-Common provider settings:
+Default NVIDIA NIM provider settings:
 
 ```env
-LLM_PROVIDER=openai_compatible
-LLM_API_BASE_URL=https://api.deepseek.com
-LLM_API_KEY=replace-with-your-key
-LLM_API_MODEL=deepseek-chat
+LLM_PROVIDER=nvidia_nim
+NVIDIA_NIM_API_KEY=replace-with-your-key
+NVIDIA_NIM_MODEL=openai/gpt-oss-20b
+NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
 Provider-specific alternatives are also supported:
@@ -112,6 +112,7 @@ Provider-specific alternatives are also supported:
 - `DEEPSEEK_API_KEY` with `LLM_PROVIDER=deepseek`
 - `OPENAI_API_KEY` with `LLM_PROVIDER=openai`
 - `OPENROUTER_API_KEY` with `LLM_PROVIDER=openrouter`
+- `NVIDIA_NIM_API_KEY` with `LLM_PROVIDER=nvidia_nim`
 - `LLM_PROVIDER=local_hf` to load `CHAT_MODEL_NAME` locally
 
 ### Anthropic (Claude)

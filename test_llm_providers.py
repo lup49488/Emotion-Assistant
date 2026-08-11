@@ -32,6 +32,56 @@ def test_resolved_base_url_rejects_unsupported_scheme():
         config.resolved_base_url()
 
 
+def test_default_provider_is_nvidia_nim():
+    config = llm_providers.ModelRuntimeConfig()
+
+    assert llm_providers.DEFAULT_LLM_PROVIDER == "nvidia_nim"
+    assert config.normalized_provider() == "nvidia_nim"
+    assert config.resolved_model() == "openai/gpt-oss-20b"
+    assert config.resolved_base_url() == "https://integrate.api.nvidia.com/v1"
+
+
+def test_nvidia_nim_provider_uses_dedicated_defaults_and_key():
+    config = llm_providers.ModelRuntimeConfig(provider="nvidia_nim")
+
+    with patch.dict("os.environ", {
+        "NVIDIA_NIM_API_KEY": "nim-key",
+        "NVIDIA_NIM_MODEL": "meta/llama-3.1-8b-instruct",
+        "NVIDIA_NIM_BASE_URL": "https://integrate.api.nvidia.com/v1",
+        "LLM_API_KEY": "fallback-key",
+    }, clear=False):
+        assert config.resolved_api_key() == "nim-key"
+        assert config.resolved_model() == "meta/llama-3.1-8b-instruct"
+        assert config.resolved_base_url() == "https://integrate.api.nvidia.com/v1"
+
+
+def test_nvidia_nim_provider_can_be_used_as_server_fallback():
+    config = llm_providers.ModelRuntimeConfig(
+        provider="deepseek", model="primary-model", api_key=None, max_new_tokens=8,
+    )
+    calls = []
+
+    def stream(_, candidate):
+        calls.append(candidate)
+        if candidate.normalized_provider() == "deepseek":
+            raise llm_providers.ProviderRequestError(
+                "primary timed out", kind="timeout", retryable=True,
+            )
+        assert candidate.resolved_api_key() == "nim-key"
+        yield "nim fallback"
+
+    with patch.dict("os.environ", {"NVIDIA_NIM_API_KEY": "nim-key"}, clear=False), \
+        patch.object(llm_providers, "LLM_FALLBACKS_JSON", json.dumps([
+            {"provider": "nvidia_nim", "model": "openai/gpt-oss-20b"},
+        ])), patch.object(llm_providers, "_stream_openai_compatible", side_effect=stream):
+        chunks = list(llm_providers.stream_model_response([
+            {"role": "user", "content": "hello"},
+        ], config))
+
+    assert chunks == ["nim fallback"]
+    assert [item.normalized_provider() for item in calls] == ["deepseek", "nvidia_nim"]
+
+
 def test_get_llm_applies_local_model_loading_options():
     fake_tokenizer_cls = Mock()
     fake_tokenizer_cls.from_pretrained.return_value = Mock(name_or_path="tokenizer")

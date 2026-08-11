@@ -10,6 +10,7 @@ PROVIDER_CHOICES = [
     "deepseek",
     "openai",
     "openrouter",
+    "nvidia_nim",
     "openai_compatible",
     "custom",
 ]
@@ -23,6 +24,7 @@ PROVIDER_LABELS = {
     "deepseek": "DeepSeek",
     "openai": "OpenAI",
     "openrouter": "OpenRouter",
+    "nvidia_nim": "NVIDIA NIM",
     "openai_compatible": "OpenAI-compatible",
     "custom": "Custom endpoint",
 }
@@ -38,6 +40,7 @@ PROVIDER_API_KEYS = {
     "deepseek": ["DEEPSEEK_API_KEY", "LLM_API_KEY"],
     "openai": ["OPENAI_API_KEY", "LLM_API_KEY"],
     "openrouter": ["OPENROUTER_API_KEY", "LLM_API_KEY"],
+    "nvidia_nim": ["NVIDIA_NIM_API_KEY", "LLM_API_KEY"],
     "openai_compatible": ["LLM_API_KEY"],
     "custom": ["LLM_API_KEY"],
 }
@@ -84,6 +87,12 @@ MODEL_CHOICES = {
         "google/gemini-2.0-flash-001",
         "deepseek/deepseek-chat",
     ]),
+    "nvidia_nim": unique_choices([
+        os.getenv("NVIDIA_NIM_MODEL", "openai/gpt-oss-20b"),
+        "openai/gpt-oss-20b",
+        "meta/llama-3.1-8b-instruct",
+        "nvidia/llama-3.1-nemotron-ultra-253b-v1",
+    ]),
     "openai_compatible": unique_choices([
         DEFAULT_API_MODEL,
         "deepseek-chat",
@@ -106,6 +115,7 @@ DEFAULT_BASE_URLS = {
     "deepseek": "https://api.deepseek.com",
     "openai": "",
     "openrouter": "https://openrouter.ai/api/v1",
+    "nvidia_nim": os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
     "openai_compatible": DEFAULT_API_BASE_URL,
     "custom": DEFAULT_API_BASE_URL,
 }

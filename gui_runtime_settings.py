@@ -63,6 +63,7 @@ def provider_key_name(provider: str) -> str:
         "deepseek": "DEEPSEEK_API_KEY",
         "openai": "OPENAI_API_KEY",
         "openrouter": "OPENROUTER_API_KEY",
+        "nvidia_nim": "NVIDIA_NIM_API_KEY",
     }.get(provider, "LLM_API_KEY")
 
 
@@ -92,9 +93,17 @@ def save_model_config_to_env(
         updates["LLM_API_MODEL"] = model
         if base_url:
             updates["LLM_API_BASE_URL"] = base_url
-        model_key = {"anthropic": "ANTHROPIC_MODEL", "deepseek": "DEEPSEEK_MODEL", "openai": "OPENAI_MODEL", "openrouter": "OPENROUTER_MODEL"}.get(provider)
+        model_key = {
+            "anthropic": "ANTHROPIC_MODEL",
+            "deepseek": "DEEPSEEK_MODEL",
+            "openai": "OPENAI_MODEL",
+            "openrouter": "OPENROUTER_MODEL",
+            "nvidia_nim": "NVIDIA_NIM_MODEL",
+        }.get(provider)
         if model_key:
             updates[model_key] = model
+        if provider == "nvidia_nim" and base_url:
+            updates["NVIDIA_NIM_BASE_URL"] = base_url
 
     key_saved = bool(api_key and api_key.strip())
     if key_saved:

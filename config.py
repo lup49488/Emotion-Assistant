@@ -119,7 +119,7 @@ SAFETY_SEMANTIC_THRESHOLD = min(
     1.0, max(0.0, _env_float("SAFETY_SEMANTIC_THRESHOLD", 0.78))
 )
 
-DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "openai_compatible")
+DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "nvidia_nim")
 DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
 DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")
 DEFAULT_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.8)

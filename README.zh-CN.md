@@ -97,13 +97,13 @@ cd ..
 Copy-Item .env.example .env
 ```
 
-常见 OpenAI-compatible 配置：
+默认 NVIDIA NIM 配置：
 
 ```env
-LLM_PROVIDER=openai_compatible
-LLM_API_BASE_URL=https://api.deepseek.com
-LLM_API_KEY=replace-with-your-key
-LLM_API_MODEL=deepseek-chat
+LLM_PROVIDER=nvidia_nim
+NVIDIA_NIM_API_KEY=replace-with-your-key
+NVIDIA_NIM_MODEL=openai/gpt-oss-20b
+NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
 也可以使用提供方专用变量：
@@ -112,6 +112,7 @@ LLM_API_MODEL=deepseek-chat
 - `DEEPSEEK_API_KEY` 搭配 `LLM_PROVIDER=deepseek`
 - `OPENAI_API_KEY` 搭配 `LLM_PROVIDER=openai`
 - `OPENROUTER_API_KEY` 搭配 `LLM_PROVIDER=openrouter`
+- `NVIDIA_NIM_API_KEY` 搭配 `LLM_PROVIDER=nvidia_nim`
 - `LLM_PROVIDER=local_hf` 使用本地 `CHAT_MODEL_NAME`
 
 ### Anthropic（Claude）
