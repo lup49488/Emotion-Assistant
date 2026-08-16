@@ -4,16 +4,24 @@ import re
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-from env_loader import load_project_env
+from env_loader import load_project_env_if_enabled
 
-# 测试环境通过该开关跳过加载本机 .env，避免开发者的生产配置
+# 测试环境通过 CHATBOT_SKIP_DOTENV 跳过加载本机 .env，避免开发者的生产配置
 # （如 API_TRUSTED_HOSTS、API_PUBLIC_MODE）泄漏进测试并影响结果。
-if os.getenv("CHATBOT_SKIP_DOTENV", "").strip().lower() in {"1", "true", "yes"}:
-    LOADED_ENV_FILES: list[Path] = []
-else:
-    LOADED_ENV_FILES = load_project_env(BASE_DIR)
+# 该判断放在 env_loader 里，任何在导入期加载项目 .env 的模块都必须走这个入口。
+LOADED_ENV_FILES: list[Path] = load_project_env_if_enabled(BASE_DIR)
 
 _logger = logging.getLogger(__name__)
+
+
+def _env_str(name: str, default: str) -> str:
+    """Read a string setting, treating a set-but-blank variable as unset.
+
+    `NAME=` in a .env file (or a Compose env_file) injects an empty string, which
+    os.getenv returns instead of the default — so a blank line silently replaces a
+    real endpoint or model name with nothing.
+    """
+    return (os.getenv(name) or "").strip() or default
 
 
 def _env_float(name: str, default: float) -> float:
@@ -80,7 +88,7 @@ SCORE_MID_TERM_THRESHOLD      = 2.0
 MEMORY_CONFIRM_LONG_TERM      = os.getenv("MEMORY_CONFIRM_LONG_TERM", "true").lower() == "true"
 MEMORY_PENDING_LIMIT          = max(1, _env_int("MEMORY_PENDING_LIMIT", 30))
 
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5")
+EMBEDDING_MODEL_NAME = _env_str("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5")
 # 非对称检索模型（multilingual-e5 系列等）要求给查询和文档加不同的指令前缀，
 # 缺少前缀会损失召回。对称模型（bge-m3、paraphrase-multilingual 等）留空即可，
 # 此时行为与不加前缀完全一致。
@@ -89,7 +97,7 @@ EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "BAAI/bge-small-zh-v1.5
 # 改动 EMBEDDING_PASSAGE_PREFIX 后必须重建全部索引，否则新旧编码方式混用。
 EMBEDDING_QUERY_PREFIX = os.getenv("EMBEDDING_QUERY_PREFIX", "")
 EMBEDDING_PASSAGE_PREFIX = os.getenv("EMBEDDING_PASSAGE_PREFIX", "")
-CHAT_MODEL_NAME      = os.getenv("CHAT_MODEL_NAME", "Qwen/Qwen2.5-3B-Instruct")
+CHAT_MODEL_NAME      = _env_str("CHAT_MODEL_NAME", "Qwen/Qwen2.5-3B-Instruct")
 HF_TOKEN             = os.getenv("HF_TOKEN") or None
 
 # Multilingual emotion classification runs directly on the original text, so
@@ -119,9 +127,9 @@ SAFETY_SEMANTIC_THRESHOLD = min(
     1.0, max(0.0, _env_float("SAFETY_SEMANTIC_THRESHOLD", 0.78))
 )
 
-DEFAULT_LLM_PROVIDER = os.getenv("LLM_PROVIDER", "nvidia_nim")
-DEFAULT_API_MODEL = os.getenv("LLM_API_MODEL", "deepseek-chat")
-DEFAULT_API_BASE_URL = os.getenv("LLM_API_BASE_URL", "https://api.deepseek.com")
+DEFAULT_LLM_PROVIDER = _env_str("LLM_PROVIDER", "nvidia_nim")
+DEFAULT_API_MODEL = _env_str("LLM_API_MODEL", "deepseek-chat")
+DEFAULT_API_BASE_URL = _env_str("LLM_API_BASE_URL", "https://api.deepseek.com")
 DEFAULT_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.8)
 DEFAULT_TOP_P = _env_float("LLM_TOP_P", 0.9)
 DEFAULT_MAX_NEW_TOKENS = _env_int("LLM_MAX_NEW_TOKENS", 1024)
@@ -132,7 +140,7 @@ LLM_FALLBACKS_JSON = os.getenv("LLM_FALLBACKS_JSON", "").strip()
 # Native Anthropic provider. The Messages API differs from the OpenAI-compatible
 # shape in ways that need their own settings, so they live here rather than being
 # folded into the shared LLM_* values.
-ANTHROPIC_MODEL = os.getenv("ANTHROPIC_MODEL", "claude-opus-5")
+ANTHROPIC_MODEL = _env_str("ANTHROPIC_MODEL", "claude-opus-5")
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "").strip()
 # Thinking is off by default for this app. It shares the max_tokens budget with
 # the reply, and the default output budget is sized for normal supportive

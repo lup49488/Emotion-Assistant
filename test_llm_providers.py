@@ -32,13 +32,43 @@ def test_resolved_base_url_rejects_unsupported_scheme():
         config.resolved_base_url()
 
 
-def test_default_provider_is_nvidia_nim():
+def test_default_provider_is_nvidia_nim(monkeypatch):
+    # resolved_model/base_url read the environment at call time, so the ambient
+    # NVIDIA_NIM_* values have to be cleared for this to assert the defaults.
+    monkeypatch.delenv("NVIDIA_NIM_MODEL", raising=False)
+    monkeypatch.delenv("NVIDIA_NIM_BASE_URL", raising=False)
     config = llm_providers.ModelRuntimeConfig()
 
     assert llm_providers.DEFAULT_LLM_PROVIDER == "nvidia_nim"
     assert config.normalized_provider() == "nvidia_nim"
     assert config.resolved_model() == "openai/gpt-oss-20b"
     assert config.resolved_base_url() == "https://integrate.api.nvidia.com/v1"
+
+
+def test_blank_nvidia_settings_fall_back_to_the_defaults(monkeypatch):
+    """`NVIDIA_NIM_BASE_URL=` injects "", which would otherwise drop the endpoint
+    and let the OpenAI SDK send NVIDIA-keyed requests to api.openai.com."""
+    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", "")
+    monkeypatch.setenv("NVIDIA_NIM_MODEL", "   ")
+    config = llm_providers.ModelRuntimeConfig(provider="nvidia_nim")
+
+    assert config.resolved_base_url() == "https://integrate.api.nvidia.com/v1"
+    assert config.resolved_model() == "openai/gpt-oss-20b"
+
+
+def test_a_blank_endpoint_never_reaches_the_openai_client(monkeypatch):
+    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", "")
+    config = llm_providers.ModelRuntimeConfig(provider="nvidia_nim", api_key="nim-key")
+    client = Mock()
+    client.chat.completions.create.return_value = iter([])
+    factory = Mock(return_value=client)
+
+    with patch.object(llm_providers, "require_openai_client", return_value=factory), \
+         patch.object(llm_providers, "record_usage"), \
+         patch.object(llm_providers, "check_request_allowed"):
+        list(llm_providers._stream_openai_compatible([{"role": "user", "content": "hi"}], config))
+
+    assert factory.call_args.kwargs["base_url"] == "https://integrate.api.nvidia.com/v1"
 
 
 def test_nvidia_nim_provider_uses_dedicated_defaults_and_key():

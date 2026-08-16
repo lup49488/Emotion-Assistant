@@ -58,6 +58,24 @@ def load_dotenv(path: Path, *, override: bool = False) -> bool:
     return True
 
 
+SKIP_DOTENV_ENV_VAR = "CHATBOT_SKIP_DOTENV"
+
+
+def dotenv_loading_disabled() -> bool:
+    return os.getenv(SKIP_DOTENV_ENV_VAR, "").strip().lower() in {"1", "true", "yes"}
+
+
+def load_project_env_if_enabled(base_dir: Path) -> list[Path]:
+    """Load the project's own .env unless the test guard disables it.
+
+    Every module that loads the project .env at import time must go through this.
+    Calling load_project_env() directly injects the developer's real configuration
+    into os.environ for the rest of the process — in a test session that leaks into
+    every module imported afterwards and makes results depend on file order.
+    """
+    return [] if dotenv_loading_disabled() else load_project_env(base_dir)
+
+
 def load_project_env(base_dir: Path) -> list[Path]:
     loaded: list[Path] = []
     protected_keys = set(os.environ)

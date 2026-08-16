@@ -13,11 +13,11 @@ import time
 import urllib.request
 from pathlib import Path
 
-from env_loader import load_project_env
+from env_loader import load_project_env_if_enabled
 
 
 BASE_DIR = Path(__file__).resolve().parent
-load_project_env(BASE_DIR)
+load_project_env_if_enabled(BASE_DIR)
 REQUIRED_PROJECT_FILES = (
     "Web_GUI.py", "api_server.py", "config.py", "requirements.txt", "sqlite_store.py",
     "Dockerfile", "Dockerfile.frontend", "docker-compose.yml", "docker/nginx.conf",

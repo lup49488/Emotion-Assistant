@@ -70,3 +70,48 @@ class TestEnvLoader(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSkipGuard(unittest.TestCase):
+    """Every import-time loader must honour CHATBOT_SKIP_DOTENV.
+
+    A module that calls load_project_env() directly injects the developer's real
+    .env into os.environ for the whole process; in a test session that leaks into
+    every module imported afterwards and makes results depend on file order.
+    """
+
+    def test_skip_guard_prevents_loading(self):
+        from env_loader import load_project_env_if_enabled
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base_dir = Path(tmp)
+            (base_dir / ".env").write_text("GUARD_PROBE=leaked", encoding="utf-8")
+            old = os.environ.get("CHATBOT_SKIP_DOTENV")
+            try:
+                os.environ["CHATBOT_SKIP_DOTENV"] = "1"
+                self.assertEqual(load_project_env_if_enabled(base_dir), [])
+                self.assertIsNone(os.environ.get("GUARD_PROBE"))
+
+                os.environ["CHATBOT_SKIP_DOTENV"] = "0"
+                self.assertEqual(load_project_env_if_enabled(base_dir), [base_dir / ".env"])
+                self.assertEqual(os.environ["GUARD_PROBE"], "leaked")
+            finally:
+                os.environ.pop("GUARD_PROBE", None)
+                if old is None:
+                    os.environ.pop("CHATBOT_SKIP_DOTENV", None)
+                else:
+                    os.environ["CHATBOT_SKIP_DOTENV"] = old
+
+    def test_no_module_bypasses_the_guard(self):
+        import pathlib
+        import re
+
+        offenders = []
+        for path in pathlib.Path(__file__).parent.glob("*.py"):
+            if path.name in {"env_loader.py", "test_env_loader.py"}:
+                continue
+            text = path.read_text(encoding="utf-8")
+            if re.search(r"(?<!_if_enabled)\bload_project_env\(", text):
+                offenders.append(path.name)
+
+        self.assertEqual(offenders, [])

@@ -72,6 +72,17 @@ _llm_model: Any | None = None
 _model_init_lock = threading.Lock()       # 保护模型懒加载本身的并发初始化
 _llm_inference_lock = threading.Lock()    # 保护 model.generate() 调用的并发执行
 
+def _env_or(name: str, default: str) -> str:
+    """Read a per-provider setting, treating a set-but-blank variable as unset.
+
+    `NAME=` in a .env file (or a Compose env_file) injects an empty string, and
+    os.getenv returns that instead of the default. For a base URL that silently
+    drops the endpoint and lets the OpenAI SDK fall back to its own host, so a
+    blank line would send requests to the wrong vendor with the right key.
+    """
+    return (os.getenv(name) or "").strip() or default
+
+
 def _normalize_api_base_url(base_url: str | None) -> str | None:
     """Return an OpenAI client compatible HTTP(S) base URL."""
     value = (base_url or "").strip()
@@ -204,13 +215,13 @@ class ModelRuntimeConfig:
         if provider == ANTHROPIC_PROVIDER:
             return ANTHROPIC_MODEL
         if provider == "deepseek":
-            return os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+            return _env_or("DEEPSEEK_MODEL", "deepseek-chat")
         if provider == "openai":
-            return os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
+            return _env_or("OPENAI_MODEL", "gpt-4.1-mini")
         if provider == "openrouter":
-            return os.getenv("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
+            return _env_or("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
         if provider == "nvidia_nim":
-            return os.getenv("NVIDIA_NIM_MODEL", "openai/gpt-oss-20b")
+            return _env_or("NVIDIA_NIM_MODEL", "openai/gpt-oss-20b")
         return DEFAULT_API_MODEL
 
     def resolved_base_url(self) -> str | None:
@@ -229,7 +240,7 @@ class ModelRuntimeConfig:
             return "https://openrouter.ai/api/v1"
         if provider == "nvidia_nim":
             return _normalize_api_base_url(
-                os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
+                _env_or("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
             )
         if provider in {"openai_compatible", "custom"}:
             return _normalize_api_base_url(DEFAULT_API_BASE_URL)
