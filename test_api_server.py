@@ -54,6 +54,23 @@ def test_versioned_status_exposes_safe_runtime_metrics():
     assert payload["metrics"]["http_requests_total"] >= 1
 
 
+def test_model_provider_catalog_exposes_choices_without_secret_values(monkeypatch, tmp_path):
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "secret-nim-key")
+    monkeypatch.setenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-8b-instruct")
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        _login(client, monkeypatch, tmp_path)
+        response = client.get("/api/v1/model/providers")
+
+    payload = response.json()
+    nvidia = next(provider for provider in payload["providers"] if provider["id"] == "nvidia_nim")
+    assert response.status_code == 200
+    assert nvidia["default_model"] == "meta/llama-3.1-8b-instruct"
+    assert "openai/gpt-oss-20b" in nvidia["models"]
+    assert "NVIDIA_NIM_API_KEY" in nvidia["api_key_envs"]
+    assert "secret-nim-key" not in json.dumps(payload)
+
+
 def test_api_lifespan_starts_warmup_once(monkeypatch):
     calls = []
     monkeypatch.setattr(api_server, "start_api_background_warmup", lambda: calls.append(True))
@@ -518,6 +535,7 @@ def test_rag_api_exposes_status_quality_and_protected_search(monkeypatch, tmp_pa
 
 def test_rag_document_management_uses_csrf_and_supported_uploads(monkeypatch, tmp_path):
     monkeypatch.setattr(api_server, "API_RAG_ADMIN_USER_IDS", "api-alice")
+    monkeypatch.setattr(api_server, "BASE_DIR", tmp_path)
     monkeypatch.setattr(api_server, "copy_document_to_store", lambda _: Path("notes.md"))
     def rebuild_gate(*, mutate=None):
         document = mutate() if mutate else None
@@ -840,3 +858,12 @@ def test_client_ip_uses_cloudflare_header_when_a_tunnel_fronts_the_deployment(mo
     }))
 
     assert resolved == "198.51.100.4"
+
+
+def test_provider_catalog_requires_a_session():
+    """default_base_url comes from the deployment's own config and can name an
+    internal gateway, so the catalog stays behind the session cookie."""
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        anonymous = client.get("/api/v1/model/providers")
+
+    assert anonymous.status_code == 401

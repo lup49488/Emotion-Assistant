@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 from typing import Any, Callable
 
+from provider_registry import provider_definition
+
 
 logger = logging.getLogger(__name__)
 
@@ -58,13 +60,8 @@ def upsert_env_values(path: Path, updates: dict[str, str]) -> None:
 
 
 def provider_key_name(provider: str) -> str:
-    return {
-        "anthropic": "ANTHROPIC_API_KEY",
-        "deepseek": "DEEPSEEK_API_KEY",
-        "openai": "OPENAI_API_KEY",
-        "openrouter": "OPENROUTER_API_KEY",
-        "nvidia_nim": "NVIDIA_NIM_API_KEY",
-    }.get(provider, "LLM_API_KEY")
+    definition = provider_definition(provider)
+    return definition.api_key_envs[0] if definition and definition.api_key_envs else "LLM_API_KEY"
 
 
 def save_model_config_to_env(
@@ -93,17 +90,11 @@ def save_model_config_to_env(
         updates["LLM_API_MODEL"] = model
         if base_url:
             updates["LLM_API_BASE_URL"] = base_url
-        model_key = {
-            "anthropic": "ANTHROPIC_MODEL",
-            "deepseek": "DEEPSEEK_MODEL",
-            "openai": "OPENAI_MODEL",
-            "openrouter": "OPENROUTER_MODEL",
-            "nvidia_nim": "NVIDIA_NIM_MODEL",
-        }.get(provider)
-        if model_key:
-            updates[model_key] = model
-        if provider == "nvidia_nim" and base_url:
-            updates["NVIDIA_NIM_BASE_URL"] = base_url
+        definition = provider_definition(provider)
+        if definition and definition.model_env:
+            updates[definition.model_env] = model
+        if definition and definition.base_url_env and base_url:
+            updates[definition.base_url_env] = base_url
 
     key_saved = bool(api_key and api_key.strip())
     if key_saved:

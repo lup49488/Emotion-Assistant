@@ -46,6 +46,53 @@
         }
       }
     },
+    "/api/v1/model/providers": {
+      "get": {
+        "summary": "Model Providers",
+        "description": "Provider and model choices for the signed-in settings panel.\n\nNo credentials are returned, but default_base_url comes from the deployment's\nown configuration and can name an internal gateway — so this stays behind the\nsession like every other configuration view.",
+        "operationId": "model_providers_api_v1_model_providers_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderCatalogResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/observability/summary": {
       "get": {
         "summary": "Observability Summary Endpoint",
@@ -4340,6 +4387,78 @@
           "api_request_count"
         ],
         "title": "PrivacyResponse"
+      },
+      "ProviderCatalogItem": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "local",
+              "openai_compatible",
+              "anthropic"
+            ],
+            "title": "Kind"
+          },
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "default_model": {
+            "type": "string",
+            "title": "Default Model"
+          },
+          "default_base_url": {
+            "type": "string",
+            "title": "Default Base Url"
+          },
+          "api_key_envs": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Api Key Envs"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "models",
+          "default_model",
+          "default_base_url",
+          "api_key_envs"
+        ],
+        "title": "ProviderCatalogItem"
+      },
+      "ProviderCatalogResponse": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/ProviderCatalogItem"
+            },
+            "type": "array",
+            "title": "Providers"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "providers"
+        ],
+        "title": "ProviderCatalogResponse"
       },
       "RagEvaluationRequest": {
         "properties": {

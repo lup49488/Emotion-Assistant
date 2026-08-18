@@ -20,7 +20,6 @@ from config import (
     DEFAULT_MAX_NEW_TOKENS,
     CHAT_MODEL_NAME,
     DEFAULT_API_MODEL,
-    DEFAULT_API_BASE_URL,
     LLM_FALLBACKS_JSON,
     HF_TOKEN,
     EMBEDDING_MODEL_NAME,
@@ -40,21 +39,20 @@ from config import (
     API_REQUEST_TIMEOUT_SECONDS,
     API_MAX_RETRIES,
     API_RETRY_BACKOFF_SECONDS,
-    ANTHROPIC_BASE_URL,
     ANTHROPIC_EFFORT,
-    ANTHROPIC_MODEL,
     ANTHROPIC_THINKING,
 )
 from api_usage_store import check_request_allowed, estimate_input_tokens, estimate_tokens, record_usage
 from observability import get_request_id
+from provider_registry import API_PROVIDER_IDS, ANTHROPIC_PROVIDER_ID, provider_definition
 from service_errors import ServiceError
 
 logger = logging.getLogger(__name__)
 
-_API_PROVIDERS = {"deepseek", "openai", "openrouter", "nvidia_nim", "openai_compatible", "custom"}
+_API_PROVIDERS = set(API_PROVIDER_IDS)
 # Anthropic speaks the Messages API, not the OpenAI chat-completions shape, so it
 # gets its own streaming path instead of joining _API_PROVIDERS.
-ANTHROPIC_PROVIDER = "anthropic"
+ANTHROPIC_PROVIDER = ANTHROPIC_PROVIDER_ID
 ANTHROPIC_DEFAULT_BASE_URL = "https://api.anthropic.com"
 
 
@@ -71,17 +69,6 @@ _tokenizer: Any | None = None
 _llm_model: Any | None = None
 _model_init_lock = threading.Lock()       # 保护模型懒加载本身的并发初始化
 _llm_inference_lock = threading.Lock()    # 保护 model.generate() 调用的并发执行
-
-def _env_or(name: str, default: str) -> str:
-    """Read a per-provider setting, treating a set-but-blank variable as unset.
-
-    `NAME=` in a .env file (or a Compose env_file) injects an empty string, and
-    os.getenv returns that instead of the default. For a base URL that silently
-    drops the endpoint and lets the OpenAI SDK fall back to its own host, so a
-    blank line would send requests to the wrong vendor with the right key.
-    """
-    return (os.getenv(name) or "").strip() or default
-
 
 def _normalize_api_base_url(base_url: str | None) -> str | None:
     """Return an OpenAI client compatible HTTP(S) base URL."""
@@ -210,57 +197,27 @@ class ModelRuntimeConfig:
         if self.model and self.model.strip():
             return self.model.strip()
         provider = self.normalized_provider()
-        if provider == "local_hf":
-            return CHAT_MODEL_NAME
-        if provider == ANTHROPIC_PROVIDER:
-            return ANTHROPIC_MODEL
-        if provider == "deepseek":
-            return _env_or("DEEPSEEK_MODEL", "deepseek-chat")
-        if provider == "openai":
-            return _env_or("OPENAI_MODEL", "gpt-4.1-mini")
-        if provider == "openrouter":
-            return _env_or("OPENROUTER_MODEL", "openai/gpt-4.1-mini")
-        if provider == "nvidia_nim":
-            return _env_or("NVIDIA_NIM_MODEL", "openai/gpt-oss-20b")
-        return DEFAULT_API_MODEL
+        definition = provider_definition(provider)
+        # An unregistered id still reaches here from the GUI before
+        # stream_model_response rejects it; keep the API default it used to get.
+        return definition.default_model_value() if definition else DEFAULT_API_MODEL
 
     def resolved_base_url(self) -> str | None:
         if self.base_url and self.base_url.strip():
             return _normalize_api_base_url(self.base_url)
         provider = self.normalized_provider()
-        if provider == ANTHROPIC_PROVIDER:
-            # Empty means the SDK's own default endpoint; only an explicit override
-            # (a gateway or proxy) needs normalizing.
-            return _normalize_api_base_url(ANTHROPIC_BASE_URL) if ANTHROPIC_BASE_URL else None
-        if provider == "deepseek":
-            return "https://api.deepseek.com"
-        if provider == "openai":
-            return None
-        if provider == "openrouter":
-            return "https://openrouter.ai/api/v1"
-        if provider == "nvidia_nim":
-            return _normalize_api_base_url(
-                _env_or("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1")
-            )
-        if provider in {"openai_compatible", "custom"}:
-            return _normalize_api_base_url(DEFAULT_API_BASE_URL)
-        return _normalize_api_base_url(self.base_url)
+        definition = provider_definition(provider)
+        if not definition:
+            return _normalize_api_base_url(self.base_url)
+        base_url = definition.base_url_value()
+        return _normalize_api_base_url(base_url) if base_url else None
 
     def resolved_api_key(self) -> str | None:
         if self.api_key and self.api_key.strip():
             return self.api_key.strip()
         provider = self.normalized_provider()
-        if provider == ANTHROPIC_PROVIDER:
-            return os.getenv("ANTHROPIC_API_KEY") or os.getenv("LLM_API_KEY")
-        if provider == "deepseek":
-            return os.getenv("DEEPSEEK_API_KEY") or os.getenv("LLM_API_KEY")
-        if provider == "openai":
-            return os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY")
-        if provider == "openrouter":
-            return os.getenv("OPENROUTER_API_KEY") or os.getenv("LLM_API_KEY")
-        if provider == "nvidia_nim":
-            return os.getenv("NVIDIA_NIM_API_KEY") or os.getenv("LLM_API_KEY")
-        return os.getenv("LLM_API_KEY")
+        definition = provider_definition(provider)
+        return definition.api_key() if definition else os.getenv("LLM_API_KEY")
 
 
 def make_model_config(

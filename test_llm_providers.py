@@ -5,6 +5,7 @@ from unittest.mock import Mock, patch
 import pytest
 
 import llm_providers
+from provider_registry import provider_catalog, provider_definition
 
 
 def test_resolved_base_url_adds_https_for_public_host():
@@ -30,6 +31,21 @@ def test_resolved_base_url_rejects_unsupported_scheme():
 
     with pytest.raises(ValueError, match="http"):
         config.resolved_base_url()
+
+
+def test_provider_registry_exposes_multiple_models_without_secrets(monkeypatch):
+    monkeypatch.setenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-8b-instruct")
+    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "secret-nim-key")
+
+    nvidia = provider_definition("nvidia_nim")
+    catalog = provider_catalog()
+    nvidia_item = next(item for item in catalog["providers"] if item["id"] == "nvidia_nim")
+
+    assert nvidia is not None
+    assert nvidia.default_model_value() == "meta/llama-3.1-8b-instruct"
+    assert "openai/gpt-oss-20b" in nvidia.model_options()
+    assert "meta/llama-3.1-8b-instruct" in nvidia_item["models"]
+    assert "secret-nim-key" not in json.dumps(catalog)
 
 
 def test_default_provider_is_nvidia_nim(monkeypatch):
@@ -271,3 +287,24 @@ def test_missing_provider_key_uses_stable_service_error_code():
 
     assert getattr(captured.value, "code", None) == "provider_api_key_missing"
     assert not getattr(captured.value, "retryable", True)
+
+
+def test_frontend_fallback_catalog_stays_in_sync_with_the_registry():
+    """App.jsx carries a hardcoded catalog for when the API call fails.
+
+    It is a deliberate second copy, so it must at least never name a provider the
+    registry does not have — otherwise the settings panel offers a dead option.
+    """
+    import re
+    from pathlib import Path
+
+    from provider_registry import PROVIDER_CHOICES
+
+    source = (Path(__file__).parent / "frontend" / "src" / "App.jsx").read_text(encoding="utf-8")
+    block = re.search(r"const FALLBACK_PROVIDER_CATALOG = \[(.*?)\n\]", source, re.S)
+    assert block, "FALLBACK_PROVIDER_CATALOG was renamed or removed"
+    fallback_ids = set(re.findall(r"id: '([a-z_]+)'", block.group(1)))
+
+    assert fallback_ids <= set(PROVIDER_CHOICES), (
+        f"fallback lists providers the registry does not offer: {sorted(fallback_ids - set(PROVIDER_CHOICES))}"
+    )

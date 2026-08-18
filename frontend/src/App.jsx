@@ -49,6 +49,15 @@ const MODEL_PROFILES = {
   balanced: { temperature: 0.7, maxNewTokens: 1600 },
   detailed: { temperature: 0.6, maxNewTokens: 2400 },
 }
+const FALLBACK_PROVIDER_CATALOG = [
+  { id: 'openai_compatible', label: 'OpenAI-compatible', models: ['deepseek-chat'], default_model: 'deepseek-chat', default_base_url: '' },
+  { id: 'anthropic', label: 'Anthropic (Claude)', models: ['claude-opus-5', 'claude-sonnet-5'], default_model: 'claude-opus-5', default_base_url: '' },
+  { id: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner'], default_model: 'deepseek-chat', default_base_url: 'https://api.deepseek.com' },
+  { id: 'openai', label: 'OpenAI', models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'], default_model: 'gpt-4.1-mini', default_base_url: '' },
+  { id: 'openrouter', label: 'OpenRouter', models: ['openai/gpt-4.1-mini', 'openai/gpt-4o-mini'], default_model: 'openai/gpt-4.1-mini', default_base_url: 'https://openrouter.ai/api/v1' },
+  { id: 'nvidia_nim', label: 'NVIDIA NIM', models: ['openai/gpt-oss-20b', 'meta/llama-3.1-8b-instruct'], default_model: 'openai/gpt-oss-20b', default_base_url: 'https://integrate.api.nvidia.com/v1' },
+  { id: 'custom', label: 'Custom endpoint', models: ['deepseek-chat'], default_model: 'deepseek-chat', default_base_url: '' },
+]
 
 function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('mindful-theme') || 'system')
@@ -69,6 +78,7 @@ function App() {
     provider: '', model: '', baseUrl: '', apiKey: '',
     useKnowledge: false, useStyle: true, stylePrefix: '', profile: 'balanced',
   })
+  const [providerCatalog, setProviderCatalog] = useState(FALLBACK_PROVIDER_CATALOG)
   const [editableModelField, setEditableModelField] = useState({ baseUrl: false, apiKey: false })
   const [stylePrefixes, setStylePrefixes] = useState([])
   const messageEndRef = useRef(null)
@@ -82,6 +92,11 @@ function App() {
   const hasMessages = messages.length > 0
   const activeTitle = activeConversation?.title || t('newConversation')
   const apiLabel = useMemo(() => (API_BASE_URL || window.location.host).replace(/^https?:\/\//, ''), [])
+  const selectedProvider = useMemo(
+    () => providerCatalog.find((provider) => provider.id === options.provider),
+    [providerCatalog, options.provider],
+  )
+  const modelChoices = selectedProvider?.models || []
 
   function isLikelyBaseUrl(value) {
     const candidate = value.trim()
@@ -145,6 +160,29 @@ function App() {
   }
 
   useEffect(() => { restoreSession() }, [])
+
+  // The catalog names the deployment's own endpoints, so it is session-scoped;
+  // fetching it before sign-in would only 401.
+  useEffect(() => {
+    if (!session) return
+    readJson('/api/v1/model/providers')
+      .then((catalog) => {
+        if (Array.isArray(catalog.providers) && catalog.providers.length) setProviderCatalog(catalog.providers)
+      })
+      .catch(() => {
+        // Fallback catalog keeps the settings panel usable if the request fails.
+      })
+  }, [session])
+
+  function changeProvider(providerId) {
+    const provider = providerCatalog.find((item) => item.id === providerId)
+    setOptions((current) => ({
+      ...current,
+      provider: providerId,
+      model: providerId ? (provider?.default_model || '') : '',
+      baseUrl: providerId ? (provider?.default_base_url || '') : '',
+    }))
+  }
 
   async function selectConversation(conversation) {
     setNotice('')
@@ -409,8 +447,8 @@ function App() {
       <aside className={`settings-panel ${settingsOpen ? 'open' : ''}`} aria-label="Chat preferences">
         <div className="settings-title"><div><PanelRight size={18} /><h2>{t('preferences')}</h2></div><button className="icon-button" title={t('hidePreferences')} onClick={() => setSettingsOpen(false)}><ChevronLeft size={18} /></button></div>
         <p className="settings-copy">{t('settingsCopy')}</p>
-        <label className="model-field">{t('provider')}<select value={options.provider} onChange={(event) => setOptions((current) => ({ ...current, provider: event.target.value }))}><option value="">{t('serverDefault')}</option><option value="openai_compatible">OpenAI-compatible</option><option value="anthropic">Anthropic (Claude)</option><option value="deepseek">DeepSeek</option><option value="openai">OpenAI</option><option value="openrouter">OpenRouter</option><option value="nvidia_nim">NVIDIA NIM</option><option value="custom">Custom endpoint</option></select></label>
-        <label className="model-field">{t('model')}<input value={options.model} placeholder={t('serverDefault')} onChange={(event) => setOptions((current) => ({ ...current, model: event.target.value }))} /></label>
+        <label className="model-field">{t('provider')}<select value={options.provider} onChange={(event) => changeProvider(event.target.value)}><option value="">{t('serverDefault')}</option>{providerCatalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
+        <label className="model-field">{t('model')}<input list="model-options" value={options.model} placeholder={selectedProvider?.default_model || t('serverDefault')} onChange={(event) => setOptions((current) => ({ ...current, model: event.target.value }))} /><datalist id="model-options">{modelChoices.map((model) => <option key={model} value={model} />)}</datalist><small>{modelChoices.length ? t('modelHint') : t('serverDefault')}</small></label>
         <label className="model-field">{t('baseUrl')}<input name="llm-base-url" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.baseUrl} value={options.baseUrl} placeholder={t('optionalEndpoint')} onFocus={() => setEditableModelField((current) => ({ ...current, baseUrl: true }))} onChange={(event) => setOptions((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
         <label className="model-field">{t('apiKey')}<input name="llm-api-key" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.apiKey} value={options.apiKey} placeholder={t('tabOnly')} onFocus={() => setEditableModelField((current) => ({ ...current, apiKey: true }))} onChange={(event) => setOptions((current) => ({ ...current, apiKey: event.target.value }))} /></label>
         <Toggle label={t('knowledgeRetrieval')} description={t('knowledgeHint')} checked={options.useKnowledge} onChange={(useKnowledge) => setOptions((current) => ({ ...current, useKnowledge }))} />

@@ -70,6 +70,18 @@ Run the same checks used by CI before a manual deployment:
 python3 deployment_check.py --skip-dependencies
 ```
 
+After the Docker stack is running on the server, run the runtime health check:
+
+```bash
+python3 deployment_check.py --skip-dependencies --docker-runtime --local-docker-http --public-url https://chat.example.com/ --cloudflared
+```
+
+Replace `chat.example.com` with the production hostname. A Cloudflare Access
+`302` login redirect is considered reachable; public `502`, `503`, or `504`
+responses are treated as deployment failures. The local Docker checks send the
+first `API_TRUSTED_HOSTS` value as the `Host` header, so public-mode trusted-host
+protection does not create a false `Invalid host header` result.
+
 ## 3. Configure Cloudflare Tunnel
 
 In Cloudflare Zero Trust, create or select a named Tunnel and add one published

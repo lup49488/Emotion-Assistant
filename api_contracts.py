@@ -48,6 +48,20 @@ class StatusResponse(HealthResponse):
     api_version: Literal["v1"] = "v1"
 
 
+class ProviderCatalogItem(ContractModel):
+    id: str
+    label: str
+    kind: Literal["local", "openai_compatible", "anthropic"]
+    models: list[str]
+    default_model: str
+    default_base_url: str
+    api_key_envs: list[str]
+
+
+class ProviderCatalogResponse(ContractModel):
+    providers: list[ProviderCatalogItem]
+
+
 class ObservabilitySummaryResponse(ContractModel):
     days: int
     retention_days: int

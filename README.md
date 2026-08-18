@@ -34,12 +34,12 @@ flowchart LR
     Chatbot --> Memory["User memory and conversations<br/>memory_store.py / conversation_store.py"]
     Chatbot --> Knowledge["Knowledge RAG<br/>knowledge_store.py"]
     Chatbot --> Style["Style RAG<br/>style_store.py"]
-    Chatbot --> Providers["Model providers<br/>llm_providers.py"]
+    Chatbot --> Providers["Model providers<br/>provider_registry.py / llm_providers.py"]
 
     Knowledge --> KnowledgeFiles["knowledge_base/documents<br/>knowledge.index + chunks"]
     Style --> StyleFiles["style_base/documents<br/>style.index + chunks"]
     Memory --> Storage["users/ JSON or SQLite<br/>sqlite_store.py"]
-    Providers --> RemoteLLM["OpenAI-compatible APIs<br/>DeepSeek / OpenAI / OpenRouter"]
+    Providers --> RemoteLLM["OpenAI-compatible APIs<br/>NVIDIA NIM / DeepSeek / OpenAI / OpenRouter"]
     Providers --> LocalLLM["Local Hugging Face model"]
 ```
 
@@ -114,6 +114,8 @@ Provider-specific alternatives are also supported:
 - `OPENROUTER_API_KEY` with `LLM_PROVIDER=openrouter`
 - `NVIDIA_NIM_API_KEY` with `LLM_PROVIDER=nvidia_nim`
 - `LLM_PROVIDER=local_hf` to load `CHAT_MODEL_NAME` locally
+
+Provider metadata is centralized in `provider_registry.py`. The API exposes the safe, non-secret provider and model catalog at `GET /api/v1/model/providers`, and the React settings panel uses that catalog so users can choose a known model or type another model id.
 
 ### Anthropic (Claude)
 
@@ -194,6 +196,14 @@ Open `http://127.0.0.1:8080`, then inspect service status with:
 docker compose ps
 docker compose logs -f api
 ```
+
+For a repeatable deployment health check on the server, run:
+
+```bash
+python3 deployment_check.py --skip-dependencies --docker-runtime --local-docker-http --public-url https://chat.serenova.dev/ --cloudflared
+```
+
+The check treats a Cloudflare Access `302` login redirect as reachable, flags public `502/503/504` responses, sends the trusted `Host` header to local `/health`, and warns when recent `cloudflared` logs contain common Tunnel transport timeouts.
 
 The Compose file bind-mounts `data/`, `users/`, `exports/`, `logs/`, `knowledge_base/`, and `style_base/`, so rebuilding a container does not remove user data or RAG content. Do not commit `.env`.
 

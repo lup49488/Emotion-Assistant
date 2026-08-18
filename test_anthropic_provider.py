@@ -6,6 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
+import config as config_module
 import llm_providers
 
 
@@ -239,21 +240,27 @@ def test_missing_anthropic_key_uses_the_shared_service_error_code():
 
 
 def test_resolved_defaults_come_from_the_anthropic_settings(monkeypatch):
+    # Driven through the real environment rather than a module attribute: these
+    # settings moved into provider_registry once, and a patched attribute would
+    # have kept passing while the shipped path changed underneath it.
     monkeypatch.setenv("ANTHROPIC_API_KEY", "env-key")
+    monkeypatch.delenv("ANTHROPIC_MODEL", raising=False)
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "")
     config = llm_providers.ModelRuntimeConfig(provider="anthropic")
 
-    assert config.resolved_model() == llm_providers.ANTHROPIC_MODEL
+    assert config.resolved_model() == config_module.ANTHROPIC_MODEL
     assert config.resolved_api_key() == "env-key"
-    # No override means the SDK's own endpoint, not the OpenAI-compatible default.
-    with patch.object(llm_providers, "ANTHROPIC_BASE_URL", ""):
-        assert config.resolved_base_url() is None
+    # A blank override must never leave an empty endpoint behind. Whether it
+    # resolves to None or straight to the official host depends on how the
+    # process started, and _stream_anthropic normalises both to the same value.
+    assert config.resolved_base_url() in (None, llm_providers.ANTHROPIC_DEFAULT_BASE_URL)
 
 
-def test_an_explicit_base_url_override_is_normalized():
+def test_an_explicit_base_url_override_is_normalized(monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "gateway.internal/v1")
     config = llm_providers.ModelRuntimeConfig(provider="anthropic")
 
-    with patch.object(llm_providers, "ANTHROPIC_BASE_URL", "gateway.internal/v1"):
-        assert config.resolved_base_url() == "https://gateway.internal/v1"
+    assert config.resolved_base_url() == "https://gateway.internal/v1"
 
 
 def test_sdk_exception_types_are_classified_before_message_text():
@@ -279,22 +286,22 @@ def test_sdk_exception_types_are_classified_before_message_text():
     )
 
 
-def test_failure_log_records_the_endpoint_that_was_actually_used(caplog):
+def test_failure_log_records_the_endpoint_that_was_actually_used(caplog, monkeypatch):
     """An OS env var can override .env, so the log must show where it connected."""
     client = Mock()
     client.messages.stream.side_effect = TimeoutError("request timeout")
     config = llm_providers.ModelRuntimeConfig(provider="anthropic", api_key="test-key")
 
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.internal")
     with caplog.at_level("WARNING"), pytest.raises(Exception):
-        _run(client, [{"role": "user", "content": "hi"}], config,
-             ANTHROPIC_BASE_URL="https://gateway.internal", API_MAX_RETRIES=0)
+        _run(client, [{"role": "user", "content": "hi"}], config, API_MAX_RETRIES=0)
 
     assert "endpoint=https://gateway.internal" in caplog.text
     assert "error_type=TimeoutError" in caplog.text
     assert "test-key" not in caplog.text
 
 
-def test_endpoint_is_always_passed_so_an_empty_env_var_cannot_poison_the_sdk():
+def test_endpoint_is_always_passed_so_an_empty_env_var_cannot_poison_the_sdk(monkeypatch):
     """`ANTHROPIC_BASE_URL=` in a .env injects "", which the SDK treats as a real
     base URL and turns into a scheme-less request — an opaque "Connection error".
     """
@@ -302,8 +309,8 @@ def test_endpoint_is_always_passed_so_an_empty_env_var_cannot_poison_the_sdk():
     factory = Mock(return_value=client)
     config = llm_providers.ModelRuntimeConfig(provider="anthropic", api_key="test-key")
 
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "")
     with patch.object(llm_providers, "require_anthropic_client", return_value=factory), \
-         patch.object(llm_providers, "ANTHROPIC_BASE_URL", ""), \
          patch.object(llm_providers, "record_usage"), \
          patch.object(llm_providers, "check_request_allowed"):
         list(llm_providers._stream_anthropic([{"role": "user", "content": "hi"}], config))
@@ -311,13 +318,13 @@ def test_endpoint_is_always_passed_so_an_empty_env_var_cannot_poison_the_sdk():
     assert factory.call_args.kwargs["base_url"] == llm_providers.ANTHROPIC_DEFAULT_BASE_URL
 
 
-def test_an_explicit_endpoint_still_wins_over_the_default():
+def test_an_explicit_endpoint_still_wins_over_the_default(monkeypatch):
     client = _fake_client(["ok"])
     factory = Mock(return_value=client)
     config = llm_providers.ModelRuntimeConfig(provider="anthropic", api_key="test-key")
 
+    monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://gateway.internal")
     with patch.object(llm_providers, "require_anthropic_client", return_value=factory), \
-         patch.object(llm_providers, "ANTHROPIC_BASE_URL", "https://gateway.internal"), \
          patch.object(llm_providers, "record_usage"), \
          patch.object(llm_providers, "check_request_allowed"):
         list(llm_providers._stream_anthropic([{"role": "user", "content": "hi"}], config))

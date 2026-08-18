@@ -34,12 +34,12 @@ flowchart LR
     Chatbot --> Memory["用户记忆与会话<br/>memory_store.py / conversation_store.py"]
     Chatbot --> Knowledge["知识库 RAG<br/>knowledge_store.py"]
     Chatbot --> Style["风格 RAG<br/>style_store.py"]
-    Chatbot --> Providers["模型提供方适配<br/>llm_providers.py"]
+    Chatbot --> Providers["模型提供方适配<br/>provider_registry.py / llm_providers.py"]
 
     Knowledge --> KnowledgeFiles["knowledge_base/documents<br/>knowledge.index + chunks"]
     Style --> StyleFiles["style_base/documents<br/>style.index + chunks"]
     Memory --> Storage["users/ JSON 或 SQLite<br/>sqlite_store.py"]
-    Providers --> RemoteLLM["OpenAI-compatible API<br/>DeepSeek / OpenAI / OpenRouter"]
+    Providers --> RemoteLLM["OpenAI-compatible API<br/>NVIDIA NIM / DeepSeek / OpenAI / OpenRouter"]
     Providers --> LocalLLM["本地 Hugging Face 模型"]
 ```
 
@@ -114,6 +114,8 @@ NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
 - `OPENROUTER_API_KEY` 搭配 `LLM_PROVIDER=openrouter`
 - `NVIDIA_NIM_API_KEY` 搭配 `LLM_PROVIDER=nvidia_nim`
 - `LLM_PROVIDER=local_hf` 使用本地 `CHAT_MODEL_NAME`
+
+Provider 元数据集中维护在 `provider_registry.py`。API 会通过 `GET /api/v1/model/providers` 暴露不含密钥的 Provider 与模型目录；React 设置面板会读取这个目录，因此可以选择常用模型，也可以手动输入其他模型 ID。
 
 ### Anthropic（Claude）
 
@@ -194,6 +196,14 @@ docker compose up --build -d
 docker compose ps
 docker compose logs -f api
 ```
+
+在服务器上可以运行可重复的部署健康检查：
+
+```bash
+python3 deployment_check.py --skip-dependencies --docker-runtime --local-docker-http --public-url https://chat.serenova.dev/ --cloudflared
+```
+
+这个检查会把 Cloudflare Access 的 `302` 登录跳转视为可达；会标出公网 `502/503/504`；检查本机 `/health` 时会自动带上可信 `Host`；也会扫描最近 `cloudflared` 日志里常见的 Tunnel 传输超时。
 
 Compose 会将 `data/`、`users/`、`exports/`、`logs/`、`knowledge_base/` 和 `style_base/` 挂载到宿主机，因此重建容器不会删除用户数据或 RAG 内容。请勿提交 `.env`。
 

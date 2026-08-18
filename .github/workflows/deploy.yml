@@ -99,11 +99,15 @@ jobs:
               echo "Checking Docker services..."
               docker compose ps
 
-              echo "Checking local HTTP endpoints..."
+              echo "Running deployment health checks..."
               app_host="$(grep -E '^API_TRUSTED_HOSTS=' .env | head -n 1 | cut -d= -f2- | cut -d, -f1)"
               test -n "$app_host"
-              curl --fail --silent --show-error --header "Host: ${app_host}" http://127.0.0.1:8080/health >/dev/null
-              curl --fail --silent --show-error --header "Host: ${app_host}" http://127.0.0.1:8080/api/v1/status >/dev/null
+              python3 deployment_check.py \
+                --skip-dependencies \
+                --docker-runtime \
+                --local-docker-http \
+                --public-url "https://${app_host}/" \
+                --cloudflared
 
               echo "Deployment completed."
           EOF

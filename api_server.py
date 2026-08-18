@@ -57,6 +57,7 @@ from api_contracts import (
     PrivacyDeletionResponse,
     PrivacyDeleteRequest,
     PrivacyResponse,
+    ProviderCatalogResponse,
     RagEvaluationRequest,
     RagEvaluationResponse,
     RagEvidenceStatus,
@@ -110,6 +111,7 @@ from model_warmup import start_api_background_warmup, warmup_status
 from observability import chat_finished, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
 from observability_store import observability_summary, record_http_event
 from operations_store import operations_dashboard
+from provider_registry import provider_catalog
 from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from rag_feedback_store import create_citation_trace, feedback_summary, submit_feedback
@@ -458,6 +460,17 @@ def health() -> dict[str, Any]:
 def api_status() -> dict[str, Any]:
     """Versioned operational status for reverse proxies and monitoring."""
     return {**_health_payload(), "api_version": "v1"}
+
+
+@app.get("/api/v1/model/providers", response_model=ProviderCatalogResponse)
+def model_providers(_: CurrentUser) -> dict[str, object]:
+    """Provider and model choices for the signed-in settings panel.
+
+    No credentials are returned, but default_base_url comes from the deployment's
+    own configuration and can name an internal gateway — so this stays behind the
+    session like every other configuration view.
+    """
+    return provider_catalog()
 
 
 @app.get("/api/v1/observability/summary", response_model=ObservabilitySummaryResponse)

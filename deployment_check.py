@@ -11,6 +11,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 from env_loader import load_project_env_if_enabled
@@ -24,6 +25,12 @@ REQUIRED_PROJECT_FILES = (
 )
 REQUIRED_MODULES = ("fastapi", "gradio", "numpy", "openai", "pytest")
 FRONTEND_DIR = BASE_DIR / "frontend"
+TUNNEL_WARNING_PATTERNS = (
+    "timeout: no recent network activity",
+    "failed to accept incoming stream",
+    "failed to dial a quic connection",
+    "no more connections active",
+)
 
 
 class CheckReporter:
@@ -178,6 +185,159 @@ def check_runtime_configuration(reporter: CheckReporter) -> None:
         reporter.warn("API_COOKIE_SECURE should be true when serving the application through HTTPS.")
 
 
+def _run_command(command: list[str], timeout_seconds: int = 20) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        command,
+        cwd=BASE_DIR,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=timeout_seconds,
+    )
+
+
+def _first_trusted_host() -> str:
+    trusted_hosts = os.getenv("API_TRUSTED_HOSTS", "localhost,127.0.0.1,[::1]")
+    return trusted_hosts.split(",", 1)[0].strip() or "localhost"
+
+
+def _request(
+    url: str,
+    *,
+    host: str | None = None,
+    method: str = "GET",
+    timeout_seconds: int = 8,
+    follow_redirects: bool = True,
+) -> tuple[int, str]:
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+            return None
+
+    headers = {"User-Agent": "emotion-assistant-deployment-check/1.0"}
+    if host:
+        headers["Host"] = host
+    request = urllib.request.Request(url, headers=headers, method=method)
+    opener = urllib.request.build_opener() if follow_redirects else urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener.open(request, timeout=timeout_seconds) as response:
+            return int(response.status), response.headers.get("location", "")
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), exc.headers.get("location", "")
+
+
+def check_docker_runtime(reporter: CheckReporter) -> None:
+    """Check the running Compose services, if Docker is available on this host."""
+    try:
+        result = _run_command(["docker", "compose", "ps", "--format", "json"], timeout_seconds=20)
+    except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
+        reporter.fail(f"Docker Compose status check could not run: {exc}")
+        return
+    if result.returncode:
+        reporter.fail(f"Docker Compose status check failed: {(result.stderr or result.stdout).strip()}")
+        return
+
+    try:
+        parsed = json.loads(result.stdout)
+        services = parsed if isinstance(parsed, list) else [parsed]
+    except json.JSONDecodeError:
+        services = []
+        for line in result.stdout.splitlines():
+            if line.strip():
+                try:
+                    services.append(json.loads(line))
+                except json.JSONDecodeError:
+                    reporter.fail("Docker Compose status output was not valid JSON.")
+                    return
+    by_service = {str(item.get("Service") or item.get("Name")): item for item in services}
+    api = by_service.get("api")
+    web = by_service.get("web")
+    if not api or not web:
+        reporter.fail("Docker Compose must have running api and web services.")
+        return
+
+    api_health = str(api.get("Health") or api.get("State") or "").lower()
+    api_state = str(api.get("State") or "").lower()
+    web_state = str(web.get("State") or "").lower()
+    if "running" not in api_state or ("healthy" not in api_health and api_health not in {"", "running"}):
+        reporter.fail(f"API service is not healthy: state={api.get('State')} health={api.get('Health')}")
+    else:
+        reporter.ok("Docker API service is running and healthy")
+    if "running" not in web_state:
+        reporter.fail(f"Web service is not running: state={web.get('State')}")
+    else:
+        reporter.ok("Docker web service is running")
+
+
+def check_local_docker_http(reporter: CheckReporter) -> None:
+    """Check the loopback Nginx origin exactly as Cloudflare Tunnel should reach it."""
+    host = _first_trusted_host()
+    checks = (
+        ("http://127.0.0.1:8080/", "HEAD", {200, 304}),
+        ("http://127.0.0.1:8080/health", "GET", {200}),
+        ("http://127.0.0.1:8080/api/v1/status", "GET", {200}),
+    )
+    for url, method, expected in checks:
+        try:
+            status, _ = _request(url, host=host, method=method)
+        except OSError as exc:
+            reporter.fail(f"Local Docker HTTP check failed for {url}: {exc}")
+            continue
+        if status in expected:
+            reporter.ok(f"Local Docker endpoint {url} returned HTTP {status}")
+        else:
+            reporter.fail(f"Local Docker endpoint {url} returned HTTP {status}; expected {sorted(expected)}.")
+
+
+def check_public_http(reporter: CheckReporter, public_url: str) -> None:
+    """Check the public hostname without treating Cloudflare Access redirects as failures."""
+    url = public_url.rstrip("/") + "/"
+    try:
+        status, location = _request(url, method="HEAD", follow_redirects=False)
+    except OSError as exc:
+        reporter.fail(f"Public HTTPS check failed for {url}: {exc}")
+        return
+    if status in {200, 204, 301, 302, 303, 307, 308}:
+        if "cloudflareaccess.com" in location:
+            reporter.ok("Public hostname reaches Cloudflare Access and returns its login redirect")
+        else:
+            reporter.ok(f"Public hostname returned HTTP {status}")
+    elif status in {502, 503, 504}:
+        reporter.fail(f"Public hostname returned HTTP {status}; check cloudflared, Tunnel ingress, and local origin.")
+    else:
+        reporter.warn(f"Public hostname returned unexpected HTTP {status}.")
+
+
+def check_cloudflared(reporter: CheckReporter) -> None:
+    try:
+        status = _run_command(["systemctl", "is-active", "cloudflared"], timeout_seconds=10)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        reporter.warn("systemctl is unavailable; skipping cloudflared service status.")
+        return
+    if status.returncode:
+        reporter.fail(f"cloudflared service is not active: {(status.stdout or status.stderr).strip()}")
+        return
+    reporter.ok("cloudflared service is active")
+
+    try:
+        logs = _run_command(["journalctl", "-u", "cloudflared", "-n", "120", "--no-pager"], timeout_seconds=20)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        reporter.warn("journalctl is unavailable; skipping cloudflared log scan.")
+        return
+    if logs.returncode:
+        reporter.warn(f"Could not read recent cloudflared logs: {(logs.stderr or logs.stdout).strip()}")
+        return
+    recent_logs = (logs.stdout + "\n" + logs.stderr).lower()
+    matches = [pattern for pattern in TUNNEL_WARNING_PATTERNS if pattern in recent_logs]
+    if matches:
+        reporter.warn(
+            "Recent cloudflared logs contain Tunnel transport warnings: "
+            + ", ".join(matches)
+            + ". If 502 recurs, upgrade cloudflared or test HTTP/2 transport."
+        )
+    else:
+        reporter.ok("Recent cloudflared logs do not show common Tunnel transport failures")
+
+
 def check_frontend_build(reporter: CheckReporter) -> None:
     if not (FRONTEND_DIR / "package.json").is_file():
         reporter.fail("frontend/package.json is missing.")
@@ -304,6 +464,10 @@ def main() -> int:
     parser.add_argument("--tests", action="store_true", help="Run the full pytest suite.")
     parser.add_argument("--frontend-build", action="store_true", help="Run frontend lint and production build.")
     parser.add_argument("--skip-dependencies", action="store_true", help="Skip Python dependency discovery.")
+    parser.add_argument("--docker-runtime", action="store_true", help="Check running Docker Compose services.")
+    parser.add_argument("--local-docker-http", action="store_true", help="Check the local Docker Nginx origin on 127.0.0.1:8080.")
+    parser.add_argument("--public-url", help="Check a public HTTPS URL; Cloudflare Access redirects count as reachable.")
+    parser.add_argument("--cloudflared", action="store_true", help="Check cloudflared service state and recent Tunnel warnings.")
     args = parser.parse_args()
 
     reporter = CheckReporter()
@@ -321,6 +485,14 @@ def main() -> int:
         smoke_check_web(reporter)
     if args.smoke_api:
         smoke_check_api(reporter)
+    if args.docker_runtime:
+        check_docker_runtime(reporter)
+    if args.local_docker_http:
+        check_local_docker_http(reporter)
+    if args.public_url:
+        check_public_http(reporter, args.public_url)
+    if args.cloudflared:
+        check_cloudflared(reporter)
 
     print(f"\nCompleted with {len(reporter.failures)} failure(s) and {len(reporter.warnings)} warning(s).")
     return 1 if reporter.failures else 0
