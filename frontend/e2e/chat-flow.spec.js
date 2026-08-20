@@ -129,13 +129,20 @@ test('mood notes retain leading indentation and paragraph breaks in the check-in
   await expect(note).toHaveCSS('white-space', 'pre-wrap')
 })
 
-test('mobile navigation has no horizontal overflow and applies theme changes', async ({ page }) => {
+test('mobile sidebar navigation has no horizontal overflow and applies theme changes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)
 
-  await expect(page.locator('.mobile-workspace-nav')).toBeVisible()
-  await page.locator('.mobile-preference').first().selectOption('dark')
+  await expect(page.locator('.mobile-app-bar')).toBeVisible()
+  await page.getByTitle('Open sidebar').click()
+  await expect(page.locator('.mobile-sidebar')).toBeVisible()
+  await expect(page.locator('.mobile-sidebar').getByRole('button', { name: 'Personal data' })).toBeVisible()
+  await expect(page.locator('.mobile-sidebar').getByText('Conversations')).toBeVisible()
+  await page.locator('.mobile-sidebar .preferences-controls select').first().selectOption('dark')
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark')
+  await page.locator('.mobile-sidebar').getByRole('button', { name: 'Personal data' }).click()
+  await expect(page.locator('.mobile-sidebar')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Personal data' })).toBeVisible()
   const widths = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }))
   expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth + 1)
 })

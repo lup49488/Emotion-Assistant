@@ -1,6 +1,6 @@
 const messages = {
   en: {
-    chat: 'Chat', personalData: 'Personal data', mood: 'Mood check-in', knowledge: 'Knowledge & RAG', operations: 'Operations', privacy: 'Privacy & export',
+    chat: 'Chat', personalData: 'Personal data', mood: 'Mood check-in', knowledge: 'Knowledge & RAG', operations: 'Operations', privacy: 'Privacy & export', workspaceNavigation: 'Workspace navigation', openSidebar: 'Open sidebar', closeSidebar: 'Close sidebar',
     newChat: 'New chat', conversations: 'Conversations', noChats: 'No saved chats yet.', logout: 'Log out', renameConversation: 'Rename conversation', deleteConversation: 'Delete conversation', deleteConversationConfirm: 'Delete this conversation permanently?', conversationTitle: 'Conversation title', saveTitle: 'Save title', cancel: 'Cancel',
     theme: 'Theme', language: 'Language', light: 'Light', dark: 'Dark', system: 'System', english: 'English', chinese: 'Chinese',
     newConversation: 'New conversation', connected: 'Connected to', preferences: 'Preferences', hidePreferences: 'Hide preferences',
@@ -21,7 +21,7 @@ const messages = {
   },
   zh: {
     memorySaveMode: '记忆保存方式', memorySaveModeLabel: '对话记忆策略', memorySaveAuto: '自动保存', memorySaveConfirm: '询问后保存', memorySaveOff: '不自动保存', memorySaveMode_auto: '对话中符合条件的记忆会自动保存。', memorySaveMode_confirm: '符合条件的记忆会先进入待确认队列。', memorySaveMode_off: '不自动提取对话记忆；仍可手动管理个人数据。', pendingMemories: '待确认记忆', noPendingMemories: '暂无待确认的记忆候选。', confirmMemory: '确认写入', discardMemory: '丢弃', memoryEventPending: '等待确认', memoryEventConfirmed: '已确认', memoryEventRejected: '已丢弃',
-    chat: '聊天', personalData: '个人数据', mood: '心情记录', knowledge: '知识库与 RAG', operations: '运维', privacy: '隐私与导出',
+    chat: '聊天', personalData: '个人数据', mood: '心情记录', knowledge: '知识库与 RAG', operations: '运维', privacy: '隐私与导出', workspaceNavigation: '工作区导航', openSidebar: '打开侧边栏', closeSidebar: '关闭侧边栏',
     newChat: '新建对话', conversations: '历史会话', noChats: '暂无已保存的会话。', logout: '退出登录', renameConversation: '重命名对话', deleteConversation: '删除对话', deleteConversationConfirm: '确定永久删除此对话吗？', conversationTitle: '对话标题', saveTitle: '保存标题', cancel: '取消',
     theme: '主题', language: '语言', light: '浅色', dark: '深色', system: '跟随系统', english: 'English', chinese: '中文',
     newConversation: '新建对话', connected: '已连接至', preferences: '模型设置', hidePreferences: '收起设置',

@@ -24,6 +24,7 @@ import {
   ThumbsUp,
   Trash2,
   Languages,
+  Menu,
   SunMoon,
   X,
 } from 'lucide-react'
@@ -74,6 +75,7 @@ function App() {
   const [isSlow, setIsSlow] = useState(false)
   const [notice, setNotice] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(() => window.innerWidth > 1060)
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [options, setOptions] = useState({
     provider: '', model: '', baseUrl: '', apiKey: '',
     useKnowledge: false, useStyle: true, stylePrefix: '', profile: 'balanced',
@@ -414,24 +416,82 @@ function App() {
 
   if (!session) return <LoginScreen onSuccess={restoreSession} t={t} />
 
-  return (
-    <main className={`app-shell ${settingsOpen ? 'settings-open' : 'settings-closed'}`}>
-      <aside className="sidebar" aria-label="Workspace navigation">
-        <div className="brand"><Sparkles size={18} aria-hidden="true" /><span>{ASSISTANT_NAME}</span></div>
-        <nav className="workspace-nav">{visibleNavigation.map(({ id, label, icon: Icon }) => <button key={id} className={`workspace-link ${activeView === id ? 'selected' : ''}`} onClick={() => setActiveView(id)}><Icon size={16} /><span>{t(label)}</span></button>)}</nav>
-        {activeView === 'chat' && <><button className="new-chat" onClick={createConversation}><CirclePlus size={18} />{t('newChat')}</button><div className="conversation-list"><p className="section-label">{t('conversations')}</p>{conversations.length === 0 && <p className="empty-list">{t('noChats')}</p>}{conversations.map((conversation) => editingConversationId === conversation.id ? (
-          <form className="conversation-edit" key={conversation.id} onSubmit={(event) => renameConversation(event, conversation)}><input value={conversationTitleDraft} onChange={(event) => setConversationTitleDraft(event.target.value)} aria-label={t('conversationTitle')} autoFocus /><button className="conversation-action" title={t('saveTitle')}><Check size={15} /></button><button className="conversation-action" type="button" title={t('cancel')} onClick={() => setEditingConversationId(null)}><X size={15} /></button></form>
-        ) : <div className={`conversation-row ${conversation.id === activeConversation?.id ? 'selected' : ''}`} key={conversation.id}><button className="conversation" onClick={() => selectConversation(conversation)}><MessageSquare size={15} /><span>{conversation.title}</span></button><div className="conversation-actions"><button className="conversation-action" title={t('renameConversation')} onClick={(event) => beginConversationRename(event, conversation)}><Pencil size={15} /></button><button className="conversation-action delete-conversation" title={t('deleteConversation')} onClick={(event) => removeConversation(event, conversation)} disabled={isSending}><Trash2 size={15} /></button></div></div>
-        )}</div></>}
-        {activeView !== 'chat' && <div className="sidebar-space" />}
-        <PreferencesControls theme={theme} setTheme={setTheme} locale={locale} setLocale={setLocale} t={t} />
-        <div className="sidebar-footer">
-          <div className="identity"><span className="avatar">{session.user_id.slice(0, 1).toUpperCase()}</span><span>{session.user_id}</span></div>
-          <button className="icon-button" title={t('logout')} onClick={logout}><LogOut size={17} /></button>
-        </div>
-      </aside>
+  const activeNavigationItem = visibleNavigation.find((item) => item.id === activeView)
+  const mobileTitle = activeView === 'chat' ? activeTitle : t(activeNavigationItem?.label || 'chat')
+  const navigateWorkspace = (viewId) => {
+    setActiveView(viewId)
+    setMobileSidebarOpen(false)
+  }
+  const startConversation = async () => {
+    await createConversation()
+    setActiveView('chat')
+    setMobileSidebarOpen(false)
+  }
+  const openConversation = async (conversation) => {
+    await selectConversation(conversation)
+    setActiveView('chat')
+    setMobileSidebarOpen(false)
+  }
 
-      <nav className="mobile-workspace-nav" aria-label="Workspace navigation"><div className="mobile-tab-list">{visibleNavigation.map(({ id, label, icon: Icon }) => <button key={id} className={activeView === id ? 'selected' : ''} onClick={() => setActiveView(id)}><Icon size={15} /><span>{t(label)}</span></button>)}</div><div className="mobile-preference-row"><select className="mobile-preference" aria-label={t('theme')} value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select><select className="mobile-preference" aria-label={t('language')} value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">EN</option><option value="zh">中文</option></select></div></nav>
+  return (
+    <main className={`app-shell ${settingsOpen ? 'settings-open' : 'settings-closed'} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''}`}>
+      <WorkspaceSidebar
+        className="sidebar desktop-sidebar"
+        activeConversation={activeConversation}
+        activeView={activeView}
+        beginConversationRename={beginConversationRename}
+        conversationTitleDraft={conversationTitleDraft}
+        conversations={conversations}
+        editingConversationId={editingConversationId}
+        isSending={isSending}
+        locale={locale}
+        logout={logout}
+        navigateWorkspace={navigateWorkspace}
+        onCloseMobile={() => setMobileSidebarOpen(false)}
+        removeConversation={removeConversation}
+        renameConversation={renameConversation}
+        session={session}
+        setConversationTitleDraft={setConversationTitleDraft}
+        setEditingConversationId={setEditingConversationId}
+        setLocale={setLocale}
+        setTheme={setTheme}
+        startConversation={startConversation}
+        openConversation={openConversation}
+        t={t}
+        theme={theme}
+        visibleNavigation={visibleNavigation}
+      />
+      {mobileSidebarOpen && <>
+        <button className="mobile-sidebar-backdrop" aria-label={t('closeSidebar')} onClick={() => setMobileSidebarOpen(false)} />
+        <WorkspaceSidebar
+          className="sidebar mobile-sidebar open"
+          activeConversation={activeConversation}
+          activeView={activeView}
+          beginConversationRename={beginConversationRename}
+          conversationTitleDraft={conversationTitleDraft}
+          conversations={conversations}
+          editingConversationId={editingConversationId}
+          isSending={isSending}
+          locale={locale}
+          logout={logout}
+          navigateWorkspace={navigateWorkspace}
+          onCloseMobile={() => setMobileSidebarOpen(false)}
+          removeConversation={removeConversation}
+          renameConversation={renameConversation}
+          session={session}
+          setConversationTitleDraft={setConversationTitleDraft}
+          setEditingConversationId={setEditingConversationId}
+          setLocale={setLocale}
+          setTheme={setTheme}
+          startConversation={startConversation}
+          openConversation={openConversation}
+          t={t}
+          theme={theme}
+          visibleNavigation={visibleNavigation}
+        />
+      </>}
+
+      <div className="mobile-app-bar"><button className="icon-button" title={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={19} /></button><span>{mobileTitle}</span></div>
       {activeView === 'chat' ? <><section className="chat-panel">
         <header className="chat-header"><div><h1>{activeTitle}</h1><p>{t('connected')} {apiLabel}</p></div><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('preferences')} onClick={() => setSettingsOpen((open) => !open)}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></header>
         <div className="messages" aria-live="polite">
@@ -458,6 +518,65 @@ function App() {
         <div className="contract-note"><span>API v1</span><p>Cookie session and CSRF protection are active.</p></div>
       </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
     </main>
+  )
+}
+
+function WorkspaceSidebar({
+  activeConversation,
+  activeView,
+  beginConversationRename,
+  className,
+  conversations,
+  conversationTitleDraft,
+  editingConversationId,
+  isSending,
+  locale,
+  logout,
+  navigateWorkspace,
+  onCloseMobile,
+  openConversation,
+  removeConversation,
+  renameConversation,
+  session,
+  setConversationTitleDraft,
+  setEditingConversationId,
+  setLocale,
+  setTheme,
+  startConversation,
+  t,
+  theme,
+  visibleNavigation,
+}) {
+  return (
+    <aside className={className} aria-label={t('workspaceNavigation')}>
+      <div className="sidebar-title-row">
+        <div className="brand"><Sparkles size={18} aria-hidden="true" /><span>{ASSISTANT_NAME}</span></div>
+        <button className="icon-button mobile-sidebar-close" title={t('closeSidebar')} onClick={onCloseMobile}><X size={17} /></button>
+      </div>
+      <nav className="workspace-nav">
+        {visibleNavigation.map(({ id, label, icon: Icon }) => (
+          <button key={id} className={`workspace-link ${activeView === id ? 'selected' : ''}`} onClick={() => navigateWorkspace(id)}><Icon size={16} /><span>{t(label)}</span></button>
+        ))}
+      </nav>
+      <button className="new-chat" onClick={startConversation}><CirclePlus size={18} />{t('newChat')}</button>
+      <div className="conversation-list">
+        <p className="section-label">{t('conversations')}</p>
+        {conversations.length === 0 && <p className="empty-list">{t('noChats')}</p>}
+        {conversations.map((conversation) => editingConversationId === conversation.id ? (
+          <form className="conversation-edit" key={conversation.id} onSubmit={(event) => renameConversation(event, conversation)}><input value={conversationTitleDraft} onChange={(event) => setConversationTitleDraft(event.target.value)} aria-label={t('conversationTitle')} autoFocus /><button className="conversation-action" title={t('saveTitle')}><Check size={15} /></button><button className="conversation-action" type="button" title={t('cancel')} onClick={() => setEditingConversationId(null)}><X size={15} /></button></form>
+        ) : (
+          <div className={`conversation-row ${conversation.id === activeConversation?.id ? 'selected' : ''}`} key={conversation.id}>
+            <button className="conversation" onClick={() => openConversation(conversation)}><MessageSquare size={15} /><span>{conversation.title}</span></button>
+            <div className="conversation-actions"><button className="conversation-action" title={t('renameConversation')} onClick={(event) => beginConversationRename(event, conversation)}><Pencil size={15} /></button><button className="conversation-action delete-conversation" title={t('deleteConversation')} onClick={(event) => removeConversation(event, conversation)} disabled={isSending}><Trash2 size={15} /></button></div>
+          </div>
+        ))}
+      </div>
+      <PreferencesControls theme={theme} setTheme={setTheme} locale={locale} setLocale={setLocale} t={t} />
+      <div className="sidebar-footer">
+        <div className="identity"><span className="avatar">{session.user_id.slice(0, 1).toUpperCase()}</span><span>{session.user_id}</span></div>
+        <button className="icon-button" title={t('logout')} onClick={logout}><LogOut size={17} /></button>
+      </div>
+    </aside>
   )
 }
 
