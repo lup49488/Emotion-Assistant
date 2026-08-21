@@ -32,6 +32,15 @@ test('login, cited reply, feedback, and regeneration work together', async ({ pa
   await expect(page.getByText('Regenerated answer')).toBeVisible()
 })
 
+test('English welcome prompts submit their localized message immediately', async ({ page }) => {
+  await signIn(page)
+
+  await page.getByRole('button', { name: 'Talk through a feeling' }).click()
+  await expect(page.getByText('I feel a little anxious today. Could you help me sort through it?')).toBeVisible()
+  await expect(page.getByText('Grounded answer from the knowledge base.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Talk through a feeling' })).toHaveCount(0)
+})
+
 test('assistant replies render HTML line breaks and LaTeX delimiters safely', async ({ page }) => {
   await signIn(page)
   await sendMessage(page, 'Show markdown')

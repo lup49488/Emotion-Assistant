@@ -119,12 +119,23 @@ NEGATIVE_EMOTIONS = frozenset({"sadness", "fear", "anger", "anxiety"})
 # Optional local multilingual NLI supplement for the rule-based safety layer.
 # It is disabled by default because the model adds a sizeable CPU/RAM footprint.
 SAFETY_SEMANTIC_ENABLED = os.getenv("SAFETY_SEMANTIC_ENABLED", "false").lower() == "true"
-SAFETY_SEMANTIC_PRELOAD = os.getenv("SAFETY_SEMANTIC_PRELOAD", "true").lower() == "true"
+# Keep the optional classifier lazy by default. This matters on 4 GB hosts where
+# the embedding model and API process already consume a meaningful RAM share.
+SAFETY_SEMANTIC_PRELOAD = os.getenv("SAFETY_SEMANTIC_PRELOAD", "false").lower() == "true"
 SAFETY_SEMANTIC_MODEL_NAME = os.getenv(
     "SAFETY_SEMANTIC_MODEL_NAME", "MoritzLaurer/mDeBERTa-v3-base-mnli-xnli"
 )
 SAFETY_SEMANTIC_THRESHOLD = min(
     1.0, max(0.0, _env_float("SAFETY_SEMANTIC_THRESHOLD", 0.78))
+)
+SAFETY_SEMANTIC_MIN_AVAILABLE_MB = max(
+    0, _env_int("SAFETY_SEMANTIC_MIN_AVAILABLE_MB", 1800)
+)
+SAFETY_SEMANTIC_IDLE_UNLOAD_SECONDS = max(
+    0, _env_int("SAFETY_SEMANTIC_IDLE_UNLOAD_SECONDS", 600)
+)
+SAFETY_SEMANTIC_LOAD_RETRY_SECONDS = max(
+    0, _env_int("SAFETY_SEMANTIC_LOAD_RETRY_SECONDS", 300)
 )
 
 DEFAULT_LLM_PROVIDER = _env_str("LLM_PROVIDER", "nvidia_nim")

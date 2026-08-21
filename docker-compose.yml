@@ -35,6 +35,9 @@ services:
       - ./style_base:/app/style_base
     expose:
       - "8000"
+    # Keep enough headroom on a 4 GB VPS for Docker, cloudflared and the OS.
+    # Override in .env after measuring the host under realistic traffic.
+    mem_limit: ${API_MEMORY_LIMIT:-3g}
     healthcheck:
       test: ["CMD", "python", "-c", "import os; from urllib.request import Request, urlopen; host=(os.getenv('API_TRUSTED_HOSTS') or 'localhost').split(',')[0].strip() or 'localhost'; urlopen(Request('http://127.0.0.1:8000/health', headers={'Host': host}), timeout=3)"]
       interval: 20s
@@ -52,4 +55,5 @@ services:
         condition: service_healthy
     ports:
       - "127.0.0.1:8080:80"
+    mem_limit: ${WEB_MEMORY_LIMIT:-256m}
     restart: unless-stopped

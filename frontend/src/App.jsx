@@ -253,9 +253,11 @@ function App() {
     }
   }
 
-  async function sendMessage(retryIndex = null) {
+  async function sendMessage(retryIndex = null, directMessage = null) {
     const retryMessageIndex = Number.isInteger(retryIndex) ? retryIndex : null
-    const text = retryMessageIndex === null ? draft.trim() : String(messages[retryMessageIndex - 1]?.content || '').trim()
+    const text = retryMessageIndex === null
+      ? String(directMessage ?? draft).trim()
+      : String(messages[retryMessageIndex - 1]?.content || '').trim()
     if (!text || isSending) return
     if (!isLikelyBaseUrl(options.baseUrl)) {
       setOptions((current) => ({ ...current, baseUrl: '', apiKey: '' }))
@@ -495,7 +497,7 @@ function App() {
       {activeView === 'chat' ? <><section className="chat-panel">
         <header className="chat-header"><div><h1>{activeTitle}</h1><p>{t('connected')} {apiLabel}</p></div><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('preferences')} onClick={() => setSettingsOpen((open) => !open)}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></header>
         <div className="messages" aria-live="polite">
-          {!hasMessages && <Welcome onPrompt={setDraft} t={t} />}
+          {!hasMessages && <Welcome onPrompt={sendMessage} t={t} />}
           {messages.map((message, index) => <Message key={`${message.role}-${index}`} message={message} index={index} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onRetry={sendMessage} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
           <div ref={messageEndRef} />
         </div>
@@ -598,7 +600,7 @@ function LoginScreen({ onSuccess, t }) {
   return <main className="login-page"><section className="login-intro"><div className="brand"><Sparkles size={20} /><span>{ASSISTANT_NAME}</span></div><div><h1>{t('loginTitle')}</h1><p>{t('loginText')}</p></div><div className="intro-mark"><Bot size={38} /></div></section><form className="login-form" onSubmit={submit}><h2>{t('welcomeBack')}</h2><p>{t('loginHelp')}</p><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><label>{t('password')}<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} autoComplete="current-password" required /></label>{error && <div className="login-error">{error}</div>}<button className="login-button" disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : t('signIn')}</button></form></main>
 }
 
-function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt('我今天有一点焦虑，能陪我理一理吗？')}>{t('talkPrompt')}</button><button onClick={() => onPrompt('我想为未来做一点准备，可以从哪里开始？')}>{t('planPrompt')}</button></div></div> }
+function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt(null, t('talkPromptMessage'))}>{t('talkPrompt')}</button><button onClick={() => onPrompt(null, t('planPromptMessage'))}>{t('planPrompt')}</button></div></div> }
 
 function Message({ message, index, canRegenerate, onCopy, onRetry, onRagFeedback, isSending, t }) {
   // Only an enforced refusal replaces the reply. When RAG_REQUIRE_EVIDENCE is off
