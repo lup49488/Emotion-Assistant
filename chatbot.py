@@ -139,17 +139,20 @@ def chat(
     style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
+    mood_checkin: dict[str, Any] | None = None,
 ) -> Generator[str, None, None]:
     user_text = user_text.strip()
     if not user_text:
         yield "请输入需要分析或回复的内容。"
         return
 
-    lang = detect_lang(user_text)
+    mood_note = str((mood_checkin or {}).get("note", "")).strip()
+    safety_text = "\n".join(part for part in (user_text, mood_note) if part)
+    lang = detect_lang(safety_text)
     update_preferences(state, user_text, lang)
-    emo_label, emo_score = safe_analyze(user_text, lang)
+    emo_label, emo_score = safe_analyze(safety_text, lang)
 
-    crisis_reply = check_crisis(state, user_text, emo_label, emo_score, lang)
+    crisis_reply = check_crisis(state, safety_text, emo_label, emo_score, lang)
     if crisis_reply is not None:
         update_short_term(state, user_text, crisis_reply)
         _archive_exchange(state.user_id, conversation_id, user_text, crisis_reply)
@@ -172,6 +175,7 @@ def chat(
         emo_score,
         knowledge_context=knowledge_context,
         style_context=style_context,
+        mood_checkin=mood_checkin,
     )
     full_messages = [messages[0], *state.history, messages[1]]
 
@@ -224,6 +228,7 @@ def chat_sync(
     style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
+    mood_checkin: dict[str, Any] | None = None,
 ) -> str:
     return "".join(chat(
         state,
@@ -234,6 +239,7 @@ def chat_sync(
         style_prefix=style_prefix,
         conversation_id=conversation_id,
         knowledge_context=knowledge_context,
+        mood_checkin=mood_checkin,
     ))
 
 
@@ -249,6 +255,7 @@ def handle_user_message(
     style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
+    mood_checkin: dict[str, Any] | None = None,
 ) -> str:
     with session_store.session(user_id) as state:
         return chat_sync(
@@ -260,6 +267,7 @@ def handle_user_message(
             style_prefix=style_prefix,
             conversation_id=conversation_id,
             knowledge_context=knowledge_context,
+            mood_checkin=mood_checkin,
         )
 
 
@@ -272,6 +280,7 @@ def handle_user_message_stream(
     style_prefix: str | None = None,
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
+    mood_checkin: dict[str, Any] | None = None,
 ) -> Generator[str, None, None]:
     with session_store.session(user_id) as state:
         yield from chat(
@@ -283,6 +292,7 @@ def handle_user_message_stream(
             style_prefix=style_prefix,
             conversation_id=conversation_id,
             knowledge_context=knowledge_context,
+            mood_checkin=mood_checkin,
         )
 
 

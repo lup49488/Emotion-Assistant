@@ -4,7 +4,7 @@
     "title": "Emotion-Aware Chat API",
     "description": "Versioned API contract for the Emotion-Aware Chat application.",
     "version": "1.0.0",
-    "x-contract-version": "2026-08-04.1",
+    "x-contract-version": "2026-08-22.1",
     "x-api-version": "v1"
   },
   "paths": {
@@ -3357,6 +3357,16 @@
             "title": "Show Memory Receipt",
             "default": true
           },
+          "mood_checkin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/MoodCheckinContext"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "conversation_id": {
             "anyOf": [
               {
@@ -4133,6 +4143,43 @@
           "intensity"
         ],
         "title": "MoodCheckin"
+      },
+      "MoodCheckinContext": {
+        "properties": {
+          "date": {
+            "type": "string",
+            "maxLength": 10,
+            "minLength": 1,
+            "title": "Date"
+          },
+          "mood": {
+            "type": "string",
+            "maxLength": 100,
+            "minLength": 1,
+            "title": "Mood"
+          },
+          "intensity": {
+            "type": "integer",
+            "maximum": 5.0,
+            "minimum": 1.0,
+            "title": "Intensity"
+          },
+          "note": {
+            "type": "string",
+            "maxLength": 5000,
+            "title": "Note",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "date",
+          "mood",
+          "intensity"
+        ],
+        "title": "MoodCheckinContext",
+        "description": "A single user-selected check-in supplied as bounded chat context."
       },
       "MoodCheckinListResponse": {
         "properties": {

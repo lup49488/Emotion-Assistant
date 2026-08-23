@@ -28,6 +28,7 @@ _classifier = None
 _load_failed = False
 _load_failed_at = 0.0
 _classifier_lock = threading.RLock()
+_load_deferred_at = 0.0
 _idle_timer: threading.Timer | None = None
 _last_used_at = 0.0
 
@@ -161,6 +162,14 @@ def _release_classifier_locked() -> bool:
     return True
 
 
+def _mark_used() -> None:
+    """Record the last use and re-arm the idle timer, briefly under the lock."""
+    global _last_used_at
+    with _classifier_lock:
+        _last_used_at = time.monotonic()
+        _schedule_idle_unload_locked()
+
+
 def release_semantic_classifier() -> bool:
     """Release classifier weights immediately, primarily for shutdown and tests."""
     with _classifier_lock:
@@ -196,7 +205,7 @@ def _schedule_idle_unload_locked(delay: float | None = None) -> None:
 
 def get_semantic_classifier():
     """Load the local classifier once, subject to retry and RAM guards."""
-    global _classifier, _load_failed, _load_failed_at, _last_used_at
+    global _classifier, _load_failed, _load_failed_at, _load_deferred_at, _last_used_at
     if not semantic_safety_enabled():
         return None
     with _classifier_lock:
@@ -207,8 +216,15 @@ def get_semantic_classifier():
             return _classifier
         if _load_failed and now - _load_failed_at < SAFETY_SEMANTIC_LOAD_RETRY_SECONDS:
             return None
-        if not _memory_allows_load():
+        if _load_deferred_at and now - _load_deferred_at < SAFETY_SEMANTIC_LOAD_RETRY_SECONDS:
             return None
+        if not _memory_allows_load():
+            # A RAM shortage is transient, so this stays separate from _load_failed,
+            # but it still needs a cooldown: memory is tightest exactly when requests
+            # pile up, and re-probing per message only floods the log.
+            _load_deferred_at = now
+            return None
+        _load_deferred_at = 0.0
         try:
             from transformers import pipeline
 
@@ -232,30 +248,32 @@ def get_semantic_classifier():
 
 def assess_semantic_safety(text: str) -> SemanticSafetySignals:
     """Return constrained NLI scores, falling back safely when unavailable."""
-    global _last_used_at
     normalized = (text or "").strip()
     if not normalized:
         return SemanticSafetySignals(available=False)
 
     labels = _HYPOTHESES["zh" if _CHINESE_RE.search(normalized) else "en"]
     hypothesis_template = "这段消息表示{}。" if _CHINESE_RE.search(normalized) else "This message means that {}."
-    with _classifier_lock:
-        classifier = get_semantic_classifier()
-        if classifier is None:
-            return SemanticSafetySignals(available=False)
-        try:
-            result = classifier(
-                normalized,
-                candidate_labels=list(labels.values()),
-                multi_label=True,
-                hypothesis_template=hypothesis_template,
-            )
-        except Exception as exc:
-            logger.warning("event=safety_semantic_inference_failed error_type=%s", type(exc).__name__)
-            return SemanticSafetySignals(available=False)
-        finally:
-            _last_used_at = time.monotonic()
-            _schedule_idle_unload_locked()
+    # The lock covers the classifier's lifecycle, not the inference. Holding it
+    # across a CPU-bound NLI pass would serialize every concurrent request —
+    # exactly when several people are sending distress signals at once. Running
+    # outside it is safe: `classifier` keeps the object alive even if the idle
+    # timer clears the module reference mid-pass.
+    classifier = get_semantic_classifier()
+    if classifier is None:
+        return SemanticSafetySignals(available=False)
+    try:
+        result = classifier(
+            normalized,
+            candidate_labels=list(labels.values()),
+            multi_label=True,
+            hypothesis_template=hypothesis_template,
+        )
+    except Exception as exc:
+        logger.warning("event=safety_semantic_inference_failed error_type=%s", type(exc).__name__)
+        return SemanticSafetySignals(available=False)
+    finally:
+        _mark_used()
 
     scores = dict(zip(result.get("labels", []), result.get("scores", []), strict=False))
     return SemanticSafetySignals(

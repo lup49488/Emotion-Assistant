@@ -125,7 +125,7 @@ from sqlite_store import connection, storage_backend
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-08-04.1"
+API_CONTRACT_VERSION = "2026-08-22.1"
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -598,6 +598,7 @@ def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | No
         style_prefix=_resolved_style_prefix(user_id, request),
         conversation_id=request.conversation_id,
         knowledge_context=knowledge_context,
+        mood_checkin=request.mood_checkin.model_dump() if request.mood_checkin else None,
     )
 
 

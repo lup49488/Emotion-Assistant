@@ -100,6 +100,15 @@ class SessionResponse(ContractModel):
     can_manage_knowledge: bool
 
 
+class MoodCheckinContext(ContractModel):
+    """A single user-selected check-in supplied as bounded chat context."""
+
+    date: str = Field(min_length=1, max_length=10)
+    mood: str = Field(min_length=1, max_length=100)
+    intensity: int = Field(ge=1, le=5)
+    note: str = Field(default="", max_length=5_000)
+
+
 class ChatRequest(ContractModel):
     message: str = Field(min_length=1, max_length=20_000)
     # None 表示使用服务器 .env 中 LLM_PROVIDER 配置的默认提供者。
@@ -117,6 +126,9 @@ class ChatRequest(ContractModel):
     # filename starts with this style family (e.g. 温柔型).
     style_prefix: str | None = Field(default=None, max_length=64)
     show_memory_receipt: bool = True
+    # Present only when the user explicitly asks to discuss one Mood Check-in.
+    # The server places it in a bounded, non-instructional prompt context.
+    mood_checkin: MoodCheckinContext | None = None
     conversation_id: str | None = Field(default=None, max_length=64)
     retry_last_response: bool = False
 

@@ -253,8 +253,11 @@ function App() {
     }
   }
 
-  async function sendMessage(retryIndex = null, directMessage = null) {
+  async function sendMessage(retryIndex = null, directMessage = null, moodCheckin = null, forceNewConversation = false) {
     const retryMessageIndex = Number.isInteger(retryIndex) ? retryIndex : null
+    const moodCheckinContext = retryMessageIndex === null
+      ? moodCheckin
+      : messages[retryMessageIndex - 1]?.moodCheckin || null
     const text = retryMessageIndex === null
       ? String(directMessage ?? draft).trim()
       : String(messages[retryMessageIndex - 1]?.content || '').trim()
@@ -270,7 +273,7 @@ function App() {
     const controller = new AbortController()
     activeRequestRef.current = controller
 
-    let conversationId = activeConversation?.id
+    let conversationId = forceNewConversation ? null : activeConversation?.id
     try {
       if (!conversationId) {
         const response = await apiFetch('/api/v1/conversations', {
@@ -282,7 +285,7 @@ function App() {
       }
 
       if (retryMessageIndex === null) {
-        setMessages((current) => [...current, { role: 'user', content: text }, { role: 'assistant', content: '', pending: true }])
+        setMessages((current) => [...current, { role: 'user', content: text, moodCheckin: moodCheckinContext }, { role: 'assistant', content: '', pending: true }])
       } else {
         setMessages((current) => current.map((item, index) => index === retryMessageIndex
           ? { ...item, content: '', pending: true, failed: false }
@@ -301,10 +304,16 @@ function App() {
           api_key: options.apiKey || null,
           temperature: MODEL_PROFILES[options.profile].temperature,
           max_new_tokens: MODEL_PROFILES[options.profile].maxNewTokens,
-          use_knowledge: options.useKnowledge,
+          use_knowledge: moodCheckinContext ? false : options.useKnowledge,
           use_style: options.useStyle,
           style_prefix: options.stylePrefix,
           show_memory_receipt: false,
+          mood_checkin: moodCheckinContext ? {
+            date: moodCheckinContext.date,
+            mood: moodCheckinContext.mood,
+            intensity: moodCheckinContext.intensity,
+            note: moodCheckinContext.note || '',
+          } : null,
           retry_last_response: retryMessageIndex !== null,
         }),
       })
@@ -429,6 +438,14 @@ function App() {
     setActiveView('chat')
     setMobileSidebarOpen(false)
   }
+  const startMoodReflection = async (record) => {
+    if (isSending) return
+    setActiveView('chat')
+    setMobileSidebarOpen(false)
+    setActiveConversation(null)
+    setMessages([])
+    await sendMessage(null, t('moodReflectionRequest'), record, true)
+  }
   const openConversation = async (conversation) => {
     await selectConversation(conversation)
     setActiveView('chat')
@@ -518,7 +535,7 @@ function App() {
         <label className="model-field">{t('responseProfile')}<select value={options.profile} onChange={(event) => setOptions((current) => ({ ...current, profile: event.target.value }))}><option value="fast">{t('profileFast')}</option><option value="balanced">{t('profileBalanced')}</option><option value="detailed">{t('profileDetailed')}</option></select><small>{t('profileHint')}</small></label>
         {stylePrefixes.length > 0 && <label className="model-field">{t('styleFamily')}<select value={options.stylePrefix} onChange={(event) => saveStylePrefix(event.target.value)}><option value="">{t('allStyles')}</option>{stylePrefixes.map((prefix) => <option key={prefix} value={prefix}>{styleName(prefix)}</option>)}</select><small>{t('styleFamilyHint')}</small></label>}
         <div className="contract-note"><span>API v1</span><p>Cookie session and CSRF protection are active.</p></div>
-      </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
+      </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
     </main>
   )
 }

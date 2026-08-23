@@ -56,3 +56,13 @@ def test_v1_request_models_reject_unknown_fields():
 
 def test_chat_request_uses_server_output_limit_when_client_omits_it():
     assert ChatRequest(message="hello").max_new_tokens == DEFAULT_MAX_NEW_TOKENS
+
+
+def test_chat_request_accepts_one_bounded_mood_checkin_context():
+    request = ChatRequest(
+        message="I want to talk about this check-in.",
+        mood_checkin={"date": "2026-08-22", "mood": "anxious", "intensity": 4, "note": "Interview tomorrow."},
+    )
+
+    assert request.mood_checkin is not None
+    assert request.mood_checkin.intensity == 4

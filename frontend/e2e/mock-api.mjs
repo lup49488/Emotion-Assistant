@@ -105,6 +105,17 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/v1/export') return send(response, 200, { schema_version: 4, exported_at: '2026-08-04T00:00:00', user_id: 'e2e-user', notes: [], ...memorySnapshot, conversations, mood_checkins: moodRecords })
   if (request.method === 'POST' && url.pathname === '/api/v1/import') return send(response, 200, { mode: url.searchParams.get('mode') || 'merge', conversations: 1, mood_checkins: 1, memories: 1 })
   if (request.method === 'GET' && url.pathname === '/api/v1/mood/checkins') return send(response, 200, { records: moodRecords })
+  if (request.method === 'POST' && url.pathname === '/api/v1/mood/checkins') {
+    const now = '2026-08-22T09:00:00'
+    const item = {
+      date: body.checkin_date || '2026-08-22', mood: body.mood, intensity: body.intensity,
+      note: body.note || '', source: 'checkin', created_at: now, updated_at: now,
+    }
+    const index = moodRecords.findIndex((record) => record.date === item.date)
+    if (index === -1) moodRecords.push(item)
+    else moodRecords[index] = item
+    return send(response, 200, { record: item })
+  }
   if (request.method === 'GET' && url.pathname === '/api/v1/mood/weekly') return send(response, 200, { points: [], summary: 'No weekly summary available.', analysis: '' })
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {
     const item = conversation(body.conversation_id)
@@ -126,7 +137,9 @@ const server = http.createServer(async (request, response) => {
       response.write('event: chunk\ndata: {"text":"General answer without sources."}\n\n')
       return response.end('event: done\ndata: {}\n\n')
     }
-    const reply = body.retry_last_response ? 'Regenerated answer' : body.message === 'Show markdown'
+    const reply = body.retry_last_response ? 'Regenerated answer' : body.mood_checkin
+      ? `Mood reflection: ${body.mood_checkin.mood} (${body.mood_checkin.intensity}/5) - ${body.mood_checkin.note}`
+      : body.message === 'Show markdown'
       ? 'First line<br>Second line\n\n\\[ P(C \\mid \\mathbf{x}) = \\frac{P(\\mathbf{x} \\mid C)P(C)}{P(\\mathbf{x})} \\]\n\n| 后验分布 | 公式 |\n| --- | --- |\n| Posterior | $$P(\\theta | x)=\\frac{P(x | \\theta)P(\\theta)}{P(x)}$$ |'
       : 'Grounded answer from the knowledge base.'
     item.messages = [{ role: 'user', content: body.message }, { role: 'assistant', content: reply }]

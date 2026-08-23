@@ -138,6 +138,20 @@ test('mood notes retain leading indentation and paragraph breaks in the check-in
   await expect(note).toHaveCSS('white-space', 'pre-wrap')
 })
 
+test('a user-selected Mood Check-in is sent to a new chat as bounded context', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await page.getByRole('textbox', { name: 'Mood' }).fill('anxious')
+  await page.getByLabel('Note').fill('Interview tomorrow')
+  await page.getByRole('button', { name: 'Save check-in' }).click()
+
+  const savedCheckin = page.locator('.mood-reflection-callout')
+  await expect(savedCheckin).toBeVisible()
+  await savedCheckin.getByRole('button', { name: 'Talk about this check-in' }).click()
+  await expect(page.locator('.message.user .message-body').last()).toHaveText("I'd like to talk about the mood check-in I just saved.")
+  await expect(page.locator('.message.assistant .message-body').last()).toHaveText('Mood reflection: anxious (3/5) - Interview tomorrow')
+})
+
 test('mobile sidebar navigation has no horizontal overflow and applies theme changes', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)

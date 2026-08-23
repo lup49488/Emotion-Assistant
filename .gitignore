@@ -41,3 +41,6 @@ frontend/playwright-report/
 evaluation/编码手册.md
 evaluation/初版实验设计.md
 evaluation/EXPERIMENT_DESIGN.md
+
+# Editor backup files.
+*.bak
