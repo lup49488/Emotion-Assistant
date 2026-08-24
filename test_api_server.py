@@ -369,6 +369,76 @@ def test_mood_checkin_response_matches_contract(monkeypatch, tmp_path):
     assert response.json()["record"]["source"] == "checkin"
 
 
+def test_mood_checkin_images_are_private_and_removed_with_the_record(monkeypatch, tmp_path):
+    png = b"\x89PNG\r\n\x1a\n" + b"test-image"
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        created = client.post(
+            "/api/v1/mood/checkins",
+            json={"mood": "calm", "intensity": 3, "checkin_date": "2026-07-18"},
+            headers=headers,
+        )
+        rejected = client.post(
+            "/api/v1/mood/checkins/2026-07-18/images",
+            files={"file": ("not-an-image.txt", b"plain text", "text/plain")},
+            headers=headers,
+        )
+        uploaded = client.post(
+            "/api/v1/mood/checkins/2026-07-18/images",
+            files={"file": ("mood.png", png, "image/png")},
+            headers=headers,
+        )
+        image = uploaded.json()
+        listed = client.get("/api/v1/mood/checkins")
+        downloaded = client.get(f"/api/v1/mood/checkins/2026-07-18/images/{image['id']}")
+        deleted = client.delete("/api/v1/mood/checkins/2026-07-18", headers=headers)
+        missing = client.get(f"/api/v1/mood/checkins/2026-07-18/images/{image['id']}")
+
+    assert created.status_code == 200
+    assert rejected.status_code == 422
+    assert uploaded.status_code == 201
+    assert listed.json()["records"][0]["images"] == [image]
+    assert downloaded.status_code == 200
+    assert downloaded.content == png
+    assert deleted.status_code == 204
+    assert missing.status_code == 404
+
+
+def test_mood_image_routes_reject_a_malformed_date_without_an_error(monkeypatch, tmp_path):
+    image_id = "0" * 32
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        fetched = client.get(f"/api/v1/mood/checkins/not-a-date/images/{image_id}")
+        traversal = client.get(f"/api/v1/mood/checkins/..%2f..%2fetc/images/{image_id}")
+        removed = client.delete(f"/api/v1/mood/checkins/2026-13-45/images/{image_id}", headers=headers)
+
+    # A bad date is a missing image, not a server error.
+    assert fetched.status_code == 404
+    assert traversal.status_code == 404
+    assert removed.status_code == 404
+
+
+def test_mood_reflection_context_uses_saved_history_through_selected_date(monkeypatch):
+    points = [
+        {"date": "2026-08-19", "mood": "calm", "intensity": 2, "note": "Recovered."},
+        {"date": "2026-08-20", "mood": "anxious", "intensity": 4, "note": "Interview soon."},
+    ]
+    monkeypatch.setattr(api_server, "load_mood_checkins", lambda user_id: [*points])
+    monkeypatch.setattr(api_server, "get_weekly_mood_points", lambda user_id, end_date, days: [*points])
+    monkeypatch.setattr(api_server, "format_weekly_mood_summary", lambda user_id, end_date, days: "Trend summary")
+    monkeypatch.setattr(api_server, "format_mood_fluctuation_analysis", lambda value: "Fluctuation analysis")
+
+    context = api_server._mood_reflection_context(
+        "api-alice",
+        {"date": "2026-08-20", "mood": "client value", "intensity": 1, "note": "client note"},
+    )
+
+    assert context["mood"] == "anxious"
+    assert context["recent_checkins"] == points
+    assert context["weekly_summary"] == "Trend summary"
+    assert context["fluctuation_analysis"] == "Fluctuation analysis"
+
+
 def test_conversation_and_memory_api_use_signed_current_user(monkeypatch, tmp_path):
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)

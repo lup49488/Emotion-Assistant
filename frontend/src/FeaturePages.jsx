@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Download, Pencil, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
-import { apiFetch, csrfHeaders, readJson } from './api'
+import { API_BASE_URL, apiFetch, csrfHeaders, readJson } from './api'
 
 const json = (value) => JSON.stringify(value, null, 2)
 
@@ -117,6 +117,7 @@ function MoodCheckinContent({ t, onReflect }) {
   const [weekly, setWeekly] = useState(null)
   const emptyForm = { date: null, mood: '', intensity: 3, note: '' }
   const [form, setForm] = useState(emptyForm)
+  const [imageFiles, setImageFiles] = useState([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [savedRecord, setSavedRecord] = useState(null)
@@ -126,24 +127,48 @@ function MoodCheckinContent({ t, onReflect }) {
     try { const [all, trend] = await Promise.all([readJson('/api/v1/mood/checkins'), readJson('/api/v1/mood/weekly')]); setRecords(all.records); setWeekly(trend) } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
   }
   useEffect(() => { refresh() }, [])
+  // Editing a check-in that already has photos: the cap covers stored ones too.
+  const existingImageCount = (records.find((record) => record.date === form.date)?.images || []).length
+  const chooseImages = (event) => {
+    const selected = Array.from(event.target.files || [])
+    if (selected.some((file) => !['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(file.type) || file.size > 5 * 1024 * 1024) || existingImageCount + imageFiles.length + selected.length > 3) {
+      setError(t('moodImageLimit')); event.target.value = ''; return
+    }
+    setImageFiles((current) => [...current, ...selected])
+    event.target.value = ''
+  }
+  const uploadImages = async (record) => {
+    if (imageFiles.length === 0) return record
+    const images = await Promise.all(imageFiles.map(async (file) => {
+      const payload = new FormData(); payload.append('file', file)
+      return readJson(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images`, { method: 'POST', headers: csrfHeaders(), body: payload })
+    }))
+    setImageFiles([])
+    return { ...record, images: [...(record.images || []), ...images] }
+  }
   const submit = async (event) => {
     event.preventDefault(); setError('')
     try {
-      // 后端按日期 upsert：带原日期提交即更新该天的记录，不带则记录今天。
       const payload = { mood: form.mood, intensity: form.intensity, note: form.note, ...(form.date ? { checkin_date: form.date } : {}) }
       const result = await readJson('/api/v1/mood/checkins', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify(payload) })
-      setSavedRecord(result.record)
-      setForm(emptyForm)
-      await refresh()
+      const record = await uploadImages(result.record)
+      setSavedRecord(record); setForm(emptyForm); await refresh()
     } catch (requestError) { setError(requestError.message) }
   }
-  const startEdit = (record) => { setError(''); setSavedRecord(null); setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
-  const cancelEdit = () => { setSavedRecord(null); setForm(emptyForm) }
-  const remove = async (date) => { if (!window.confirm(`Delete the Mood Check-in for ${date}?`)) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) setForm(emptyForm); await refresh() } catch (requestError) { setError(requestError.message) } }
+  const startEdit = (record) => { setError(''); setSavedRecord(null); setImageFiles([]); setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
+  const cancelEdit = () => { setSavedRecord(null); setImageFiles([]); setForm(emptyForm) }
+  const remove = async (date) => { if (!window.confirm(`Delete the Mood Check-in for ${date}?`)) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) cancelEdit(); await refresh() } catch (requestError) { setError(requestError.message) } }
+  const removeImage = async (record, image) => { try { await apiFetch(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images/${encodeURIComponent(image.id)}`, { method: 'DELETE', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } }
   return <><div className="mood-page-actions"><button className="secondary-button" onClick={refresh}><RefreshCw size={16} />{t('refresh')}</button></div><ErrorText error={error} />
-    <div className="two-column mood-top"><form className="data-panel checkin-form" onSubmit={submit}><h2>{isEditing ? `${t('editingCheckinFor')} ${form.date}` : t('todayCheckin')}</h2><label>{t('moodLabel')}<input required value={form.mood} placeholder={t('moodPlaceholder')} onChange={(event) => setForm((current) => ({ ...current, mood: event.target.value }))} /></label><label>{t('intensity')} <b>{form.intensity}/5</b><input type="range" min="1" max="5" value={form.intensity} onChange={(event) => setForm((current) => ({ ...current, intensity: Number(event.target.value) }))} /></label><label>{t('note')}<textarea rows="3" value={form.note} placeholder={t('notePlaceholder')} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label><div className="checkin-form-actions"><button className="primary-button">{isEditing ? t('updateCheckin') : t('save')}</button>{isEditing && <button type="button" className="secondary-button" onClick={cancelEdit}><X size={16} />{t('cancelEdit')}</button>}</div>{savedRecord && <div className="mood-reflection-callout" role="status"><span>{t('moodReflectionReady')}</span><button type="button" className="secondary-button" onClick={() => onReflect(savedRecord)}><Sparkles size={16} />{t('talkAboutCheckin')}</button></div>}</form><section className="data-panel trend-panel"><h2>{t('weeklyTrend')}</h2><MoodChart points={weekly?.points || []} /><p className="report-text">{weekly?.summary || t('noWeeklySummary')}</p><p className="report-text muted-report">{weekly?.analysis}</p></section></div>
-    <section className="data-panel"><h2>{t('recentCheckins')}</h2><Loading loading={loading} t={t} />{records.length === 0 && !loading ? <p className="empty-state">{t('noCheckins')}</p> : <div className="record-list">{[...records].reverse().map((record) => <article className={`record-row ${form.date === record.date ? 'editing' : ''}`} key={record.date}><div><strong>{record.mood}</strong><span>{record.date} · {record.intensity}/5</span>{record.note && <p className="record-note">{record.note}</p>}</div><div className="record-actions"><button className="icon-button" title={t('talkAboutCheckin')} onClick={() => onReflect(record)}><Sparkles size={16} /></button><button className="icon-button" title={`${t('editCheckin')} ${record.date}`} onClick={() => startEdit(record)}><Pencil size={16} /></button><button className="danger-icon" title={`${t('delete')} ${record.date}`} onClick={() => remove(record.date)}><Trash2 size={16} /></button></div></article>)}</div>}</section>
+    <div className="two-column mood-top"><form className="data-panel checkin-form" onSubmit={submit}><h2>{isEditing ? `${t('editingCheckinFor')} ${form.date}` : t('todayCheckin')}</h2><label>{t('moodLabel')}<input required value={form.mood} placeholder={t('moodPlaceholder')} onChange={(event) => setForm((current) => ({ ...current, mood: event.target.value }))} /></label><label>{t('intensity')} <b>{form.intensity}/5</b><input type="range" min="1" max="5" value={form.intensity} onChange={(event) => setForm((current) => ({ ...current, intensity: Number(event.target.value) }))} /></label><label>{t('note')}<textarea rows="3" value={form.note} placeholder={t('notePlaceholder')} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label><label>{t('moodImages')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" aria-label={t('moodImages')} multiple onChange={chooseImages} /><small>{t('moodImageHelp')}</small>{imageFiles.length > 0 && <span className="image-file-list">{imageFiles.map((file) => file.name).join(', ')}</span>}</label><div className="checkin-form-actions"><button className="primary-button">{isEditing ? t('updateCheckin') : t('save')}</button>{isEditing && <button type="button" className="secondary-button" onClick={cancelEdit}><X size={16} />{t('cancelEdit')}</button>}</div>{savedRecord && <div className="mood-reflection-callout" role="status"><span>{t('moodReflectionReady')}</span><button type="button" className="secondary-button" onClick={() => onReflect(savedRecord)}><Sparkles size={16} />{t('talkAboutCheckin')}</button></div>}</form><section className="data-panel trend-panel"><h2>{t('weeklyTrend')}</h2><MoodChart points={weekly?.points || []} /><p className="report-text">{weekly?.summary || t('noWeeklySummary')}</p><p className="report-text muted-report">{weekly?.analysis}</p></section></div>
+    <section className="data-panel"><h2>{t('recentCheckins')}</h2><Loading loading={loading} t={t} />{records.length === 0 && !loading ? <p className="empty-state">{t('noCheckins')}</p> : <div className="record-list">{[...records].reverse().map((record) => <article className={`record-row ${form.date === record.date ? 'editing' : ''}`} key={record.date}><div><strong>{record.mood}</strong><span>{record.date} · {record.intensity}/5</span>{record.note && <p className="record-note">{record.note}</p>}<MoodImageGrid record={record} onRemove={removeImage} t={t} /></div><div className="record-actions"><button className="icon-button" title={t('talkAboutCheckin')} onClick={() => onReflect(record)}><Sparkles size={16} /></button><button className="icon-button" title={`${t('editCheckin')} ${record.date}`} onClick={() => startEdit(record)}><Pencil size={16} /></button><button className="danger-icon" title={`${t('delete')} ${record.date}`} onClick={() => remove(record.date)}><Trash2 size={16} /></button></div></article>)}</div>}</section>
   </>
+}
+
+function MoodImageGrid({ record, onRemove, t }) {
+  const images = record.images || []
+  if (images.length === 0) return null
+  return <div className="mood-image-grid">{images.map((image) => <figure key={image.id}><img src={`${API_BASE_URL}/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images/${encodeURIComponent(image.id)}`} alt={t('moodImageAlt')} loading="lazy" /><button type="button" className="danger-icon" title={t('removeMoodImage')} onClick={() => onRemove(record, image)}><Trash2 size={14} /></button></figure>)}</div>
 }
 
 export function KnowledgePage({ t, canManageKnowledge = false }) {

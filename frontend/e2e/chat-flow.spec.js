@@ -138,6 +138,19 @@ test('mood notes retain leading indentation and paragraph breaks in the check-in
   await expect(note).toHaveCSS('white-space', 'pre-wrap')
 })
 
+test('a Mood Check-in can retain and remove a private image attachment', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await page.getByRole('textbox', { name: 'Mood' }).fill('hopeful')
+  await page.getByLabel('Photos').setInputFiles({ name: 'mood.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5JwAAAABJRU5ErkJggg==', 'base64') })
+  await page.getByRole('button', { name: 'Save check-in' }).click()
+
+  const image = page.getByRole('img', { name: 'Mood Check-in photo' })
+  await expect(image).toBeVisible()
+  await page.getByTitle('Remove photo').click()
+  await expect(image).toHaveCount(0)
+})
+
 test('a user-selected Mood Check-in is sent to a new chat as bounded context', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Mood check-in' }).click()
@@ -147,9 +160,18 @@ test('a user-selected Mood Check-in is sent to a new chat as bounded context', a
 
   const savedCheckin = page.locator('.mood-reflection-callout')
   await expect(savedCheckin).toBeVisible()
-  await savedCheckin.getByRole('button', { name: 'Talk about this check-in' }).click()
-  await expect(page.locator('.message.user .message-body').last()).toHaveText("I'd like to talk about the mood check-in I just saved.")
+  await savedCheckin.getByRole('button', { name: 'Discuss record and trend' }).click()
+  await expect(page.locator('.message.user .message-body').last()).toHaveText("I'd like to talk about this mood check-in and its recent trend.")
   await expect(page.locator('.message.assistant .message-body').last()).toHaveText('Mood reflection: anxious (3/5) - Interview tomorrow')
+})
+
+test('a historical Mood Check-in can be discussed from its record action', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+
+  await page.locator('.record-actions').first().getByTitle('Discuss record and trend').click()
+  await expect(page.locator('.message.user .message-body').last()).toHaveText("I'd like to talk about this mood check-in and its recent trend.")
+  await expect(page.locator('.message.assistant .message-body').last()).toContainText('Mood reflection: calm (3/5)')
 })
 
 test('mobile sidebar navigation has no horizontal overflow and applies theme changes', async ({ page }) => {

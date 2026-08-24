@@ -199,6 +199,13 @@ class MoodCheckinRequest(ContractModel):
     checkin_date: str | None = None
 
 
+class MoodImage(ContractModel):
+    id: str
+    filename: str
+    content_type: str
+    size_bytes: int
+
+
 class MoodCheckin(ContractModel):
     date: str
     mood: str
@@ -207,6 +214,7 @@ class MoodCheckin(ContractModel):
     source: str = "checkin"
     created_at: str | None = None
     updated_at: str | None = None
+    images: list[MoodImage] = Field(default_factory=list)
 
 
 class MoodCheckinResponse(ContractModel):

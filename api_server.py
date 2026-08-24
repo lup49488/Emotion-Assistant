@@ -24,7 +24,7 @@ from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -52,6 +52,7 @@ from api_contracts import (
     MoodCheckinListResponse,
     MoodCheckinRequest,
     MoodCheckinResponse,
+    MoodImage,
     ObservabilitySummaryResponse,
     OperationsDashboardResponse,
     PrivacyDeletionResponse,
@@ -98,6 +99,7 @@ from knowledge_store import (
     release_gate_status,
 )
 from job_store import get_job, job_manager, list_jobs, mark_interrupted_jobs
+from mood_image_store import delete_mood_checkin_images, delete_mood_image, get_mood_image_path, list_mood_images, save_mood_image
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
 from memory_store import (
     confirm_pending_memory,
@@ -125,7 +127,9 @@ from sqlite_store import connection, storage_backend
 logger = logging.getLogger(__name__)
 
 API_VERSION = "1.0.0"
-API_CONTRACT_VERSION = "2026-08-22.1"
+API_CONTRACT_VERSION = "2026-08-23.1"
+MOOD_REFLECTION_CONTEXT_DAYS = 7
+MOOD_REFLECTION_NOTE_MAX_CHARS = 1_000
 API_MAX_KNOWLEDGE_UPLOAD_BYTES = max(1_024, int(os.getenv("API_MAX_KNOWLEDGE_UPLOAD_BYTES", str(20 * 1024 * 1024))))
 API_SESSION_TTL_SECONDS = max(60, int(os.getenv("API_SESSION_TTL_SECONDS", "43200")))
 API_SESSION_COOKIE_NAME = os.getenv("API_SESSION_COOKIE_NAME", "chatbot_session").strip() or "chatbot_session"
@@ -575,6 +579,37 @@ def _rollback_short_term_exchange(user_id: str, user_text: str) -> None:
             del state.history[-2:]
 
 
+def _mood_reflection_context(user_id: str, selected: dict[str, Any]) -> dict[str, Any]:
+    """Build bounded, user-owned recent context for an explicit reflection turn."""
+    selected_date = str(selected.get("date", ""))
+    saved_records = load_mood_checkins(user_id)
+    canonical = next((record for record in saved_records if record.get("date") == selected_date), selected)
+    points = get_weekly_mood_points(user_id, end_date=selected_date, days=MOOD_REFLECTION_CONTEXT_DAYS)
+    recent_checkins = [
+        {
+            "date": point["date"],
+            "mood": point.get("mood", ""),
+            "intensity": point["intensity"],
+            "note": str(point.get("note", ""))[:MOOD_REFLECTION_NOTE_MAX_CHARS],
+        }
+        for point in points
+        if point.get("intensity") is not None
+    ]
+    return {
+        **canonical,
+        "note": str(canonical.get("note", ""))[:MOOD_REFLECTION_NOTE_MAX_CHARS],
+        "recent_checkins": recent_checkins,
+        "weekly_summary": format_weekly_mood_summary(
+            user_id, end_date=selected_date, days=MOOD_REFLECTION_CONTEXT_DAYS,
+        ),
+        "fluctuation_analysis": format_mood_fluctuation_analysis(points),
+    }
+
+
+def _mood_record_with_images(user_id: str, record: dict[str, Any]) -> dict[str, Any]:
+    return {**record, "images": list_mood_images(user_id, str(record["date"]))}
+
+
 def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | None = None) -> Generator[str, None, None]:
     if request.retry_last_response:
         remove_last_exchange(user_id, request.conversation_id, request.message)
@@ -598,7 +633,7 @@ def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | No
         style_prefix=_resolved_style_prefix(user_id, request),
         conversation_id=request.conversation_id,
         knowledge_context=knowledge_context,
-        mood_checkin=request.mood_checkin.model_dump() if request.mood_checkin else None,
+        mood_checkin=_mood_reflection_context(user_id, request.mood_checkin.model_dump()) if request.mood_checkin else None,
     )
 
 
@@ -786,12 +821,45 @@ def create_mood_checkin(request: MoodCheckinRequest, user_id: CsrfCurrentUser) -
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"record": record}
+    return {"record": _mood_record_with_images(user_id, record)}
 
 
 @app.get("/api/v1/mood/checkins", response_model=MoodCheckinListResponse)
 def list_mood_records(user_id: CurrentUser) -> dict[str, Any]:
-    return {"records": load_mood_checkins(user_id)}
+    return {"records": [_mood_record_with_images(user_id, record) for record in load_mood_checkins(user_id)]}
+
+
+@app.post("/api/v1/mood/checkins/{checkin_date}/images", response_model=MoodImage, status_code=status.HTTP_201_CREATED)
+async def upload_mood_image(
+    checkin_date: str,
+    file: Annotated[UploadFile, File(...)],
+    user_id: CsrfCurrentUser,
+) -> dict[str, Any]:
+    try:
+        if not any(record["date"] == checkin_date for record in load_mood_checkins(user_id)):
+            raise HTTPException(status_code=404, detail="Mood Check-in was not found.")
+        return save_mood_image(user_id, checkin_date, await file.read())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    finally:
+        await file.close()
+
+
+@app.get("/api/v1/mood/checkins/{checkin_date}/images/{image_id}")
+def get_mood_image(checkin_date: str, image_id: str, user_id: CurrentUser) -> FileResponse:
+    path = get_mood_image_path(user_id, checkin_date, image_id)
+    if path is None:
+        raise HTTPException(status_code=404, detail="Mood Check-in image was not found.")
+    image = next((item for item in list_mood_images(user_id, checkin_date) if item["id"] == image_id), None)
+    if image is None:
+        raise HTTPException(status_code=404, detail="Mood Check-in image was not found.")
+    return FileResponse(path, media_type=image["content_type"], headers={"Cache-Control": "private, no-store"})
+
+
+@app.delete("/api/v1/mood/checkins/{checkin_date}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_mood_image(checkin_date: str, image_id: str, user_id: CsrfCurrentUser) -> None:
+    if not delete_mood_image(user_id, checkin_date, image_id):
+        raise HTTPException(status_code=404, detail="Mood Check-in image was not found.")
 
 
 @app.delete("/api/v1/mood/checkins/{checkin_date}", status_code=status.HTTP_204_NO_CONTENT)
@@ -802,6 +870,7 @@ def remove_mood_checkin(checkin_date: str, user_id: CsrfCurrentUser) -> None:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     if not deleted:
         raise HTTPException(status_code=404, detail="Mood check-in was not found.")
+    delete_mood_checkin_images(user_id, checkin_date)
 
 
 @app.get("/api/v1/mood/weekly", response_model=WeeklyMoodResponse)

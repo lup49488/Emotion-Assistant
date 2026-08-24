@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 let loggedIn = false
 const conversations = []
 const moodRecords = []
+const testImage = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5JwAAAABJRU5ErkJggg==', 'base64')
 let memorySaveMode = 'confirm'
 const memorySnapshot = {
   history: [],
@@ -22,7 +23,7 @@ function resetState() {
   moodRecords.splice(0, moodRecords.length, {
     date: '2026-07-29', mood: 'calm', intensity: 3,
     note: '    Indented first line.\n\nSecond paragraph.', source: 'checkin',
-    created_at: '2026-07-29T09:00:00', updated_at: '2026-07-29T09:00:00',
+    created_at: '2026-07-29T09:00:00', updated_at: '2026-07-29T09:00:00', images: [],
   })
   Object.assign(memorySnapshot, {
     history: [], emotion_memory: [], long_memory: [], stable_profile: [], interest_memory: [], memory_events: [], pending_memory: [],
@@ -109,12 +110,36 @@ const server = http.createServer(async (request, response) => {
     const now = '2026-08-22T09:00:00'
     const item = {
       date: body.checkin_date || '2026-08-22', mood: body.mood, intensity: body.intensity,
-      note: body.note || '', source: 'checkin', created_at: now, updated_at: now,
+      note: body.note || '', source: 'checkin', created_at: now, updated_at: now, images: [],
     }
     const index = moodRecords.findIndex((record) => record.date === item.date)
     if (index === -1) moodRecords.push(item)
-    else moodRecords[index] = item
+    else {
+      item.images = moodRecords[index].images || []
+      moodRecords[index] = item
+    }
     return send(response, 200, { record: item })
+  }
+  const moodImageMatch = url.pathname.match(/^\/api\/v1\/mood\/checkins\/([^/]+)\/images\/([^/]+)$/)
+  if (request.method === 'GET' && moodImageMatch) {
+    response.writeHead(200, { 'Content-Type': 'image/png', 'Cache-Control': 'private, no-store' })
+    return response.end(testImage)
+  }
+  if (request.method === 'POST' && /^\/api\/v1\/mood\/checkins\/[^/]+\/images$/.test(url.pathname)) {
+    const date = url.pathname.split('/')[5]
+    const record = moodRecords.find((item) => item.date === date)
+    if (!record) return send(response, 404, { detail: 'Mood Check-in was not found.' })
+    const image = { id: randomUUID().replaceAll('-', ''), filename: 'mood-photo.png', content_type: 'image/png', size_bytes: testImage.length }
+    record.images ||= []; record.images.push(image)
+    return send(response, 201, image)
+  }
+  if (request.method === 'DELETE' && moodImageMatch) {
+    const [, date, imageId] = moodImageMatch
+    const record = moodRecords.find((item) => item.date === date)
+    if (!record || !record.images?.some((image) => image.id === imageId)) return send(response, 404, { detail: 'Mood Check-in image was not found.' })
+    record.images = record.images.filter((image) => image.id !== imageId)
+    response.writeHead(204)
+    return response.end()
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/mood/weekly') return send(response, 200, { points: [], summary: 'No weekly summary available.', analysis: '' })
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {

@@ -29,6 +29,7 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
         "notes": [
             "此导出包含当前用户的对话、记忆和 Mood 数据。",
             "不会导出访问密码、密码哈希、API Key 或本地 .env 配置。",
+            "Mood Check-in 图片附件保留在服务器的私有目录中，未包含在 JSON 导出内。",
         ],
         "history": list(state.history),
         "conversations": [
