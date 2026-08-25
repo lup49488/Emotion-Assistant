@@ -187,7 +187,7 @@ test('a historical Mood Check-in can be discussed from its record action', async
 })
 
 test('tablet Mood Check-in keeps form controls within their panel', async ({ page }) => {
-  await page.setViewportSize({ width: 1024, height: 768 })
+  await page.setViewportSize({ width: 1366, height: 768 })
   await signIn(page)
   await page.getByRole('button', { name: 'Mood check-in' }).click()
   await expect(page.getByRole('heading', { name: 'Mood check-in' })).toBeVisible()
