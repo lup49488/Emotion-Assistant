@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 _CONVERSATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_MESSAGE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MESSAGE_ROLES = {"user", "assistant", "system"}
 
 
@@ -52,6 +53,7 @@ def _validate_conversations(items: list[dict[str, Any]]) -> list[dict[str, Any]]
         if not title or len(title) > 200 or not isinstance(messages, list) or len(messages) > 2_000:
             raise ValueError("Exported conversation data is invalid.")
         normalized_messages = []
+        message_ids: set[str] = set()
         for message in messages:
             if not isinstance(message, dict):
                 raise ValueError("Exported conversation message is invalid.")
@@ -59,11 +61,23 @@ def _validate_conversations(items: list[dict[str, Any]]) -> list[dict[str, Any]]
             content = str(message.get("content", ""))
             if role not in _MESSAGE_ROLES or not content or len(content) > 20_000:
                 raise ValueError("Exported conversation message is invalid.")
-            normalized_messages.append({
+            message_id = str(message.get("id") or "").strip()
+            if message_id and (not _MESSAGE_ID.match(message_id) or message_id in message_ids):
+                raise ValueError("Exported conversation message ID is invalid or duplicated.")
+            normalized = {
                 "role": role,
                 "content": content,
                 "created_at": str(message.get("created_at") or item.get("updated_at") or ""),
-            })
+            }
+            if message_id:
+                normalized["id"] = message_id
+                message_ids.add(message_id)
+            reply_to = str(message.get("reply_to_message_id") or "").strip()
+            if reply_to:
+                if not _MESSAGE_ID.match(reply_to):
+                    raise ValueError("Exported conversation quote is invalid.")
+                normalized["reply_to_message_id"] = reply_to
+            normalized_messages.append(normalized)
         seen_ids.add(conversation_id)
         validated.append({
             "id": conversation_id,
@@ -89,7 +103,7 @@ def parse_export_bytes(raw: bytes, user_id: str) -> dict[str, Any]:
         raise ValueError("Import file must be valid UTF-8 JSON.") from exc
     if not isinstance(payload, dict) or not isinstance(payload.get("schema_version"), int):
         raise ValueError("This file is not a recognized Serenova export.")
-    if int(payload["schema_version"]) < 1 or int(payload["schema_version"]) > 4:
+    if int(payload["schema_version"]) < 1 or int(payload["schema_version"]) > 5:
         raise ValueError("This export version is not supported.")
     if str(payload.get("user_id", "")) != validate_user_id(user_id):
         raise ValueError("The export belongs to a different user ID.")

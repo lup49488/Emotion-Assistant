@@ -3639,6 +3639,18 @@
             ],
             "title": "Conversation Id"
           },
+          "quoted_message_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Quoted Message Id"
+          },
           "retry_last_response": {
             "type": "boolean",
             "title": "Retry Last Response",
@@ -3805,6 +3817,10 @@
       },
       "ConversationMessage": {
         "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "role": {
             "type": "string",
             "title": "Role"
@@ -3823,11 +3839,23 @@
               }
             ],
             "title": "Created At"
+          },
+          "reply_to_message_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply To Message Id"
           }
         },
         "additionalProperties": false,
         "type": "object",
         "required": [
+          "id",
           "role",
           "content"
         ],

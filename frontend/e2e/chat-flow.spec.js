@@ -41,6 +41,18 @@ test('English welcome prompts submit their localized message immediately', async
   await expect(page.getByRole('button', { name: 'Talk through a feeling' })).toHaveCount(0)
 })
 
+test('a saved message can be quoted for a focused follow-up', async ({ page }) => {
+  await signIn(page)
+  await sendMessage(page, 'Explain a deployment step')
+  await expect(page.getByText('Grounded answer from the knowledge base.')).toBeVisible()
+
+  await page.getByTitle('Reply to this message').last().click()
+  await expect(page.getByText('Replying to Serenova')).toBeVisible()
+  await sendMessage(page, 'Could you expand that?')
+  await expect(page.getByText('Quoted reply with the selected context.')).toBeVisible()
+  await expect(page.getByText('Replying to Serenova')).toHaveCount(1)
+})
+
 test('assistant replies render HTML line breaks and LaTeX delimiters safely', async ({ page }) => {
   await signIn(page)
   await sendMessage(page, 'Show markdown')
@@ -172,6 +184,30 @@ test('a historical Mood Check-in can be discussed from its record action', async
   await page.locator('.record-actions').first().getByTitle('Discuss record and trend').click()
   await expect(page.locator('.message.user .message-body').last()).toHaveText("I'd like to talk about this mood check-in and its recent trend.")
   await expect(page.locator('.message.assistant .message-body').last()).toContainText('Mood reflection: calm (3/5)')
+})
+
+test('tablet Mood Check-in keeps form controls within their panel', async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 })
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await expect(page.getByRole('heading', { name: 'Mood check-in' })).toBeVisible()
+
+  const bounds = await page.locator('.mood-page').evaluate((pageElement) => {
+    const form = pageElement.querySelector('.checkin-form')
+    const moodInput = form?.querySelector("input:not([type='range']):not([type='file'])")
+    if (!form || !moodInput) return null
+    const formBounds = form.getBoundingClientRect()
+    const inputBounds = moodInput.getBoundingClientRect()
+    return {
+      formRight: formBounds.right,
+      inputRight: inputBounds.right,
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }
+  })
+  expect(bounds).not.toBeNull()
+  expect(bounds.inputRight).toBeLessThanOrEqual(bounds.formRight + 1)
+  expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1)
 })
 
 test('mobile sidebar navigation has no horizontal overflow and applies theme changes', async ({ page }) => {

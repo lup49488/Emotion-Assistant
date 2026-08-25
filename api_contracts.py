@@ -130,6 +130,7 @@ class ChatRequest(ContractModel):
     # The server places it in a bounded, non-instructional prompt context.
     mood_checkin: MoodCheckinContext | None = None
     conversation_id: str | None = Field(default=None, max_length=64)
+    quoted_message_id: str | None = Field(default=None, max_length=64)
     retry_last_response: bool = False
 
 
@@ -240,9 +241,11 @@ class ConversationRenameRequest(ContractModel):
 
 
 class ConversationMessage(ContractModel):
+    id: str
     role: str
     content: str
     created_at: str | None = None
+    reply_to_message_id: str | None = None
 
 
 class ConversationData(ContractModel):

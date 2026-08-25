@@ -41,6 +41,35 @@ def test_sqlite_conversation_archive(tmp_path, monkeypatch):
     _exercise_archive()
 
 
+def _exercise_quote_archive():
+    conversation = conversation_store.create_conversation("quote-user", "Quoted topic")
+    conversation_store.append_exchange("quote-user", conversation["id"], "first question", "first answer")
+    source = conversation_store.get_conversation("quote-user", conversation["id"])["messages"][1]
+    conversation_store.append_exchange(
+        "quote-user", conversation["id"], "please expand that", "expanded answer", reply_to_message_id=source["id"],
+    )
+    stored = conversation_store.get_conversation("quote-user", conversation["id"])
+
+    assert all(message["id"] for message in stored["messages"])
+    assert stored["messages"][2]["reply_to_message_id"] == source["id"]
+    assert conversation_store.get_conversation_message("quote-user", conversation["id"], source["id"])["content"] == "first answer"
+    assert conversation_store.get_conversation_message("another-user", conversation["id"], source["id"]) is None
+    assert conversation_store.last_exchange_message_ids("quote-user", conversation["id"], "please expand that") == {
+        "user_message_id": stored["messages"][2]["id"],
+        "assistant_message_id": stored["messages"][3]["id"],
+    }
+
+
+def test_json_quote_archive(tmp_path, monkeypatch):
+    _use_json_backend(tmp_path, monkeypatch)
+    _exercise_quote_archive()
+
+
+def test_sqlite_quote_archive(tmp_path, monkeypatch):
+    _use_sqlite_backend(tmp_path, monkeypatch)
+    _exercise_quote_archive()
+
+
 def test_chat_archives_normal_reply_to_selected_conversation(tmp_path, monkeypatch):
     _use_json_backend(tmp_path, monkeypatch)
     conversation = conversation_store.create_conversation("archive-user", "Selected")

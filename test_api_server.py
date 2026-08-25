@@ -340,6 +340,53 @@ def test_chat_retry_replaces_the_last_saved_exchange(monkeypatch, tmp_path):
     assert [message["content"] for message in detail.json()["conversation"]["messages"]] == ["Try again", "Retried reply"]
 
 
+def test_chat_quote_uses_the_owned_stored_message_as_background(monkeypatch, tmp_path):
+    captured = {}
+
+    def fake_stream(user_id, message, **kwargs):
+        captured.update(kwargs)
+        append_exchange(
+            user_id, kwargs.get("conversation_id"), message, "Quoted reply",
+            reply_to_message_id=kwargs.get("reply_to_message_id"),
+        )
+        yield "Quoted reply"
+
+    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        created = client.post("/api/v1/conversations", json={"title": "Quote"}, headers=headers)
+        conversation_id = created.json()["conversation"]["id"]
+        append_exchange("api-alice", conversation_id, "Original question", "Original answer")
+        source = client.get(f"/api/v1/conversations/{conversation_id}").json()["conversation"]["messages"][1]
+        with client.stream(
+            "POST", "/api/v1/chat/stream",
+            json={"message": "Please expand that", "conversation_id": conversation_id, "quoted_message_id": source["id"]},
+            headers=headers,
+        ) as response:
+            body = "".join(response.iter_text())
+        detail = client.get(f"/api/v1/conversations/{conversation_id}").json()["conversation"]
+
+    assert response.status_code == 200
+    assert captured["quoted_message"] == {"id": source["id"], "role": "assistant", "content": "Original answer"}
+    assert captured["reply_to_message_id"] == source["id"]
+    assert 'event: archived' in body
+    assert detail["messages"][-2]["reply_to_message_id"] == source["id"]
+
+
+def test_chat_quote_rejects_a_message_outside_the_current_conversation(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        first = client.post("/api/v1/conversations", json={"title": "First"}, headers=headers).json()["conversation"]["id"]
+        second = client.post("/api/v1/conversations", json={"title": "Second"}, headers=headers).json()["conversation"]["id"]
+        append_exchange("api-alice", first, "private", "private answer")
+        source = client.get(f"/api/v1/conversations/{first}").json()["conversation"]["messages"][0]
+        response = client.post(
+            "/api/v1/chat", json={"message": "Use this", "conversation_id": second, "quoted_message_id": source["id"]}, headers=headers,
+        )
+
+    assert response.status_code == 422
+
+
 def test_mood_checkin_rejects_invalid_date_with_422(monkeypatch, tmp_path):
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -137,10 +138,12 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS conversation_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+            message_id TEXT,
             position INTEGER NOT NULL CHECK (position >= 0),
             role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system')),
             content TEXT NOT NULL,
             created_at TEXT NOT NULL,
+            reply_to_message_id TEXT,
             UNIQUE(conversation_id, position)
         );
         CREATE INDEX IF NOT EXISTS idx_conversation_messages_conversation_position
@@ -250,6 +253,29 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             ON background_jobs(user_id, created_at DESC);
         """
     )
+    message_columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(conversation_messages)").fetchall()
+    }
+    if "message_id" not in message_columns:
+        conn.execute("ALTER TABLE conversation_messages ADD COLUMN message_id TEXT")
+    if "reply_to_message_id" not in message_columns:
+        conn.execute("ALTER TABLE conversation_messages ADD COLUMN reply_to_message_id TEXT")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_conversation_messages_conversation_message_id "
+        "ON conversation_messages(conversation_id, message_id)"
+    )
+    legacy_rows = conn.execute(
+        """
+        SELECT id, conversation_id, position, role, content, created_at
+        FROM conversation_messages
+        WHERE message_id IS NULL OR message_id = ''
+        """
+    ).fetchall()
+    for row in legacy_rows:
+        fingerprint = ":".join(str(row[key]) for key in ("conversation_id", "position", "role", "created_at", "content"))
+        message_id = uuid.uuid5(uuid.NAMESPACE_URL, f"serenova-message:{fingerprint}").hex
+        conn.execute("UPDATE conversation_messages SET message_id = ? WHERE id = ?", (message_id, row["id"]))
     _ensure_pending_memory_section(conn)
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",

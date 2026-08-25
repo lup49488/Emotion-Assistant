@@ -58,6 +58,10 @@ def test_chat_request_uses_server_output_limit_when_client_omits_it():
     assert ChatRequest(message="hello").max_new_tokens == DEFAULT_MAX_NEW_TOKENS
 
 
+def test_chat_request_accepts_an_optional_message_quote_id():
+    assert ChatRequest(message="Please expand this.", quoted_message_id="message_123").quoted_message_id == "message_123"
+
+
 def test_chat_request_accepts_one_bounded_mood_checkin_context():
     request = ChatRequest(
         message="I want to talk about this check-in.",

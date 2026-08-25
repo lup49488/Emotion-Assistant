@@ -58,6 +58,28 @@ def _summary(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _legacy_message_id(conversation_id: str, position: int, message: dict[str, Any]) -> str:
+    fingerprint = ":".join(
+        (conversation_id, str(position), str(message.get("role", "")), str(message.get("created_at", "")), str(message.get("content", "")))
+    )
+    return uuid.uuid5(uuid.NAMESPACE_URL, f"serenova-message:{fingerprint}").hex
+
+
+def _normalized_message(conversation_id: str, position: int, message: dict[str, Any]) -> dict[str, Any]:
+    result = dict(message)
+    result["id"] = str(result.get("id") or _legacy_message_id(conversation_id, position, result))
+    reply_to = str(result.get("reply_to_message_id") or "").strip()
+    if reply_to:
+        result["reply_to_message_id"] = reply_to
+    else:
+        result.pop("reply_to_message_id", None)
+    return result
+
+
+def _normalized_messages(conversation_id: str, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [_normalized_message(conversation_id, position, message) for position, message in enumerate(messages)]
+
+
 def create_conversation(user_id: str, title: str = "New conversation") -> dict[str, Any]:
     user_id = validate_user_id(user_id)
     timestamp = _now()
@@ -122,7 +144,7 @@ def get_conversation(user_id: str, conversation_id: str) -> dict[str, Any] | Non
                 return None
             messages = conn.execute(
                 """
-                SELECT role, content, created_at FROM conversation_messages
+                SELECT message_id AS id, role, content, created_at, reply_to_message_id FROM conversation_messages
                 WHERE conversation_id = ? ORDER BY position, id
                 """,
                 (conversation_id,),
@@ -133,7 +155,10 @@ def get_conversation(user_id: str, conversation_id: str) -> dict[str, Any] | Non
     with user_file_lock(user_id):
         for record in _load_json_conversations(user_id):
             if str(record.get("id")) == conversation_id:
-                return dict(record)
+                result = dict(record)
+                raw_messages = result.get("messages", [])
+                result["messages"] = _normalized_messages(conversation_id, raw_messages if isinstance(raw_messages, list) else [])
+                return result
     return None
 
 
@@ -142,13 +167,27 @@ def ensure_conversation(user_id: str, conversation_id: str | None, first_message
     return existing if existing is not None else create_conversation(user_id, _title_from_text(first_message))
 
 
-def append_exchange(user_id: str, conversation_id: str | None, user_text: str, assistant_text: str) -> str:
+def append_exchange(
+    user_id: str,
+    conversation_id: str | None,
+    user_text: str,
+    assistant_text: str,
+    *,
+    reply_to_message_id: str | None = None,
+) -> str:
     record = ensure_conversation(user_id, conversation_id, user_text)
     conversation_id = str(record["id"])
     timestamp = _now()
+    quote_id = str(reply_to_message_id or "").strip() or None
     messages = [
-        {"role": "user", "content": str(user_text), "created_at": timestamp},
-        {"role": "assistant", "content": str(assistant_text), "created_at": timestamp},
+        {
+            "id": uuid.uuid4().hex,
+            "role": "user",
+            "content": str(user_text),
+            "created_at": timestamp,
+            "reply_to_message_id": quote_id,
+        },
+        {"id": uuid.uuid4().hex, "role": "assistant", "content": str(assistant_text), "created_at": timestamp},
     ]
     if sqlite_enabled():
         with sqlite_connection() as conn:
@@ -159,10 +198,13 @@ def append_exchange(user_id: str, conversation_id: str | None, user_text: str, a
             start = int(row["position"]) + 1
             conn.executemany(
                 """
-                INSERT INTO conversation_messages(conversation_id, position, role, content, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO conversation_messages(conversation_id, message_id, position, role, content, created_at, reply_to_message_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                [(conversation_id, start + index, item["role"], item["content"], timestamp) for index, item in enumerate(messages)],
+                [
+                    (conversation_id, item["id"], start + index, item["role"], item["content"], timestamp, item.get("reply_to_message_id"))
+                    for index, item in enumerate(messages)
+                ],
             )
             conn.execute("UPDATE conversations SET updated_at = ? WHERE id = ?", (timestamp, conversation_id))
         return conversation_id
@@ -175,6 +217,45 @@ def append_exchange(user_id: str, conversation_id: str | None, user_text: str, a
                 break
         _save_json_conversations(user_id, conversations)
     return conversation_id
+
+
+def get_conversation_message(user_id: str, conversation_id: str | None, message_id: str | None) -> dict[str, Any] | None:
+    """Return one owned message for a quote, never trusting client-provided text."""
+    user_id = validate_user_id(user_id)
+    conversation_id = (conversation_id or "").strip()
+    message_id = (message_id or "").strip()
+    if not conversation_id or not message_id:
+        return None
+    if sqlite_enabled():
+        with sqlite_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT m.message_id AS id, m.role, m.content, m.created_at, m.reply_to_message_id
+                FROM conversation_messages m
+                JOIN conversations c ON c.id = m.conversation_id
+                WHERE c.user_id = ? AND m.conversation_id = ? AND m.message_id = ?
+                """,
+                (user_id, conversation_id, message_id),
+            ).fetchone()
+        return dict(row) if row is not None else None
+    record = get_conversation(user_id, conversation_id)
+    if record is None:
+        return None
+    return next((message for message in record["messages"] if message["id"] == message_id), None)
+
+
+def last_exchange_message_ids(user_id: str, conversation_id: str | None, user_text: str) -> dict[str, str] | None:
+    """Return the IDs just archived for one turn so streaming clients can quote it immediately."""
+    record = get_conversation(user_id, conversation_id or "")
+    messages = record.get("messages", []) if record else []
+    if len(messages) < 2:
+        return None
+    user_message, assistant_message = messages[-2:]
+    if user_message.get("role") != "user" or assistant_message.get("role") != "assistant":
+        return None
+    if str(user_message.get("content", "")) != user_text:
+        return None
+    return {"user_message_id": str(user_message["id"]), "assistant_message_id": str(assistant_message["id"])}
 
 
 def remove_last_exchange(user_id: str, conversation_id: str | None, user_text: str) -> bool:
@@ -274,7 +355,7 @@ def restore_conversations(user_id: str, records: list[dict[str, Any]], *, mode: 
             "title": _title_from_text(str(item.get("title", "New conversation"))),
             "created_at": str(item.get("created_at") or _now()),
             "updated_at": str(item.get("updated_at") or _now()),
-            "messages": [dict(message) for message in item.get("messages", [])],
+            "messages": _normalized_messages(str(item["id"]), [dict(message) for message in item.get("messages", [])]),
         }
         for item in records
     ]
@@ -298,9 +379,9 @@ def restore_conversations(user_id: str, records: list[dict[str, Any]], *, mode: 
                         (record["id"], user_id, record["title"], record["created_at"], record["updated_at"]),
                     )
                     conn.executemany(
-                        "INSERT INTO conversation_messages(conversation_id, position, role, content, created_at) VALUES (?, ?, ?, ?, ?)",
+                        "INSERT INTO conversation_messages(conversation_id, message_id, position, role, content, created_at, reply_to_message_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
                         [
-                            (record["id"], position, message["role"], message["content"], message["created_at"])
+                            (record["id"], message["id"], position, message["role"], message["content"], message["created_at"], message.get("reply_to_message_id"))
                             for position, message in enumerate(record["messages"])
                         ],
                     )

@@ -162,13 +162,16 @@ const server = http.createServer(async (request, response) => {
       response.write('event: chunk\ndata: {"text":"General answer without sources."}\n\n')
       return response.end('event: done\ndata: {}\n\n')
     }
-    const reply = body.retry_last_response ? 'Regenerated answer' : body.mood_checkin
+    const reply = body.retry_last_response ? 'Regenerated answer' : body.quoted_message_id
+      ? 'Quoted reply with the selected context.' : body.mood_checkin
       ? `Mood reflection: ${body.mood_checkin.mood} (${body.mood_checkin.intensity}/5) - ${body.mood_checkin.note}`
       : body.message === 'Show markdown'
       ? 'First line<br>Second line\n\n\\[ P(C \\mid \\mathbf{x}) = \\frac{P(\\mathbf{x} \\mid C)P(C)}{P(\\mathbf{x})} \\]\n\n| 后验分布 | 公式 |\n| --- | --- |\n| Posterior | $$P(\\theta | x)=\\frac{P(x | \\theta)P(\\theta)}{P(x)}$$ |'
       : 'Grounded answer from the knowledge base.'
-    item.messages = [{ role: 'user', content: body.message }, { role: 'assistant', content: reply }]
-    item.message_count = 2
+    const userMessage = { id: randomUUID().replaceAll('-', ''), role: 'user', content: body.message, reply_to_message_id: body.quoted_message_id || null }
+    const assistantMessage = { id: randomUUID().replaceAll('-', ''), role: 'assistant', content: reply }
+    item.messages = [...item.messages, userMessage, assistantMessage]
+    item.message_count = item.messages.length
     memorySnapshot.history = [...item.messages]
     if (body.message === 'I feel happy today') {
       memorySnapshot.emotion_memory = [{ label: 'joy', score: 0.98, time: '2026-07-27T09:00:00' }]
@@ -176,6 +179,7 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
     response.write(`event: chunk\ndata: ${JSON.stringify({ text: reply.slice(0, 10) })}\n\n`)
     response.write(`event: chunk\ndata: ${JSON.stringify({ text: reply.slice(10) })}\n\n`)
+    response.write(`event: archived\ndata: ${JSON.stringify({ user_message_id: userMessage.id, assistant_message_id: assistantMessage.id })}\n\n`)
     if (body.use_knowledge) response.write(`event: citations\ndata: ${JSON.stringify({ trace_id: 'e2e-trace', citations: [{ source: 'deployment_guide.md', chunk_index: 0, score: 0.93, excerpt: 'Deployment guide excerpt' }] })}\n\n`)
     return response.end('event: done\ndata: {}\n\n')
   }

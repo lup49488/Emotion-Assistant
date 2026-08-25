@@ -140,6 +140,8 @@ def chat(
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
     mood_checkin: dict[str, Any] | None = None,
+    quoted_message: dict[str, str] | None = None,
+    reply_to_message_id: str | None = None,
 ) -> Generator[str, None, None]:
     user_text = user_text.strip()
     if not user_text:
@@ -155,7 +157,7 @@ def chat(
     crisis_reply = check_crisis(state, safety_text, emo_label, emo_score, lang)
     if crisis_reply is not None:
         update_short_term(state, user_text, crisis_reply)
-        _archive_exchange(state.user_id, conversation_id, user_text, crisis_reply)
+        _archive_exchange(state.user_id, conversation_id, user_text, crisis_reply, reply_to_message_id=reply_to_message_id)
         yield crisis_reply
         return
 
@@ -176,6 +178,7 @@ def chat(
         knowledge_context=knowledge_context,
         style_context=style_context,
         mood_checkin=mood_checkin,
+        quoted_message=quoted_message,
     )
     full_messages = [messages[0], *state.history, messages[1]]
 
@@ -209,12 +212,19 @@ def chat(
         yield "\n" + tool_result
 
     update_short_term(state, user_text, final_reply)
-    _archive_exchange(state.user_id, conversation_id, user_text, final_reply)
+    _archive_exchange(state.user_id, conversation_id, user_text, final_reply, reply_to_message_id=reply_to_message_id)
 
 
-def _archive_exchange(user_id: str, conversation_id: str | None, user_text: str, assistant_text: str) -> None:
+def _archive_exchange(
+    user_id: str,
+    conversation_id: str | None,
+    user_text: str,
+    assistant_text: str,
+    *,
+    reply_to_message_id: str | None = None,
+) -> None:
     try:
-        append_exchange(user_id, conversation_id, user_text, assistant_text)
+        append_exchange(user_id, conversation_id, user_text, assistant_text, reply_to_message_id=reply_to_message_id)
     except Exception:
         logger.exception("Failed to archive chat exchange. user=%s", user_id)
 
@@ -229,6 +239,8 @@ def chat_sync(
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
     mood_checkin: dict[str, Any] | None = None,
+    quoted_message: dict[str, str] | None = None,
+    reply_to_message_id: str | None = None,
 ) -> str:
     return "".join(chat(
         state,
@@ -240,6 +252,8 @@ def chat_sync(
         conversation_id=conversation_id,
         knowledge_context=knowledge_context,
         mood_checkin=mood_checkin,
+        quoted_message=quoted_message,
+        reply_to_message_id=reply_to_message_id,
     ))
 
 
@@ -256,6 +270,8 @@ def handle_user_message(
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
     mood_checkin: dict[str, Any] | None = None,
+    quoted_message: dict[str, str] | None = None,
+    reply_to_message_id: str | None = None,
 ) -> str:
     with session_store.session(user_id) as state:
         return chat_sync(
@@ -268,6 +284,8 @@ def handle_user_message(
             conversation_id=conversation_id,
             knowledge_context=knowledge_context,
             mood_checkin=mood_checkin,
+            quoted_message=quoted_message,
+            reply_to_message_id=reply_to_message_id,
         )
 
 
@@ -281,6 +299,8 @@ def handle_user_message_stream(
     conversation_id: str | None = None,
     knowledge_context: str | None = None,
     mood_checkin: dict[str, Any] | None = None,
+    quoted_message: dict[str, str] | None = None,
+    reply_to_message_id: str | None = None,
 ) -> Generator[str, None, None]:
     with session_store.session(user_id) as state:
         yield from chat(
@@ -293,10 +313,18 @@ def handle_user_message_stream(
             conversation_id=conversation_id,
             knowledge_context=knowledge_context,
             mood_checkin=mood_checkin,
+            quoted_message=quoted_message,
+            reply_to_message_id=reply_to_message_id,
         )
 
 
-def crisis_precheck(user_id: str, user_text: str, conversation_id: str | None = None) -> str | None:
+def crisis_precheck(
+    user_id: str,
+    user_text: str,
+    conversation_id: str | None = None,
+    *,
+    reply_to_message_id: str | None = None,
+) -> str | None:
     """Run the crisis safety layer for callers that will not run a full turn.
 
     Callers that short-circuit :func:`chat` — such as the RAG insufficient-evidence
@@ -315,7 +343,7 @@ def crisis_precheck(user_id: str, user_text: str, conversation_id: str | None = 
         if crisis_reply is None:
             return None
         update_short_term(state, user_text, crisis_reply)
-        _archive_exchange(user_id, conversation_id, user_text, crisis_reply)
+        _archive_exchange(user_id, conversation_id, user_text, crisis_reply, reply_to_message_id=reply_to_message_id)
     return crisis_reply
 
 

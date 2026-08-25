@@ -15,6 +15,7 @@ import {
   PanelRight,
   Pencil,
   RefreshCw,
+  Reply,
   SendHorizontal,
   Settings2,
   ShieldCheck,
@@ -70,6 +71,7 @@ function App() {
   const [editingConversationId, setEditingConversationId] = useState(null)
   const [conversationTitleDraft, setConversationTitleDraft] = useState('')
   const [messages, setMessages] = useState([])
+  const [quotedMessage, setQuotedMessage] = useState(null)
   const [draft, setDraft] = useState('')
   const [isSending, setIsSending] = useState(false)
   const [isSlow, setIsSlow] = useState(false)
@@ -97,6 +99,10 @@ function App() {
   const selectedProvider = useMemo(
     () => providerCatalog.find((provider) => provider.id === options.provider),
     [providerCatalog, options.provider],
+  )
+  const messagesById = useMemo(
+    () => new Map(messages.filter((message) => message.id).map((message) => [message.id, message])),
+    [messages],
   )
   const modelChoices = selectedProvider?.models || []
 
@@ -193,6 +199,7 @@ function App() {
       const data = await response.json()
       setActiveConversation(data.conversation)
       setMessages(data.conversation.messages || [])
+      setQuotedMessage(null)
     } catch (error) {
       setNotice(error.message)
     }
@@ -208,6 +215,7 @@ function App() {
       const conversation = { ...data.conversation, messages: [] }
       setActiveConversation(conversation)
       setMessages([])
+      setQuotedMessage(null)
       await refreshConversations()
     } catch (error) {
       setNotice(error.message)
@@ -247,6 +255,7 @@ function App() {
       if (activeConversation?.id === conversation.id) {
         setActiveConversation(null)
         setMessages([])
+        setQuotedMessage(null)
       }
     } catch (error) {
       setNotice(error.message)
@@ -261,13 +270,17 @@ function App() {
     const text = retryMessageIndex === null
       ? String(directMessage ?? draft).trim()
       : String(messages[retryMessageIndex - 1]?.content || '').trim()
+    const quoteForRequest = retryMessageIndex === null ? quotedMessage : null
     if (!text || isSending) return
     if (!isLikelyBaseUrl(options.baseUrl)) {
       setOptions((current) => ({ ...current, baseUrl: '', apiKey: '' }))
       setNotice(t('invalidModelCredentials'))
       return
     }
-    if (retryMessageIndex === null) setDraft('')
+    if (retryMessageIndex === null) {
+      setDraft('')
+      setQuotedMessage(null)
+    }
     setNotice('')
     setIsSending(true)
     const controller = new AbortController()
@@ -285,7 +298,13 @@ function App() {
       }
 
       if (retryMessageIndex === null) {
-        setMessages((current) => [...current, { role: 'user', content: text, moodCheckin: moodCheckinContext }, { role: 'assistant', content: '', pending: true }])
+        setMessages((current) => [...current,
+          {
+            role: 'user', content: text, moodCheckin: moodCheckinContext,
+            reply_to_message_id: quoteForRequest?.id || null, quotedMessage: quoteForRequest,
+          },
+          { role: 'assistant', content: '', pending: true },
+        ])
       } else {
         setMessages((current) => current.map((item, index) => index === retryMessageIndex
           ? { ...item, content: '', pending: true, failed: false }
@@ -314,6 +333,7 @@ function App() {
             intensity: moodCheckinContext.intensity,
             note: moodCheckinContext.note || '',
           } : null,
+          quoted_message_id: quoteForRequest?.id || null,
           retry_last_response: retryMessageIndex !== null,
         }),
       })
@@ -340,6 +360,13 @@ function App() {
             setMessages((current) => current.map((item, index) => index === current.length - 1
               ? { ...item, content: item.content + payload.text, pending: false }
               : item))
+          }
+          if (eventName === 'archived') {
+            setMessages((current) => current.map((item, index) => {
+              if (index === current.length - 2) return { ...item, id: payload.user_message_id }
+              if (index === current.length - 1) return { ...item, id: payload.assistant_message_id }
+              return item
+            }))
           }
           if (eventName === 'citations') {
             setMessages((current) => current.map((item, index) => index === current.length - 1
@@ -428,6 +455,10 @@ function App() {
   if (!session) return <LoginScreen onSuccess={restoreSession} t={t} />
 
   const activeNavigationItem = visibleNavigation.find((item) => item.id === activeView)
+  const quoteMessage = (message) => {
+    if (!message?.id || isSending) return
+    setQuotedMessage({ id: message.id, role: message.role, content: message.content })
+  }
   const mobileTitle = activeView === 'chat' ? activeTitle : t(activeNavigationItem?.label || 'chat')
   const navigateWorkspace = (viewId) => {
     setActiveView(viewId)
@@ -444,6 +475,7 @@ function App() {
     setMobileSidebarOpen(false)
     setActiveConversation(null)
     setMessages([])
+    setQuotedMessage(null)
     await sendMessage(null, t('moodReflectionRequest'), record, true)
   }
   const openConversation = async (conversation) => {
@@ -515,12 +547,12 @@ function App() {
         <header className="chat-header"><div><h1>{activeTitle}</h1><p>{t('connected')} {apiLabel}</p></div><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('preferences')} onClick={() => setSettingsOpen((open) => !open)}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></header>
         <div className="messages" aria-live="polite">
           {!hasMessages && <Welcome onPrompt={sendMessage} t={t} />}
-          {messages.map((message, index) => <Message key={`${message.role}-${index}`} message={message} index={index} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onRetry={sendMessage} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
+          {messages.map((message, index) => <Message key={message.id || `${message.role}-${index}`} message={message} index={index} quotedMessage={message.quotedMessage || messagesById.get(message.reply_to_message_id)} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onQuote={quoteMessage} onRetry={sendMessage} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
           <div ref={messageEndRef} />
         </div>
         {notice && <div className="notice" role="alert">{notice}<button onClick={() => setNotice('')} title="Dismiss"><X size={15} /></button></div>}
         {isSlow && <div className="slow-request" role="status">{t('stillWaiting')}</div>}
-        <Composer draft={draft} setDraft={setDraft} sendMessage={sendMessage} isSending={isSending} cancelGeneration={cancelGeneration} t={t} />
+        <Composer draft={draft} setDraft={setDraft} sendMessage={sendMessage} isSending={isSending} cancelGeneration={cancelGeneration} quotedMessage={quotedMessage} clearQuote={() => setQuotedMessage(null)} t={t} />
       </section>
 
       <aside className={`settings-panel ${settingsOpen ? 'open' : ''}`} aria-label="Chat preferences">
@@ -619,7 +651,7 @@ function LoginScreen({ onSuccess, t }) {
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt(null, t('talkPromptMessage'))}>{t('talkPrompt')}</button><button onClick={() => onPrompt(null, t('planPromptMessage'))}>{t('planPrompt')}</button></div></div> }
 
-function Message({ message, index, canRegenerate, onCopy, onRetry, onRagFeedback, isSending, t }) {
+function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote, onRetry, onRagFeedback, isSending, t }) {
   // Only an enforced refusal replaces the reply. When RAG_REQUIRE_EVIDENCE is off
   // the server still reports `insufficient`, but it also answers normally.
   const insufficientEvidence = Boolean(message.ragStatus?.enforced)
@@ -635,17 +667,18 @@ function Message({ message, index, canRegenerate, onCopy, onRetry, onRagFeedback
             : message.role === 'assistant' && !message.failed ? <Suspense fallback={displayContent}><AssistantMarkdown content={displayContent} /></Suspense>
               : displayContent}
       </div>
+      {quotedMessage && <div className="message-quote"><Reply size={13} /><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div>}
       {message.role === 'assistant' && message.citations?.length > 0 && <div className="rag-citations"><span>{t('sources')}</span>{message.citations.map((citation) => <span className="rag-citation" title={citation.excerpt} key={`${citation.source}-${citation.chunk_index}`}>{citation.source}</span>)}</div>}
-      {message.role === 'assistant' && !message.pending && <div className="message-actions">
+      {!message.pending && <div className="message-actions">
+        {message.id && <button className="message-action" title={t('quoteMessage')} disabled={isSending} onClick={() => onQuote(message)}><Reply size={14} /></button>}
         {displayContent && !message.failed && <button className="message-action" title={t('copyReply')} onClick={() => onCopy(displayContent)}><Copy size={14} /></button>}
-        {message.citationTraceId && <><button className={`message-action ${message.ragFeedback === true ? 'selected' : ''}`} title={t('ragHelpful')} onClick={() => onRagFeedback(index, true)}><ThumbsUp size={14} /></button><button className={`message-action ${message.ragFeedback === false ? 'selected' : ''}`} title={t('ragUnhelpful')} onClick={() => onRagFeedback(index, false)}><ThumbsDown size={14} /></button></>}
-        {canRetry && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}
+        {message.role === 'assistant' && <>{message.citationTraceId && <><button className={`message-action ${message.ragFeedback === true ? 'selected' : ''}`} title={t('ragHelpful')} onClick={() => onRagFeedback(index, true)}><ThumbsUp size={14} /></button><button className={`message-action ${message.ragFeedback === false ? 'selected' : ''}`} title={t('ragUnhelpful')} onClick={() => onRagFeedback(index, false)}><ThumbsDown size={14} /></button></>}{canRetry && <button className="message-action" title={t('retryGeneration')} disabled={isSending} onClick={() => onRetry(index)}><RefreshCw size={14} /></button>}</>}
       </div>}
     </div>
   </article>
 }
 
-function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, t }) { return <div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div> }
+function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, quotedMessage, clearQuote, t }) { return <div className="composer-wrap">{quotedMessage && <div className="composer-quote"><Reply size={14} /><div><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div><button type="button" className="icon-button" title={t('removeQuote')} onClick={clearQuote}><X size={15} /></button></div>}<div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div></div> }
 
 function PreferencesControls({ theme, setTheme, locale, setLocale, t }) { return <div className="preferences-controls"><label><SunMoon size={15} /><span>{t('theme')}</span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select></label><label><Languages size={15} /><span>{t('language')}</span><select value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">{t('english')}</option><option value="zh">{t('chinese')}</option></select></label></div> }
 

@@ -23,7 +23,7 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
     state = load_state(user_id)
     mood_checkins = load_mood_checkins(user_id)
     return {
-        "schema_version": 4,
+        "schema_version": 5,
         "exported_at": datetime.now().isoformat(timespec="seconds"),
         "user_id": user_id,
         "notes": [

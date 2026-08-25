@@ -83,7 +83,7 @@ from auth_store import access_key_version
 from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_RAG_ADMIN_USER_IDS, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER, RAG_REQUIRE_EVIDENCE
 from auth_rate_limit import clear_login_failures, login_allowed, record_login_failure
 from api_usage_store import list_usage_events, usage_summary
-from conversation_store import append_exchange, create_conversation, delete_conversation, get_conversation, list_conversations, remove_last_exchange, rename_conversation
+from conversation_store import append_exchange, create_conversation, delete_conversation, get_conversation, get_conversation_message, last_exchange_message_ids, list_conversations, remove_last_exchange, rename_conversation
 from export_store import build_user_export_payload
 from gui_auth import authorize
 from knowledge_store import (
@@ -610,7 +610,25 @@ def _mood_record_with_images(user_id: str, record: dict[str, Any]) -> dict[str, 
     return {**record, "images": list_mood_images(user_id, str(record["date"]))}
 
 
-def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | None = None) -> Generator[str, None, None]:
+def _quoted_message_context(user_id: str, request: ChatRequest) -> dict[str, str] | None:
+    if not request.quoted_message_id:
+        return None
+    quoted = get_conversation_message(user_id, request.conversation_id, request.quoted_message_id)
+    if quoted is None:
+        raise HTTPException(status_code=422, detail="The quoted message was not found in this conversation.")
+    return {
+        "id": str(quoted["id"]),
+        "role": str(quoted["role"]),
+        "content": str(quoted["content"])[:4_000],
+    }
+
+
+def _chat_chunks(
+    user_id: str,
+    request: ChatRequest,
+    knowledge_context: str | None = None,
+    quoted_message: dict[str, str] | None = None,
+) -> Generator[str, None, None]:
     if request.retry_last_response:
         remove_last_exchange(user_id, request.conversation_id, request.message)
         _rollback_short_term_exchange(user_id, request.message)
@@ -634,6 +652,8 @@ def _chat_chunks(user_id: str, request: ChatRequest, knowledge_context: str | No
         conversation_id=request.conversation_id,
         knowledge_context=knowledge_context,
         mood_checkin=_mood_reflection_context(user_id, request.mood_checkin.model_dump()) if request.mood_checkin else None,
+        quoted_message=quoted_message,
+        reply_to_message_id=request.quoted_message_id,
     )
 
 
@@ -666,7 +686,9 @@ def _insufficient_evidence_notice(message: str) -> str:
     return RAG_INSUFFICIENT_EVIDENCE_NOTICE["zh" if detect_lang(message).startswith("zh") else "en"]
 
 
-def _resolve_insufficient_evidence(user_id: str, request: ChatRequest) -> tuple[str, bool]:
+def _resolve_insufficient_evidence(
+    user_id: str, request: ChatRequest, quoted_message: dict[str, str] | None = None,
+) -> tuple[str, bool]:
     """Answer a turn that retrieval could not ground, and archive the exchange.
 
     Returns the reply text plus whether the crisis safety layer produced it.
@@ -677,22 +699,27 @@ def _resolve_insufficient_evidence(user_id: str, request: ChatRequest) -> tuple[
     if request.retry_last_response:
         remove_last_exchange(user_id, request.conversation_id, request.message)
         _rollback_short_term_exchange(user_id, request.message)
-    crisis_reply = crisis_precheck(user_id, request.message, request.conversation_id)
+    crisis_reply = crisis_precheck(
+        user_id, request.message, request.conversation_id, reply_to_message_id=request.quoted_message_id,
+    )
     if crisis_reply is not None:
         return crisis_reply, True
     notice = _insufficient_evidence_notice(request.message)
-    append_exchange(user_id, request.conversation_id, request.message, notice)
+    append_exchange(
+        user_id, request.conversation_id, request.message, notice, reply_to_message_id=request.quoted_message_id,
+    )
     return notice, False
 
 
 @app.post("/api/v1/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
     started = time.perf_counter()
+    quoted_message = _quoted_message_context(user_id, request)
     bundle = _knowledge_bundle(request)
     rag_status = _rag_status(bundle)
     rag_status["enforced"] = _must_refuse_for_insufficient_evidence(request, rag_status)
     if rag_status["enforced"]:
-        reply, from_crisis_layer = _resolve_insufficient_evidence(user_id, request)
+        reply, from_crisis_layer = _resolve_insufficient_evidence(user_id, request, quoted_message)
         # A crisis reply is a real answer, so the client must render it normally
         # instead of replacing it with the insufficient-evidence notice.
         rag_status["enforced"] = not from_crisis_layer
@@ -701,7 +728,8 @@ def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
         logger.info("event=chat_completed request_id=%s provider=%s streaming=false rag_status=insufficient crisis=%s", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER, from_crisis_layer)
         return {"reply": reply, "citations": [], "citation_trace_id": None, "rag_status": rag_status}
     try:
-        reply = "".join(_chat_chunks(user_id, request, bundle["context"]))
+        chunks = _chat_chunks(user_id, request, bundle["context"], quoted_message) if quoted_message else _chat_chunks(user_id, request, bundle["context"])
+        reply = "".join(chunks)
     except Exception:
         duration_ms = int((time.perf_counter() - started) * 1000)
         chat_finished(False, duration_ms, streaming=False)
@@ -735,6 +763,7 @@ def _memory_receipt(user_id: str) -> str:
 )
 async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> StreamingResponse:
     request_id = get_request_id()
+    quoted_message = _quoted_message_context(user_id, request)
 
     async def event_source():
         token = set_request_id(request_id)
@@ -746,12 +775,15 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             rag_status = _rag_status(bundle)
             rag_status["enforced"] = _must_refuse_for_insufficient_evidence(request, rag_status)
             if rag_status["enforced"]:
-                reply, from_crisis_layer = await run_in_threadpool(_resolve_insufficient_evidence, user_id, request)
+                reply, from_crisis_layer = await run_in_threadpool(_resolve_insufficient_evidence, user_id, request, quoted_message)
                 # A crisis reply is a real answer, so the client must render it
                 # normally instead of the insufficient-evidence notice.
                 rag_status["enforced"] = not from_crisis_layer
                 yield f"event: rag_status\ndata: {json.dumps(rag_status, ensure_ascii=False)}\n\n"
                 yield f"event: chunk\ndata: {json.dumps({'text': reply}, ensure_ascii=False)}\n\n"
+                archived = await run_in_threadpool(last_exchange_message_ids, user_id, request.conversation_id, request.message)
+                if archived:
+                    yield f"event: archived\ndata: {json.dumps(archived, ensure_ascii=False)}\n\n"
                 yield "event: done\ndata: {}\n\n"
                 duration_ms = int((time.perf_counter() - started) * 1000)
                 chat_finished(True, duration_ms, streaming=True, rag_refused=rag_status["enforced"])
@@ -761,9 +793,12 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
                 yield f"event: rag_status\ndata: {json.dumps(rag_status, ensure_ascii=False)}\n\n"
             # 始终复用 bundle 已检索出的上下文（与非流式 /chat 一致），
             # 避免 use_knowledge=True 但检索为空时在 chatbot 内部重复检索。
-            generator = _chat_chunks(user_id, request, bundle["context"])
+            generator = _chat_chunks(user_id, request, bundle["context"], quoted_message) if quoted_message else _chat_chunks(user_id, request, bundle["context"])
             async for chunk in iterate_in_threadpool(generator):
                 yield f"event: chunk\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
+            archived = await run_in_threadpool(last_exchange_message_ids, user_id, request.conversation_id, request.message)
+            if archived:
+                yield f"event: archived\ndata: {json.dumps(archived, ensure_ascii=False)}\n\n"
             trace_id = await run_in_threadpool(create_citation_trace, user_id, request.conversation_id, bundle["citations"])
             if bundle["citations"]:
                 yield f"event: citations\ndata: {json.dumps({'trace_id': trace_id, 'citations': bundle['citations']}, ensure_ascii=False)}\n\n"

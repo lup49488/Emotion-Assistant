@@ -109,7 +109,7 @@ function MemoryAuditList({ events, onUndo, t }) {
 }
 
 export function MoodPage({ t, onReflect }) {
-  return <section className="feature-page"><PageHeader title={t('moodTitle')} description={t('moodDescription')} /><MoodCheckinContent t={t} onReflect={onReflect} /></section>
+  return <section className="feature-page mood-page"><PageHeader title={t('moodTitle')} description={t('moodDescription')} /><MoodCheckinContent t={t} onReflect={onReflect} /></section>
 }
 
 function MoodCheckinContent({ t, onReflect }) {
