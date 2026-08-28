@@ -161,6 +161,10 @@ class MemorySavePreferenceResponse(ContractModel):
     mode: Literal["auto", "confirm", "off"]
 
 
+class PendingMemoryUpdateRequest(ContractModel):
+    text: str = Field(min_length=1, max_length=2_000)
+
+
 class ChatResponse(ContractModel):
     reply: str
     memory_receipt: str | None = None
@@ -276,6 +280,10 @@ class MemorySnapshotResponse(ContractModel):
 
 
 class LongTermMemoryUpdateRequest(ContractModel):
+    items: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
+
+
+class InterestMemoryUpdateRequest(ContractModel):
     items: list[dict[str, Any]] = Field(default_factory=list, max_length=100)
 
 

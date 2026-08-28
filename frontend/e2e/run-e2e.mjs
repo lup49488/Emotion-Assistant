@@ -3,6 +3,10 @@ import { spawn } from 'node:child_process'
 const isWindows = process.platform === 'win32'
 const npx = isWindows ? 'npx.cmd' : 'npx'
 const children = []
+const mockPort = 18100
+const vitePort = 4180
+const baseUrl = `http://127.0.0.1:${vitePort}`
+const mockUrl = `http://127.0.0.1:${mockPort}`
 
 function start(command, args, options = {}) {
   const child = spawn(command, args, { stdio: 'inherit', ...options })
@@ -40,15 +44,15 @@ async function stop(child) {
   ])
 }
 
-start(process.execPath, ['e2e/mock-api.mjs'])
+start(process.execPath, ['e2e/mock-api.mjs'], { env: { ...process.env, E2E_MOCK_PORT: String(mockPort), E2E_FRONTEND_ORIGIN: baseUrl } })
 start(process.execPath, [
-  './node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '4174',
-], { env: { ...process.env, VITE_API_BASE_URL: 'http://127.0.0.1:18000' } })
+  './node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(vitePort),
+], { env: { ...process.env, VITE_API_BASE_URL: mockUrl } })
 
 try {
-  await waitFor('http://127.0.0.1:18000/health')
-  await waitFor('http://127.0.0.1:4174')
-  const playwright = start(npx, ['playwright', 'test'], { shell: isWindows })
+  await waitFor(`${mockUrl}/health`)
+  await waitFor(baseUrl)
+  const playwright = start(npx, ['playwright', 'test'], { shell: isWindows, env: { ...process.env, E2E_BASE_URL: baseUrl, E2E_API_BASE_URL: mockUrl } })
   const exitCode = await waitForExit(playwright)
   process.exitCode = exitCode
 } catch (error) {

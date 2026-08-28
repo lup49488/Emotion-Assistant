@@ -82,3 +82,12 @@ August 5， 2026
 
 August 6, 2026
 增加Docker支持，准备VPS部署
+
+August 22, 2026
+打通Mood check-in与聊天通道
+
+August 23, 2026
+Mood check-in增加附加图片功能
+
+August 27, 2026
+完成前端设计初步更新

@@ -3,6 +3,9 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
+import io
+import zipfile
 from typing import Any
 
 import logging
@@ -19,9 +22,147 @@ from session_store import validate_user_id
 logger = logging.getLogger(__name__)
 
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
+MAX_EXTERNAL_UNCOMPRESSED_BYTES = 30 * 1024 * 1024
+MAX_EXTERNAL_USER_BYTES = 512 * 1024
 _CONVERSATION_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MESSAGE_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MESSAGE_ROLES = {"user", "assistant", "system"}
+
+
+def _external_id(prefix: str, value: Any) -> str:
+    digest = hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+    return f"{prefix}_{digest[:40]}"
+
+
+def _read_zip_member(archive: zipfile.ZipFile, info: zipfile.ZipInfo, limit: int) -> bytes:
+    """Read one member, bounded by what it actually decompresses to.
+
+    ZipInfo.file_size comes from the archive's own header, so an uploader can
+    understate it and slip an oversized member past a pre-read check. Reading
+    one byte past the limit and rejecting on that keeps the ceiling real.
+    """
+    with archive.open(info) as member:
+        data = member.read(limit + 1)
+    if len(data) > limit:
+        raise ValueError("The archive contains too much uncompressed data.")
+    return data
+
+
+def _read_external_payload(raw: bytes) -> Any:
+    if not raw or len(raw) > MAX_IMPORT_BYTES:
+        raise ValueError("Import file must be non-empty and under 10 MB.")
+    if raw[:2] == b"PK":
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+                names = [name for name in archive.namelist() if not name.endswith("/") and name.lower().endswith(".json")]
+                if len(names) > 30 or not names:
+                    raise ValueError("The archive does not contain a supported JSON export.")
+                info = next((archive.getinfo(name) for name in names if name.lower().endswith("conversations.json")), archive.getinfo(names[0]))
+                payload = json.loads(_read_zip_member(archive, info, MAX_EXTERNAL_UNCOMPRESSED_BYTES).decode("utf-8"))
+                user_info = next((archive.getinfo(name) for name in names if name.lower().endswith("user.json")), None)
+                if user_info is not None:
+                    user_payload = json.loads(_read_zip_member(archive, user_info, MAX_EXTERNAL_USER_BYTES).decode("utf-8"))
+                    if isinstance(payload, list) and isinstance(user_payload, dict):
+                        return {"conversations": payload, "user": user_payload}
+                return payload
+        except (zipfile.BadZipFile, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise ValueError("The archive does not contain a readable JSON conversation export.") from exc
+    try:
+        return json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Import file must be valid UTF-8 JSON or a supported ZIP export.") from exc
+
+
+def _external_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        return "\n".join(filter(None, (_external_text(item) for item in value))).strip()
+    if isinstance(value, dict):
+        return str(value.get("text") or value.get("content") or "").strip()
+    return ""
+
+
+def _normalize_external_conversation(source: str, item: dict[str, Any], messages: list[dict[str, Any]], index: int) -> dict[str, Any] | None:
+    normalized = []
+    for position, message in enumerate(messages):
+        role = str(message.get("role") or message.get("sender") or message.get("author", {}).get("role") or "").lower()
+        role = "assistant" if role in {"assistant", "claude", "chatgpt"} else "user" if role in {"user", "human"} else "system" if role == "system" else ""
+        content = _external_text(message.get("content") if "content" in message else message.get("text") or message.get("parts"))
+        if role and content:
+            normalized.append({"id": _external_id("msg", [source, index, position, role, content]), "role": role, "content": content[:20_000], "created_at": str(message.get("created_at") or message.get("create_time") or "")})
+    if not normalized:
+        return None
+    title = str(item.get("title") or item.get("name") or f"Imported {source.title()} conversation {index + 1}").strip()[:200]
+    return {"id": _external_id("conv", [source, index, title, normalized]), "title": title or f"Imported conversation {index + 1}", "created_at": str(item.get("created_at") or item.get("create_time") or ""), "updated_at": str(item.get("updated_at") or item.get("update_time") or ""), "messages": normalized}
+
+
+def _chatgpt_conversations(payload: Any) -> list[dict[str, Any]]:
+    items = payload if isinstance(payload, list) else payload.get("conversations", []) if isinstance(payload, dict) else []
+    conversations = []
+    for index, item in enumerate(items[:2_000]):
+        if not isinstance(item, dict) or not isinstance(item.get("mapping"), dict):
+            continue
+        messages = []
+        for node in item["mapping"].values():
+            message = node.get("message") if isinstance(node, dict) else None
+            if not isinstance(message, dict):
+                continue
+            author = message.get("author") if isinstance(message.get("author"), dict) else {}
+            parts = message.get("content", {}).get("parts", []) if isinstance(message.get("content"), dict) else []
+            messages.append({"role": author.get("role"), "parts": parts, "create_time": message.get("create_time")})
+        normalized = _normalize_external_conversation("chatgpt", item, messages, index)
+        if normalized:
+            conversations.append(normalized)
+    return conversations
+
+
+def _claude_or_generic_conversations(payload: Any) -> tuple[str, list[dict[str, Any]]]:
+    if isinstance(payload, dict) and isinstance(payload.get("chat_messages"), list):
+        groups: dict[str, list[dict[str, Any]]] = {}
+        for message in payload["chat_messages"][:10_000]:
+            if isinstance(message, dict): groups.setdefault(str(message.get("conversation_uuid") or message.get("conversation_id") or "0"), []).append(message)
+        source, items = "claude", [{"name": f"Claude conversation {index + 1}", "chat_messages": messages} for index, messages in enumerate(groups.values())]
+    else:
+        source = "claude" if isinstance(payload, list) and any(isinstance(item, dict) and isinstance(item.get("chat_messages"), list) for item in payload) else "generic"
+        items = payload.get("conversations", []) if isinstance(payload, dict) else payload if isinstance(payload, list) else []
+    conversations = []
+    for index, item in enumerate(items[:2_000]):
+        if not isinstance(item, dict): continue
+        messages = item.get("chat_messages") or item.get("messages") or []
+        if isinstance(messages, list):
+            normalized = _normalize_external_conversation(source, item, messages, index)
+            if normalized: conversations.append(normalized)
+    return source, conversations
+
+
+def _external_profile(payload: Any) -> list[dict[str, str]]:
+    if not isinstance(payload, dict): return []
+    user = payload.get("user") or payload.get("account") or payload.get("profile")
+    if not isinstance(user, dict): return []
+    fields = []
+    for key, label in (("name", "Name"), ("email", "Email"), ("location", "Location"), ("bio", "Bio")):
+        value = _external_text(user.get(key))
+        if value and len(value) <= 500: fields.append({"key": key, "label": label, "value": value})
+    return fields
+
+
+def parse_external_export_bytes(raw: bytes, selected_profile_fields: list[str] | None = None) -> tuple[dict[str, Any], dict[str, Any]]:
+    payload = _read_external_payload(raw)
+    chatgpt = _chatgpt_conversations(payload)
+    source, conversations = ("chatgpt", chatgpt) if chatgpt else _claude_or_generic_conversations(payload)
+    if not conversations:
+        raise ValueError("No supported conversations were found. Choose a ChatGPT or Claude JSON/ZIP export.")
+    profile = _external_profile(payload)
+    selected = set(selected_profile_fields or [])
+    stable_profile = [{"text": f"Imported from {source.title()} — {field['label']}: {field['value']}", "kind": "imported_profile"} for field in profile if field["key"] in selected]
+    imported = {"history": [], "conversations": conversations, "emotion_memory": [], "long_memory": [], "stable_profile": stable_profile, "interest_memory": [], "memory_events": [], "pending_memory": [], "mood_checkins": []}
+    preview = {"source": source, "conversations": len(conversations), "messages": sum(len(item["messages"]) for item in conversations), "profile_fields": profile, "sample_titles": [item["title"] for item in conversations[:3]]}
+    return imported, preview
+
+
+def preview_external_import(raw: bytes) -> dict[str, Any]:
+    return parse_external_export_bytes(raw)[1]
 
 
 def _list_of_objects(payload: dict[str, Any], key: str, *, limit: int = 2_000) -> list[dict[str, Any]]:
@@ -245,4 +386,26 @@ def import_user_export(user_id: str, raw: bytes, *, mode: str) -> dict[str, int 
             logger.exception(
                 "导入失败后回滚也失败，导入前的记忆备份保存在 %s。user=%s", backup_path, user_id,
             )
+        raise
+
+
+def import_external_export(user_id: str, raw: bytes, *, mode: str, selected_profile_fields: list[str] | None = None) -> dict[str, int | str]:
+    """Import a reviewed third-party export without accepting its credentials or settings."""
+    if mode not in {"merge", "replace"}:
+        raise ValueError("Import mode must be merge or replace.")
+    user_id = validate_user_id(user_id)
+    imported, preview = parse_external_export_bytes(raw, selected_profile_fields)
+    if mode != "replace":
+        return {**_apply_import(user_id, imported, mode=mode), "source": preview["source"]}
+    snapshot = _snapshot_for_rollback(user_id)
+    from chatbot import session_store
+    with session_store.session(user_id) as state:
+        backup_path = create_memory_backup(user_id, state, reason="pre_external_restore")
+    try:
+        return {**_apply_import(user_id, imported, mode=mode), "source": preview["source"]}
+    except Exception:
+        try:
+            _apply_import(user_id, snapshot, mode="replace")
+        except Exception:
+            logger.exception("外部导入失败后回滚也失败，导入前的记忆备份保存在 %s。user=%s", backup_path, user_id)
         raise

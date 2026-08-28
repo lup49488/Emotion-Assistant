@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test'
 
+const testApiBaseUrl = process.env.E2E_API_BASE_URL || 'http://127.0.0.1:18000'
+
 async function signIn(page) {
   await page.goto('/')
   await page.getByLabel('User ID').fill('e2e-user')
@@ -13,14 +15,21 @@ async function sendMessage(page, text) {
   await page.getByTitle('Message Serenova').click()
 }
 
+async function enableKnowledge(page) {
+  await page.getByRole('button', { name: 'Model & reply style' }).first().click()
+  const settings = page.getByRole('complementary', { name: 'Model & reply style' })
+  await settings.getByText('Knowledge retrieval').click()
+  await settings.getByRole('button', { name: 'Hide preferences' }).click()
+}
+
 test.beforeEach(async ({ request }) => {
-  await request.post('http://127.0.0.1:18000/__test/reset')
+  await request.post(`${testApiBaseUrl}/__test/reset`)
 })
 
 test('login, cited reply, feedback, and regeneration work together', async ({ page }) => {
   await signIn(page)
 
-  await page.getByText('Knowledge retrieval').click()
+  await enableKnowledge(page)
   await sendMessage(page, 'How do I deploy this project?')
   await expect(page.getByText('Grounded answer from the knowledge base.')).toBeVisible()
   await expect(page.getByText('Sources')).toBeVisible()
@@ -92,7 +101,7 @@ test('retryable SSE errors display a retry action that regenerates the reply', a
 
 test('insufficient RAG evidence displays a grounded-response status without regeneration', async ({ page }) => {
   await signIn(page)
-  await page.getByText('Knowledge retrieval').click()
+  await enableKnowledge(page)
   await sendMessage(page, 'Ask without sources')
 
   await expect(page.getByRole('status')).toHaveText(/does not contain enough relevant information/)
@@ -101,33 +110,112 @@ test('insufficient RAG evidence displays a grounded-response status without rege
 
 test('an unenforced insufficient-evidence status still shows the generated reply', async ({ page }) => {
   await signIn(page)
-  await page.getByText('Knowledge retrieval').click()
+  await enableKnowledge(page)
   await sendMessage(page, 'Ask without sources unenforced')
 
   await expect(page.getByText('General answer without sources.')).toBeVisible()
   await expect(page.getByRole('status')).toHaveCount(0)
 })
 
-test('a reliable conversation emotion is visible in personal data', async ({ page }) => {
+test('conversation expression history is not shown in personal data', async ({ page }) => {
   await signIn(page)
   await sendMessage(page, 'I feel happy today')
   await expect(page.getByText('Grounded answer from the knowledge base.')).toBeVisible()
 
   await page.getByRole('button', { name: 'Personal data' }).click()
-  await expect(page.getByText('Conversation emotion history')).toBeVisible()
-  await expect(page.getByText('joy', { exact: true })).toBeVisible()
-  await expect(page.getByText('0.98', { exact: false })).toBeVisible()
+  await expect(page.getByText('Conversation emotion history')).toHaveCount(0)
+  await expect(page.getByText('Conversation expression references')).toHaveCount(0)
+})
+
+test('knowledge workspace presents searchable source material', async ({ page }) => {
+  await signIn(page)
+
+  await page.getByRole('button', { name: 'Knowledge & RAG' }).click()
+  await expect(page.getByRole('heading', { name: 'Knowledge & RAG' })).toBeVisible()
+  await expect(page.getByText('486', { exact: true })).toBeVisible()
+
+  await page.getByPlaceholder('Ask a question to test retrieval').fill('What can help with sleep?')
+  await page.getByRole('button', { name: 'Retrieval check' }).click()
+  await expect(page.getByText('sleep_hygiene_cn.md · #12')).toBeVisible()
+  await expect(page.getByText('固定起床时间和固定入睡时间，能帮助形成更稳定的睡眠节律。')).toBeVisible()
+})
+
+test('interest memories can be added, edited, and deleted in personal data', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Personal data' }).click()
+
+  const interests = page.locator('.memory-v2-primary .data-panel').filter({ has: page.getByRole('heading', { name: 'Interests' }) })
+  await interests.getByRole('button', { name: 'Add memory' }).click()
+  await interests.getByLabel('Memory text').fill('I enjoy hiking')
+  await interests.getByRole('button', { name: 'Save memory' }).click()
+  await expect(interests.getByText('I enjoy hiking', { exact: true })).toBeVisible()
+
+  await interests.getByRole('button', { name: 'Edit memory' }).click()
+  await interests.getByLabel('Memory text').fill('I enjoy hiking with friends')
+  await interests.getByRole('button', { name: 'Save memory' }).click()
+  await expect(interests.getByText('I enjoy hiking with friends', { exact: true })).toBeVisible()
+
+  await interests.getByRole('button', { name: 'Delete memory' }).click()
+  await expect(interests.getByText('I enjoy hiking with friends', { exact: true })).toHaveCount(0)
 })
 
 test('memory saving policy can be changed from personal data', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Personal data' }).click()
 
-  const policy = page.getByLabel('Conversation memory policy')
-  await expect(policy).toHaveValue('confirm')
-  await policy.selectOption('off')
-  await expect(policy).toHaveValue('off')
+  const policy = page.getByRole('radio', { name: /Ask before saving/ })
+  await expect(policy).toBeChecked()
+  await page.getByRole('radio', { name: /Do not save automatically/ }).check()
+  await expect(page.getByRole('radio', { name: /Do not save automatically/ })).toBeChecked()
   await expect(page.getByText('Conversation memory extraction is disabled. Manual changes remain available.')).toBeVisible()
+})
+
+test('chat header controls set a gentle tone and open the model reply window', async ({ page }) => {
+  await signIn(page)
+
+  await page.getByRole('button', { name: /Conversation tone/ }).click()
+  await expect(page.getByRole('menu', { name: 'Conversation tone' })).toBeVisible()
+  await expect(page.getByRole('menuitemradio', { name: 'Gentle' })).toHaveCount(1)
+  await page.getByRole('menuitemradio', { name: 'Gentle' }).click()
+  await expect(page.getByRole('button', { name: /Conversation tone/ })).toContainText('Gentle')
+
+  await page.getByRole('button', { name: 'Model & reply style' }).first().click()
+  const settings = page.getByRole('complementary', { name: 'Model & reply style' })
+  await expect(settings).toBeVisible()
+  await settings.getByRole('button', { name: /NVIDIA NIM/ }).click()
+  await expect(settings.getByRole('button', { name: 'openai/gpt-oss-20b', exact: true })).toHaveClass(/selected/)
+  await expect(settings.getByText('Reply profile')).toBeVisible()
+})
+
+test('feature workspace uses the V2 topbar without the chat conversation sidebar', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 })
+  await signIn(page)
+  await page.getByRole('button', { name: 'Personal data' }).click()
+
+  await expect(page.locator('.workspace-topbar')).toBeVisible()
+  await expect(page.getByText('Serenova', { exact: true })).toBeVisible()
+  await expect(page.locator('.conversation-sidebar')).toHaveCount(0)
+  await page.getByRole('group', { name: 'Language' }).getByRole('button', { name: 'Chinese' }).click()
+  await expect(page.getByRole('button', { name: '个人数据' })).toBeVisible()
+  await page.getByRole('group', { name: '语言' }).getByRole('button', { name: 'English' }).click()
+  await expect(page.getByRole('button', { name: 'Personal data' })).toBeVisible()
+})
+
+test('desktop reply context uses a dedicated right workspace column', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await signIn(page)
+  await page.getByRole('button', { name: 'Reply context' }).click()
+
+  await expect(page.getByRole('complementary', { name: 'Reply context' })).toBeVisible()
+  const columns = await page.locator('.chat-workspace-content').evaluate((element) => getComputedStyle(element).gridTemplateColumns)
+  expect(columns.trim().split(/\s+/)).toHaveLength(3)
+
+  const sidebarTypeScale = await page.getByRole('complementary', { name: 'Reply context' }).evaluate((panel) => ({
+    heading: Number.parseFloat(getComputedStyle(panel.querySelector('h2')).fontSize),
+    copy: Number.parseFloat(getComputedStyle(panel.querySelector('.context-copy')).fontSize),
+  }))
+  expect(sidebarTypeScale.heading).toBeGreaterThanOrEqual(22)
+  expect(sidebarTypeScale.copy).toBeGreaterThanOrEqual(15)
 })
 
 test('a Serenova export file can be selected and imported', async ({ page }) => {
@@ -137,6 +225,19 @@ test('a Serenova export file can be selected and imported', async ({ page }) => 
   await page.getByRole('button', { name: 'Import data' }).click()
 
   await expect(page.getByText('Imported 1 conversations, 1 memories, and 1 Mood Check-ins.')).toBeVisible()
+})
+
+test('an external AI export is previewed before its selected profile fields are imported', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Privacy & export' }).click()
+
+  const chooser = page.getByLabel('External AI export')
+  await chooser.setInputFiles({ name: 'conversations.json', mimeType: 'application/json', buffer: Buffer.from('[]') })
+  await expect(page.getByText('Detected:')).toBeVisible()
+  await expect(page.getByText('A useful imported conversation')).toBeVisible()
+  await page.getByRole('checkbox', { name: 'Name: Example user' }).check()
+  await page.getByRole('button', { name: 'Import reviewed data' }).click()
+  await expect(page.getByText('Imported from chatgpt: 2 conversations and 1 selected profile fields.')).toBeVisible()
 })
 
 test('mood notes retain leading indentation and paragraph breaks in the check-in history', async ({ page }) => {
@@ -190,7 +291,7 @@ test('tablet Mood Check-in keeps form controls within their panel', async ({ pag
   await page.setViewportSize({ width: 1366, height: 768 })
   await signIn(page)
   await page.getByRole('button', { name: 'Mood check-in' }).click()
-  await expect(page.getByRole('heading', { name: 'Mood check-in' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'One note for today is enough' })).toBeVisible()
 
   const bounds = await page.locator('.mood-page').evaluate((pageElement) => {
     const form = pageElement.querySelector('.checkin-form')
@@ -223,7 +324,7 @@ test('mobile sidebar navigation has no horizontal overflow and applies theme cha
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark')
   await page.locator('.mobile-sidebar').getByRole('button', { name: 'Personal data' }).click()
   await expect(page.locator('.mobile-sidebar')).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'Personal data' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'What your assistant remembers about you' })).toBeVisible()
   const widths = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }))
   expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth + 1)
 })

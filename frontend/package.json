@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "oxlint",
+    "lint": "oxlint && node scripts/check-design-tokens.mjs && node scripts/check-theme-blind-css.mjs",
     "test:e2e": "node e2e/run-e2e.mjs",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "lint:design": "node scripts/check-design-tokens.mjs",
+    "lint:theme": "node scripts/check-theme-blind-css.mjs"
   },
   "dependencies": {
     "katex": "^0.18.1",

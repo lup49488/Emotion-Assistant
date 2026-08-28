@@ -6,6 +6,9 @@ const conversations = []
 const moodRecords = []
 const testImage = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5JwAAAABJRU5ErkJggg==', 'base64')
 let memorySaveMode = 'confirm'
+let stylePrefix = ''
+const mockPort = Number(process.env.E2E_MOCK_PORT || 18000)
+const frontendOrigin = process.env.E2E_FRONTEND_ORIGIN || 'http://127.0.0.1:4174'
 const memorySnapshot = {
   history: [],
   emotion_memory: [],
@@ -19,6 +22,7 @@ const memorySnapshot = {
 function resetState() {
   loggedIn = false
   memorySaveMode = 'confirm'
+  stylePrefix = ''
   conversations.splice(0, conversations.length)
   moodRecords.splice(0, moodRecords.length, {
     date: '2026-07-29', mood: 'calm', intensity: 3,
@@ -41,7 +45,7 @@ function conversation(id) {
 
 const server = http.createServer(async (request, response) => {
   const origin = request.headers.origin
-  if (origin === 'http://127.0.0.1:4174') {
+  if (origin === frontendOrigin) {
     response.setHeader('Access-Control-Allow-Origin', origin)
     response.setHeader('Access-Control-Allow-Credentials', 'true')
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-CSRF-Token')
@@ -53,7 +57,7 @@ const server = http.createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(chunk)
   const contentType = request.headers['content-type'] || ''
   const body = chunks.length && contentType.includes('application/json') ? JSON.parse(Buffer.concat(chunks).toString()) : {}
-  const url = new URL(request.url, 'http://127.0.0.1:18000')
+  const url = new URL(request.url, `http://127.0.0.1:${mockPort}`)
 
   if (request.method === 'POST' && url.pathname === '/__test/reset') {
     resetState()
@@ -67,6 +71,11 @@ const server = http.createServer(async (request, response) => {
       { id: 'custom', label: 'Custom endpoint', kind: 'openai_compatible', models: ['custom-model'], default_model: 'custom-model', default_base_url: '', api_key_envs: ['LLM_API_KEY'] },
     ],
   })
+  if (request.method === 'GET' && url.pathname === '/api/v1/style/preference') return send(response, 200, { style_prefix: stylePrefix, available: ['温柔型', '专业型'] })
+  if (request.method === 'PUT' && url.pathname === '/api/v1/style/preference') {
+    stylePrefix = ['温柔型', '专业型'].includes(body.style_prefix) ? body.style_prefix : ''
+    return send(response, 200, { style_prefix: stylePrefix, available: ['温柔型', '专业型'] })
+  }
   if (request.method === 'POST' && url.pathname === '/api/v1/auth/login') {
     loggedIn = true
     return send(response, 200, { token_type: 'cookie', expires_in: 3600, user_id: 'e2e-user' }, {
@@ -76,6 +85,15 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/api/v1/auth/session') return loggedIn
     ? send(response, 200, { user_id: 'e2e-user', authentication: 'signed_cookie', can_access_operations: false, can_manage_knowledge: false })
     : send(response, 401, { detail: 'Signed session cookie is required.' })
+  if (request.method === 'GET' && url.pathname === '/api/v1/rag/status') return send(response, 200, {
+    status: 'ready', documents: [], release: { enabled: true, state: 'passing' },
+  })
+  if (request.method === 'GET' && url.pathname === '/api/v1/rag/quality') return send(response, 200, {
+    level: 'ready', documents: 12, chunks: 486, average_chunk_chars: 534, issues: [],
+  })
+  if (request.method === 'POST' && url.pathname === '/api/v1/rag/search') return send(response, 200, {
+    query: body.query, results: [{ source: 'sleep_hygiene_cn.md', chunk_index: 11, score: 0.71, text: '固定起床时间和固定入睡时间，能帮助形成更稳定的睡眠节律。' }],
+  })
   if (request.method === 'GET' && url.pathname === '/api/v1/conversations') return send(response, 200, { conversations: conversations.map((item) => ({ id: item.id, title: item.title, created_at: item.created_at, updated_at: item.updated_at, message_count: item.message_count })) })
   if (request.method === 'POST' && url.pathname === '/api/v1/conversations') {
     const item = { id: randomUUID().replaceAll('-', ''), title: body.title || 'New conversation', created_at: '2026-07-23T00:00:00', updated_at: '2026-07-23T00:00:00', message_count: 0, messages: [] }
@@ -102,6 +120,14 @@ const server = http.createServer(async (request, response) => {
     memorySaveMode = ['auto', 'confirm', 'off'].includes(body.mode) ? body.mode : 'confirm'
     return send(response, 200, { mode: memorySaveMode })
   }
+  if (request.method === 'PUT' && url.pathname === '/api/v1/memory/interests') {
+    memorySnapshot.interest_memory = Array.isArray(body.items) ? body.items : []
+    return send(response, 200, memorySnapshot)
+  }
+  if (request.method === 'POST' && url.pathname === '/api/v1/import/external/preview') return send(response, 200, {
+    source: 'chatgpt', conversations: 2, messages: 8, sample_titles: ['A useful imported conversation'], profile_fields: [{ key: 'name', label: 'Name', value: 'Example user' }],
+  })
+  if (request.method === 'POST' && url.pathname === '/api/v1/import/external') return send(response, 200, { mode: url.searchParams.get('mode') || 'merge', source: 'chatgpt', conversations: 2, memories: 1, mood_checkins: 0 })
   if (request.method === 'GET' && url.pathname === '/api/v1/privacy') return send(response, 200, { backend: 'json', conversation_count: conversations.length, message_count: 0, history_count: memorySnapshot.history.length, memory_count: memorySnapshot.long_memory.length, mood_count: moodRecords.length, api_request_count: 0 })
   if (request.method === 'GET' && url.pathname === '/api/v1/export') return send(response, 200, { schema_version: 4, exported_at: '2026-08-04T00:00:00', user_id: 'e2e-user', notes: [], ...memorySnapshot, conversations, mood_checkins: moodRecords })
   if (request.method === 'POST' && url.pathname === '/api/v1/import') return send(response, 200, { mode: url.searchParams.get('mode') || 'merge', conversations: 1, mood_checkins: 1, memories: 1 })
@@ -187,4 +213,4 @@ const server = http.createServer(async (request, response) => {
   return send(response, 404, { detail: 'Not found' })
 })
 
-server.listen(18000, '127.0.0.1')
+server.listen(mockPort, '127.0.0.1')

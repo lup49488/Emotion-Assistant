@@ -20,7 +20,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import Cookie, Depends, FastAPI, File, Header, HTTPException, Query, Request, Response, UploadFile, status
+from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
@@ -42,9 +42,11 @@ from api_contracts import (
     DataImportResponse,
     ExportResponse,
     HealthResponse,
+    InterestMemoryUpdateRequest,
     LoginRequest,
     LoginResponse,
     LongTermMemoryUpdateRequest,
+    PendingMemoryUpdateRequest,
     MemorySavePreferenceRequest,
     MemorySavePreferenceResponse,
     MemoryQualityResponse,
@@ -106,6 +108,7 @@ from memory_store import (
     reconcile_memory_ownership,
     record_memory_event,
     reject_pending_memory,
+    update_pending_memory_text,
     undo_memory_event,
 )
 from memory_preference_store import get_memory_save_mode, set_memory_save_mode
@@ -119,7 +122,7 @@ from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from rag_feedback_store import create_citation_trace, feedback_summary, submit_feedback
 from style_preference_store import get_style_prefix, set_style_prefix
 from style_store import style_prefixes
-from user_data_import import import_user_export
+from user_data_import import import_external_export, import_user_export, preview_external_import
 from service_errors import ServiceError
 from sqlite_store import connection, storage_backend
 
@@ -1006,6 +1009,37 @@ def update_long_term_memory(request: LongTermMemoryUpdateRequest, user_id: CsrfC
         return _memory_snapshot_payload(state)
 
 
+@app.put("/api/v1/memory/interests", response_model=MemorySnapshotResponse)
+def update_interest_memory(request: InterestMemoryUpdateRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    normalized_items: list[dict[str, Any]] = []
+    for item in request.items:
+        text = str(item.get("text", "")).strip()
+        if not text:
+            raise HTTPException(status_code=422, detail="Each interest memory needs non-empty text.")
+        if len(text) > 2_000:
+            raise HTTPException(status_code=422, detail="An interest memory cannot exceed 2000 characters.")
+        normalized_items.append({
+            **item,
+            "text": text,
+            "time": str(item.get("time") or datetime.now().isoformat(timespec="seconds")),
+            "kind": str(item.get("kind") or "manual"),
+        })
+
+    with session_store.session(user_id) as state:
+        state.interest_store.replace_all(normalized_items)
+        if state.vector_index is not None:
+            state.vector_index.mark_dirty_for_rebuild()
+        reconcile_memory_ownership(state)
+        record_memory_event(
+            state,
+            section="interest",
+            action="updated",
+            text=f"Interest memories updated ({len(normalized_items)})",
+            reason="User edited interest memories from the personal-data panel.",
+        )
+        return _memory_snapshot_payload(state)
+
+
 @app.post("/api/v1/memory/audit/{event_id}/undo", response_model=MemorySnapshotResponse)
 def undo_audited_memory_write(event_id: str, user_id: CsrfCurrentUser) -> dict[str, Any]:
     with session_store.session(user_id) as state:
@@ -1027,6 +1061,18 @@ def confirm_pending_memory_write(pending_id: str, user_id: CsrfCurrentUser) -> d
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return _memory_snapshot_payload(state)
+
+
+@app.put("/api/v1/memory/pending/{pending_id}", response_model=MemorySnapshotResponse)
+def update_pending_memory_write(pending_id: str, request: PendingMemoryUpdateRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
+    with session_store.session(user_id) as state:
+        try:
+            update_pending_memory_text(state, pending_id, request.text)
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return _memory_snapshot_payload(state)
 
 
@@ -1198,6 +1244,35 @@ async def import_data(
     try:
         return import_user_export(user_id, raw, mode=mode)
     except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/import/external/preview")
+async def preview_external_data_import(
+    file: Annotated[UploadFile, File(...)], user_id: CsrfCurrentUser,
+) -> dict[str, Any]:
+    if not (file.filename or "").lower().endswith((".json", ".zip")):
+        raise HTTPException(status_code=422, detail="Choose a JSON or ZIP conversation export.")
+    try:
+        return preview_external_import(await file.read())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/import/external")
+async def import_external_data(
+    file: Annotated[UploadFile, File(...)], user_id: CsrfCurrentUser,
+    mode: str = Query(default="merge", pattern="^(merge|replace)$"),
+    profile_fields: Annotated[str, Form()] = "[]",
+) -> dict[str, Any]:
+    if not (file.filename or "").lower().endswith((".json", ".zip")):
+        raise HTTPException(status_code=422, detail="Choose a JSON or ZIP conversation export.")
+    try:
+        selected = json.loads(profile_fields)
+        if not isinstance(selected, list) or any(not isinstance(item, str) for item in selected):
+            raise ValueError("Selected profile fields are invalid.")
+        return import_external_export(user_id, await file.read(), mode=mode, selected_profile_fields=selected)
+    except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 

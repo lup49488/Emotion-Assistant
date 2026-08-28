@@ -1,7 +1,9 @@
 """Regression tests for restoring a user-owned Serenova export."""
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 from unittest.mock import patch
 
 import pytest
@@ -138,3 +140,116 @@ def test_export_from_another_account_is_rejected(isolated_user):
 
     with pytest.raises(ValueError, match="different user ID"):
         user_data_import.import_user_export(isolated_user, raw, mode="merge")
+
+
+def test_chatgpt_export_is_previewed_and_imported_only_after_profile_selection(isolated_user):
+    raw = json.dumps([{
+        "title": "Sleep notes", "create_time": "2026-08-20T10:00:00",
+        "mapping": {
+            "one": {"message": {"author": {"role": "user"}, "content": {"parts": ["I cannot sleep"]}, "create_time": "2026-08-20T10:00:00"}},
+            "two": {"message": {"author": {"role": "assistant"}, "content": {"parts": ["Try a calmer evening routine."]}, "create_time": "2026-08-20T10:01:00"}},
+        },
+    }], ensure_ascii=False).encode("utf-8")
+
+    preview = user_data_import.preview_external_import(raw)
+    result = user_data_import.import_external_export(isolated_user, raw, mode="merge")
+
+    assert preview["source"] == "chatgpt"
+    assert preview["conversations"] == 1
+    assert result["conversations"] == 1
+    restored = export_store.build_user_export_payload(isolated_user)
+    assert restored["conversations"][0]["title"] == "Sleep notes"
+
+
+def _zip_export(members: dict[str, str], *, understate: str | None = None) -> bytes:
+    """Build a ZIP export, optionally lying about one member's uncompressed size."""
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as archive:
+        for name, body in members.items():
+            archive.writestr(name, body)
+    if understate is None:
+        return buffer.getvalue()
+    data = bytearray(buffer.getvalue())
+    central = data.rfind(b"PK\x01\x02")
+    data[central + 24:central + 28] = (1024).to_bytes(4, "little")
+    local = data.find(b"PK\x03\x04")
+    data[local + 22:local + 26] = (1024).to_bytes(4, "little")
+    return bytes(data)
+
+
+CHATGPT_CONVERSATION = [{
+    "title": "Sleep notes",
+    "mapping": {
+        "one": {"message": {"author": {"role": "user"}, "content": {"parts": ["I cannot sleep"]}}},
+        "two": {"message": {"author": {"role": "assistant"}, "content": {"parts": ["Try a calmer evening."]}}},
+    },
+}]
+
+
+def test_zip_export_is_imported_like_its_plain_json_equivalent(isolated_user):
+    raw = _zip_export({"conversations.json": json.dumps(CHATGPT_CONVERSATION, ensure_ascii=False)})
+
+    preview = user_data_import.preview_external_import(raw)
+    result = user_data_import.import_external_export(isolated_user, raw, mode="merge")
+
+    assert preview["source"] == "chatgpt"
+    assert preview["conversations"] == 1
+    assert result["conversations"] == 1
+
+
+def test_zip_member_larger_than_the_cap_is_rejected(isolated_user):
+    oversized = json.dumps(CHATGPT_CONVERSATION) + " " * (user_data_import.MAX_EXTERNAL_UNCOMPRESSED_BYTES + 1024)
+    raw = _zip_export({"conversations.json": oversized})
+
+    with pytest.raises(ValueError, match="too much uncompressed data"):
+        user_data_import.preview_external_import(raw)
+
+
+def test_an_understated_member_size_cannot_slip_past_the_cap(isolated_user):
+    # ZipInfo.file_size is attacker-controlled, so the cap must come from the
+    # bytes actually read rather than from the archive's own header.
+    oversized = json.dumps(CHATGPT_CONVERSATION) + " " * (user_data_import.MAX_EXTERNAL_UNCOMPRESSED_BYTES + 1024)
+    raw = _zip_export({"conversations.json": oversized}, understate="conversations.json")
+
+    with zipfile.ZipFile(io.BytesIO(raw)) as archive:
+        assert archive.getinfo("conversations.json").file_size == 1024  # the lie the header tells
+
+    with pytest.raises(ValueError):
+        user_data_import.preview_external_import(raw)
+
+
+def test_claude_chat_messages_export_is_recognised(isolated_user):
+    raw = json.dumps({"chat_messages": [
+        {"conversation_uuid": "abc", "sender": "human", "text": "I keep overthinking."},
+        {"conversation_uuid": "abc", "sender": "assistant", "text": "Let us slow that down."},
+    ]}, ensure_ascii=False).encode("utf-8")
+
+    preview = user_data_import.preview_external_import(raw)
+
+    assert preview["source"] == "claude"
+    assert preview["conversations"] == 1
+
+
+def test_profile_fields_are_only_imported_when_selected(isolated_user):
+    raw = _zip_export({
+        "conversations.json": json.dumps(CHATGPT_CONVERSATION, ensure_ascii=False),
+        "user.json": json.dumps({"email": "someone@example.com"}, ensure_ascii=False),
+    })
+
+    without = user_data_import.parse_external_export_bytes(raw)[0]
+    assert without["stable_profile"] == []
+
+    preview = user_data_import.preview_external_import(raw)
+    keys = [field["key"] for field in preview.get("profile_fields", [])]
+    if keys:
+        with_selection = user_data_import.parse_external_export_bytes(raw, keys)[0]
+        assert len(with_selection["stable_profile"]) == len(keys)
+
+
+def test_unsupported_payloads_are_rejected(isolated_user):
+    with pytest.raises(ValueError):
+        user_data_import.preview_external_import(b"not json at all")
+    with pytest.raises(ValueError):
+        user_data_import.preview_external_import(b"")
+    with pytest.raises(ValueError, match="No supported conversations"):
+        user_data_import.preview_external_import(b"[]")

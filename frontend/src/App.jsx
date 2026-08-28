@@ -4,11 +4,13 @@ import {
   BookOpen,
   Brain,
   Bot,
+  ChevronDown,
   ChevronLeft,
   Check,
   CirclePlus,
   Copy,
   HeartPulse,
+  Info,
   LoaderCircle,
   LogOut,
   MessageSquare,
@@ -29,7 +31,7 @@ import {
   SunMoon,
   X,
 } from 'lucide-react'
-import { API_BASE_URL, ApiRequestError, apiFetch, csrfHeaders, readJson } from './api'
+import { ApiRequestError, apiFetch, csrfHeaders, readJson } from './api'
 import { KnowledgePage, MemoryPage, MoodPage, OperationsPage, PrivacyPage } from './FeaturePages'
 import { translate } from './i18n'
 import './App.css'
@@ -76,7 +78,9 @@ function App() {
   const [isSending, setIsSending] = useState(false)
   const [isSlow, setIsSlow] = useState(false)
   const [notice, setNotice] = useState('')
-  const [settingsOpen, setSettingsOpen] = useState(() => window.innerWidth > 1060)
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [whyOpen, setWhyOpen] = useState(false)
+  const [toneOpen, setToneOpen] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [options, setOptions] = useState({
     provider: '', model: '', baseUrl: '', apiKey: '',
@@ -90,12 +94,12 @@ function App() {
   const t = (key) => translate(locale, key)
   // 下拉框只翻译显示名；option 的 value 仍是文件名前缀，检索过滤依赖它。
   const styleName = (prefix) => t(`style_${prefix}`) === `style_${prefix}` ? prefix : t(`style_${prefix}`)
+  const visibleStylePrefixes = stylePrefixes.filter((prefix) => prefix !== 'Gentle')
   const errorText = (code) => t(`error_${code}`) === `error_${code}` ? t('replyFailed') : t(`error_${code}`)
   const visibleNavigation = NAVIGATION.filter((item) => !item.requiresOperationsAccess || session?.can_access_operations)
 
   const hasMessages = messages.length > 0
   const activeTitle = activeConversation?.title || t('newConversation')
-  const apiLabel = useMemo(() => (API_BASE_URL || window.location.host).replace(/^https?:\/\//, ''), [])
   const selectedProvider = useMemo(
     () => providerCatalog.find((provider) => provider.id === options.provider),
     [providerCatalog, options.provider],
@@ -104,7 +108,13 @@ function App() {
     () => new Map(messages.filter((message) => message.id).map((message) => [message.id, message])),
     [messages],
   )
+  const latestAssistantMessage = useMemo(
+    () => [...messages].reverse().find((message) => message.role === 'assistant' && !message.pending && !message.failed),
+    [messages],
+  )
   const modelChoices = selectedProvider?.models || []
+  const activeModelLabel = options.model || selectedProvider?.default_model || t('serverDefault')
+  const activeToneLabel = options.stylePrefix ? styleName(options.stylePrefix) : t('toneDefault')
 
   function isLikelyBaseUrl(value) {
     const candidate = value.trim()
@@ -455,6 +465,7 @@ function App() {
   if (!session) return <LoginScreen onSuccess={restoreSession} t={t} />
 
   const activeNavigationItem = visibleNavigation.find((item) => item.id === activeView)
+  const isChatView = activeView === 'chat'
   const quoteMessage = (message) => {
     if (!message?.id || isSending) return
     setQuotedMessage({ id: message.id, role: message.role, content: message.content })
@@ -463,6 +474,9 @@ function App() {
   const navigateWorkspace = (viewId) => {
     setActiveView(viewId)
     setMobileSidebarOpen(false)
+    setSettingsOpen(false)
+    setWhyOpen(false)
+    setToneOpen(false)
   }
   const startConversation = async () => {
     await createConversation()
@@ -485,9 +499,13 @@ function App() {
   }
 
   return (
-    <main className={`app-shell ${settingsOpen ? 'settings-open' : 'settings-closed'} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''}`}>
-      <WorkspaceSidebar
-        className="sidebar desktop-sidebar"
+    <main className={`app-shell ${isChatView ? 'chat-workspace' : 'feature-workspace'} ${settingsOpen ? 'settings-open' : 'settings-closed'} ${whyOpen ? 'context-open' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''}`}>
+      <NavigationRail activeView={activeView} navigateWorkspace={navigateWorkspace} t={t} visibleNavigation={visibleNavigation} />
+      <section className="workspace-frame">
+        <WorkspaceTopbar locale={locale} setLocale={setLocale} setTheme={setTheme} t={t} theme={theme} />
+        <div className={`workspace-content ${isChatView ? 'chat-workspace-content' : 'feature-workspace-content'} ${whyOpen ? 'reply-context-open' : ''}`}>
+      {isChatView && <WorkspaceSidebar
+        className="sidebar desktop-sidebar conversation-sidebar"
         activeConversation={activeConversation}
         activeView={activeView}
         beginConversationRename={beginConversationRename}
@@ -511,8 +529,8 @@ function App() {
         t={t}
         theme={theme}
         visibleNavigation={visibleNavigation}
-      />
-      {mobileSidebarOpen && <>
+      />}
+      {mobileSidebarOpen && isChatView && <>
         <button className="mobile-sidebar-backdrop" aria-label={t('closeSidebar')} onClick={() => setMobileSidebarOpen(false)} />
         <WorkspaceSidebar
           className="sidebar mobile-sidebar open"
@@ -542,9 +560,9 @@ function App() {
         />
       </>}
 
-      <div className="mobile-app-bar"><button className="icon-button" title={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={19} /></button><span>{mobileTitle}</span></div>
-      {activeView === 'chat' ? <><section className="chat-panel">
-        <header className="chat-header"><div><h1>{activeTitle}</h1><p>{t('connected')} {apiLabel}</p></div><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('preferences')} onClick={() => setSettingsOpen((open) => !open)}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></header>
+      <div className="mobile-app-bar">{isChatView && <button className="icon-button" title={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={19} /></button>}<span>{mobileTitle}</span></div>
+      {isChatView ? <><section className="chat-panel">
+        <header className="chat-header"><div className="chat-title-block"><h1>{activeTitle}</h1><div className="chat-summary-row"><div className="tone-control"><button className={`conversation-summary tone-summary ${toneOpen ? 'active' : ''}`} aria-expanded={toneOpen} onClick={() => { setSettingsOpen(false); setToneOpen((open) => !open) }}><Sparkles size={13} />{t('conversationTone')}：{activeToneLabel}<ChevronDown size={13} /></button>{toneOpen && <ToneMenu activeStyle={options.stylePrefix} onClose={() => setToneOpen(false)} onSelect={saveStylePrefix} styleName={styleName} styles={visibleStylePrefixes} t={t} />}</div><button className="conversation-summary model-summary" aria-label={t('modelResponseSettings')} onClick={() => { setToneOpen(false); setWhyOpen(false); setSettingsOpen(true) }}><Settings2 size={13} />{activeModelLabel} · {activeToneLabel}{options.useKnowledge && <> · {t('knowledgeShort')}</>}<ChevronDown size={13} /></button></div></div><div className="chat-header-actions"><button className={`icon-button context-toggle ${whyOpen ? 'active' : ''}`} title={t('replyContext')} aria-label={t('replyContext')} onClick={() => { setSettingsOpen(false); setToneOpen(false); setWhyOpen((open) => !open) }}><Info size={18} /></button><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('modelResponseSettings')} onClick={() => { setWhyOpen(false); setToneOpen(false); setSettingsOpen((open) => !open) }}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></div></header>
         <div className="messages" aria-live="polite">
           {!hasMessages && <Welcome onPrompt={sendMessage} t={t} />}
           {messages.map((message, index) => <Message key={message.id || `${message.role}-${index}`} message={message} index={index} quotedMessage={message.quotedMessage || messagesById.get(message.reply_to_message_id)} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onQuote={quoteMessage} onRetry={sendMessage} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
@@ -555,21 +573,74 @@ function App() {
         <Composer draft={draft} setDraft={setDraft} sendMessage={sendMessage} isSending={isSending} cancelGeneration={cancelGeneration} quotedMessage={quotedMessage} clearQuote={() => setQuotedMessage(null)} t={t} />
       </section>
 
-      <aside className={`settings-panel ${settingsOpen ? 'open' : ''}`} aria-label="Chat preferences">
-        <div className="settings-title"><div><PanelRight size={18} /><h2>{t('preferences')}</h2></div><button className="icon-button" title={t('hidePreferences')} onClick={() => setSettingsOpen(false)}><ChevronLeft size={18} /></button></div>
-        <p className="settings-copy">{t('settingsCopy')}</p>
-        <label className="model-field">{t('provider')}<select value={options.provider} onChange={(event) => changeProvider(event.target.value)}><option value="">{t('serverDefault')}</option>{providerCatalog.map((provider) => <option key={provider.id} value={provider.id}>{provider.label}</option>)}</select></label>
-        <label className="model-field">{t('model')}<input list="model-options" value={options.model} placeholder={selectedProvider?.default_model || t('serverDefault')} onChange={(event) => setOptions((current) => ({ ...current, model: event.target.value }))} /><datalist id="model-options">{modelChoices.map((model) => <option key={model} value={model} />)}</datalist><small>{modelChoices.length ? t('modelHint') : t('serverDefault')}</small></label>
-        <label className="model-field">{t('baseUrl')}<input name="llm-base-url" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.baseUrl} value={options.baseUrl} placeholder={t('optionalEndpoint')} onFocus={() => setEditableModelField((current) => ({ ...current, baseUrl: true }))} onChange={(event) => setOptions((current) => ({ ...current, baseUrl: event.target.value }))} /></label>
-        <label className="model-field">{t('apiKey')}<input name="llm-api-key" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.apiKey} value={options.apiKey} placeholder={t('tabOnly')} onFocus={() => setEditableModelField((current) => ({ ...current, apiKey: true }))} onChange={(event) => setOptions((current) => ({ ...current, apiKey: event.target.value }))} /></label>
-        <Toggle label={t('knowledgeRetrieval')} description={t('knowledgeHint')} checked={options.useKnowledge} onChange={(useKnowledge) => setOptions((current) => ({ ...current, useKnowledge }))} />
-        <Toggle label={t('styleReference')} description={t('styleHint')} checked={options.useStyle} onChange={(useStyle) => setOptions((current) => ({ ...current, useStyle }))} />
-        <label className="model-field">{t('responseProfile')}<select value={options.profile} onChange={(event) => setOptions((current) => ({ ...current, profile: event.target.value }))}><option value="fast">{t('profileFast')}</option><option value="balanced">{t('profileBalanced')}</option><option value="detailed">{t('profileDetailed')}</option></select><small>{t('profileHint')}</small></label>
-        {stylePrefixes.length > 0 && <label className="model-field">{t('styleFamily')}<select value={options.stylePrefix} onChange={(event) => saveStylePrefix(event.target.value)}><option value="">{t('allStyles')}</option>{stylePrefixes.map((prefix) => <option key={prefix} value={prefix}>{styleName(prefix)}</option>)}</select><small>{t('styleFamilyHint')}</small></label>}
-        <div className="contract-note"><span>API v1</span><p>Cookie session and CSRF protection are active.</p></div>
-      </aside></> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
+      {whyOpen && <ReplyContextPanel latestMessage={latestAssistantMessage} onClose={() => setWhyOpen(false)} options={options} tone={activeToneLabel} t={t} />}
+      {settingsOpen && <ModelSettingsPanel activeModelLabel={activeModelLabel} changeProvider={changeProvider} editableModelField={editableModelField} modelChoices={modelChoices} onClose={() => setSettingsOpen(false)} options={options} providerCatalog={providerCatalog} saveStylePrefix={saveStylePrefix} setEditableModelField={setEditableModelField} setOptions={setOptions} styleName={styleName} stylePrefixes={visibleStylePrefixes} t={t} />}</> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
+        </div>
+      </section>
     </main>
   )
+}
+
+function WorkspaceTopbar({ locale, setLocale, setTheme, t, theme }) {
+  const activeTheme = theme === 'light' ? 'light' : 'dark'
+  return <header className="workspace-topbar">
+    <div className="workspace-brand" aria-label={ASSISTANT_NAME}><Sparkles size={18} aria-hidden="true" /><span>{ASSISTANT_NAME}</span></div>
+    <div className="workspace-topbar-controls">
+      <span>{t('language')}</span>
+      <div className="workspace-segment" role="group" aria-label={t('language')}>
+        <button className={locale === 'zh' ? 'selected' : ''} aria-pressed={locale === 'zh'} onClick={() => setLocale('zh')}>{t('chinese')}</button>
+        <button className={locale === 'en' ? 'selected' : ''} aria-pressed={locale === 'en'} onClick={() => setLocale('en')}>{t('english')}</button>
+      </div>
+      <span>{t('theme')}</span>
+      <div className="workspace-segment" role="group" aria-label={t('theme')}>
+        <button className={activeTheme === 'dark' ? 'selected' : ''} aria-pressed={activeTheme === 'dark'} onClick={() => setTheme('dark')}>{t('dark')}</button>
+        <button className={activeTheme === 'light' ? 'selected' : ''} aria-pressed={activeTheme === 'light'} onClick={() => setTheme('light')}>{t('light')}</button>
+      </div>
+    </div>
+  </header>
+}
+
+function NavigationRail({ activeView, navigateWorkspace, t, visibleNavigation }) {
+  return <aside className="navigation-rail" aria-label={t('workspaceNavigation')}>
+    <div className="rail-brand" aria-label={ASSISTANT_NAME}><Sparkles size={19} /></div>
+    <nav className="rail-nav">
+      {visibleNavigation.map(({ id, label, icon: Icon }) => <button key={id} className={`rail-link ${activeView === id ? 'selected' : ''}`} title={t(label)} aria-label={t(label)} onClick={() => navigateWorkspace(id)}><Icon size={18} /><span>{t(label)}</span></button>)}
+    </nav>
+  </aside>
+}
+
+function ToneMenu({ activeStyle, onClose, onSelect, styleName, styles, t }) {
+  const availableStyles = styles.length ? styles : ['温柔型', '专业型']
+  const selectStyle = async (style) => { await onSelect(style); onClose() }
+  return <div className="tone-menu" role="menu" aria-label={t('conversationTone')}>
+    <p>{t('toneMenuHelp')}</p>
+    {availableStyles.map((style) => <button key={style} className={activeStyle === style ? 'selected' : ''} role="menuitemradio" aria-checked={activeStyle === style} onClick={() => selectStyle(style)}>{styleName(style)}</button>)}
+  </div>
+}
+
+function ModelSettingsPanel({ activeModelLabel, changeProvider, editableModelField, modelChoices, onClose, options, providerCatalog, saveStylePrefix, setEditableModelField, setOptions, styleName, stylePrefixes, t }) {
+  return <aside className="settings-panel model-settings-panel open" aria-label={t('modelResponseSettings')}>
+    <div className="settings-title"><div><PanelRight size={18} /><h2>{t('modelResponseSettings')}</h2></div><button className="icon-button" title={t('hidePreferences')} onClick={onClose}><X size={18} /></button></div>
+    <p className="settings-copy">{t('modelSettingsCopy')}</p>
+    <section className="settings-group"><h3>{t('provider')}</h3><div className="provider-choice-list"><button className={!options.provider ? 'selected' : ''} onClick={() => changeProvider('')}><span>{t('serverDefault')}</span><small>{activeModelLabel}</small></button>{providerCatalog.map((provider) => <button key={provider.id} className={options.provider === provider.id ? 'selected' : ''} onClick={() => changeProvider(provider.id)}><span>{provider.label}</span><small>{provider.models.length} {t('models')}</small></button>)}</div></section>
+    <section className="settings-group"><h3>{t('model')}</h3><div className="model-choice-list">{modelChoices.length ? modelChoices.map((model) => <button key={model} className={options.model === model ? 'selected' : ''} onClick={() => setOptions((current) => ({ ...current, model }))}>{model}{options.model === model && <Check size={15} />}</button>) : <p>{t('serverDefault')}</p>}</div></section>
+    <section className="settings-group"><h3>{t('responseProfile')}</h3><div className="profile-choice-list">{['fast', 'balanced', 'detailed'].map((profile) => <button key={profile} className={options.profile === profile ? 'selected' : ''} onClick={() => setOptions((current) => ({ ...current, profile }))}>{t(`profile${profile[0].toUpperCase()}${profile.slice(1)}`)}</button>)}</div></section>
+    {stylePrefixes.length > 0 && <section className="settings-group"><h3>{t('conversationTone')}</h3><div className="profile-choice-list">{stylePrefixes.map((prefix) => <button key={prefix} className={options.stylePrefix === prefix ? 'selected' : ''} onClick={() => saveStylePrefix(prefix)}>{styleName(prefix)}</button>)}</div></section>}
+    <Toggle label={t('knowledgeRetrieval')} description={t('knowledgeHint')} checked={options.useKnowledge} onChange={(useKnowledge) => setOptions((current) => ({ ...current, useKnowledge }))} />
+    <Toggle label={t('styleReference')} description={t('styleHint')} checked={options.useStyle} onChange={(useStyle) => setOptions((current) => ({ ...current, useStyle }))} />
+    <details className="advanced-model-settings"><summary>{t('advancedConnection')}</summary><label className="model-field">{t('baseUrl')}<input name="llm-base-url" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.baseUrl} value={options.baseUrl} placeholder={t('optionalEndpoint')} onFocus={() => setEditableModelField((current) => ({ ...current, baseUrl: true }))} onChange={(event) => setOptions((current) => ({ ...current, baseUrl: event.target.value }))} /></label><label className="model-field">{t('apiKey')}<input name="llm-api-key" type="password" autoComplete="new-password" data-1p-ignore="true" data-lpignore="true" readOnly={!editableModelField.apiKey} value={options.apiKey} placeholder={t('tabOnly')} onFocus={() => setEditableModelField((current) => ({ ...current, apiKey: true }))} onChange={(event) => setOptions((current) => ({ ...current, apiKey: event.target.value }))} /></label></details>
+  </aside>
+}
+
+function ReplyContextPanel({ latestMessage, onClose, options, tone, t }) {
+  const citations = latestMessage?.citations || []
+  return <aside className="reply-context open" aria-label={t('replyContext')}>
+    <div className="context-title"><div><Info size={18} /><h2>{t('replyContext')}</h2></div><button className="icon-button" title={t('closeContext')} onClick={onClose}><X size={18} /></button></div>
+    <p className="context-copy">{t('replyContextDescription')}</p>
+    <section className="context-section gentle-context"><h3>{t('responseApproach')}</h3><p>{t('responseApproachCopy').replace('{tone}', tone)}</p><p>{t('contextPrivacyNote')}</p></section>
+    <section className="context-section"><h3>{t('sources')}</h3>{citations.length ? <div className="context-citations">{citations.map((citation, index) => <span key={`${citation.source || citation}-${index}`}>{citation.source || citation}</span>)}</div> : <p>{t('contextNoSources')}</p>}</section>
+    <section className="context-section"><h3>{t('contextSettings')}</h3><dl className="context-settings"><div><dt>{t('knowledgeRetrieval')}</dt><dd>{options.useKnowledge ? t('contextOn') : t('contextOff')}</dd></div><div><dt>{t('styleReference')}</dt><dd>{options.useStyle ? t('contextOn') : t('contextOff')}</dd></div></dl></section>
+  </aside>
 }
 
 function WorkspaceSidebar({
@@ -600,10 +671,7 @@ function WorkspaceSidebar({
 }) {
   return (
     <aside className={className} aria-label={t('workspaceNavigation')}>
-      <div className="sidebar-title-row">
-        <div className="brand"><Sparkles size={18} aria-hidden="true" /><span>{ASSISTANT_NAME}</span></div>
-        <button className="icon-button mobile-sidebar-close" title={t('closeSidebar')} onClick={onCloseMobile}><X size={17} /></button>
-      </div>
+      <div className="sidebar-title-row"><button className="icon-button mobile-sidebar-close" title={t('closeSidebar')} onClick={onCloseMobile}><X size={17} /></button></div>
       <nav className="workspace-nav">
         {visibleNavigation.map(({ id, label, icon: Icon }) => (
           <button key={id} className={`workspace-link ${activeView === id ? 'selected' : ''}`} onClick={() => navigateWorkspace(id)}><Icon size={16} /><span>{t(label)}</span></button>

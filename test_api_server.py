@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import io
 import json
+import zipfile
 import os
 from pathlib import Path
 
@@ -984,3 +986,76 @@ def test_provider_catalog_requires_a_session():
         anonymous = client.get("/api/v1/model/providers")
 
     assert anonymous.status_code == 401
+
+
+def _chatgpt_zip() -> bytes:
+    payload = [{
+        "title": "Sleep notes",
+        "mapping": {
+            "one": {"message": {"author": {"role": "user"}, "content": {"parts": ["I cannot sleep"]}}},
+            "two": {"message": {"author": {"role": "assistant"}, "content": {"parts": ["Try a calmer evening."]}}},
+        },
+    }]
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("conversations.json", json.dumps(payload, ensure_ascii=False))
+    return buffer.getvalue()
+
+
+def test_external_import_previews_before_it_writes(monkeypatch, tmp_path):
+    archive = _chatgpt_zip()
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        wrong_type = client.post(
+            "/api/v1/import/external/preview",
+            files={"file": ("notes.txt", b"hello", "text/plain")}, headers=headers,
+        )
+        preview = client.post(
+            "/api/v1/import/external/preview",
+            files={"file": ("export.zip", archive, "application/zip")}, headers=headers,
+        )
+        imported = client.post(
+            "/api/v1/import/external?mode=merge",
+            files={"file": ("export.zip", archive, "application/zip")},
+            data={"profile_fields": "[]"}, headers=headers,
+        )
+
+    assert wrong_type.status_code == 422
+    assert preview.status_code == 200
+    assert preview.json()["source"] == "chatgpt"
+    assert preview.json()["conversations"] == 1
+    assert imported.status_code == 200
+    assert imported.json()["conversations"] == 1
+
+
+def test_external_import_rejects_bad_input_without_a_server_error(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        bad_json = client.post(
+            "/api/v1/import/external",
+            files={"file": ("export.json", b"[]", "application/json")},
+            data={"profile_fields": "[]"}, headers=headers,
+        )
+        bad_fields = client.post(
+            "/api/v1/import/external",
+            files={"file": ("export.zip", _chatgpt_zip(), "application/zip")},
+            data={"profile_fields": '{"not": "a list"}'}, headers=headers,
+        )
+        bad_mode = client.post(
+            "/api/v1/import/external?mode=wipe",
+            files={"file": ("export.zip", _chatgpt_zip(), "application/zip")},
+            data={"profile_fields": "[]"}, headers=headers,
+        )
+
+    assert bad_json.status_code == 422
+    assert bad_fields.status_code == 422
+    assert bad_mode.status_code == 422
+
+
+def test_external_import_requires_authentication(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        anonymous = client.post(
+            "/api/v1/import/external/preview",
+            files={"file": ("export.zip", _chatgpt_zip(), "application/zip")},
+        )
+    assert anonymous.status_code in {401, 403}

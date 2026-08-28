@@ -127,6 +127,19 @@ def _pop_pending_memory(state: Any, pending_id: str) -> dict[str, Any]:
     return state.pending_memory.pop(index)
 
 
+def update_pending_memory_text(state: Any, pending_id: str, text: str) -> dict[str, Any]:
+    """Apply a user's correction before a pending memory is confirmed."""
+    pending = next((item for item in state.pending_memory if item.get("id") == pending_id), None)
+    if pending is None:
+        raise KeyError("Pending memory candidate was not found.")
+    revised = text.strip()
+    if not revised:
+        raise ValueError("Pending memory text is required.")
+    candidate = pending.setdefault("candidate", {})
+    candidate["text"] = revised
+    return pending
+
+
 def confirm_pending_memory(state: Any, pending_id: str) -> dict[str, Any]:
     """Persist one reviewed candidate and record a reversible durable write."""
     pending = _pop_pending_memory(state, pending_id)
