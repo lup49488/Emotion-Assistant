@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Download, Pencil, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { API_BASE_URL, apiFetch, csrfHeaders, readJson } from './api'
 
@@ -147,6 +147,8 @@ function MoodCheckinContent({ t, onReflect }) {
   const emptyForm = { date: null, mood: '', intensity: 3, note: '' }
   const [form, setForm] = useState(emptyForm)
   const [imageFiles, setImageFiles] = useState([])
+  const [imagePreviews, setImagePreviews] = useState([])
+  const imagePreviewsRef = useRef([])
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
   const [savedRecord, setSavedRecord] = useState(null)
@@ -165,15 +167,37 @@ function MoodCheckinContent({ t, onReflect }) {
       setError(t('moodImageLimit')); event.target.value = ''; return
     }
     setImageFiles((current) => [...current, ...selected])
+    const added = selected.map((file) => ({ file, url: URL.createObjectURL(file) }))
+    imagePreviewsRef.current = [...imagePreviewsRef.current, ...added]
+    setImagePreviews((current) => [...current, ...added])
     event.target.value = ''
   }
+  const removeSelectedImage = (file) => {
+    const removed = imagePreviewsRef.current.find((item) => item.file === file)
+    if (removed) URL.revokeObjectURL(removed.url)
+    imagePreviewsRef.current = imagePreviewsRef.current.filter((item) => item.file !== file)
+    setImageFiles((current) => current.filter((item) => item !== file))
+    setImagePreviews((current) => current.filter((item) => item.file !== file))
+  }
+  const clearSelectedImages = () => {
+    imagePreviewsRef.current.forEach((item) => URL.revokeObjectURL(item.url))
+    imagePreviewsRef.current = []
+    setImageFiles([])
+    setImagePreviews([])
+  }
+  useEffect(() => { imagePreviewsRef.current = imagePreviews }, [imagePreviews])
+  useEffect(() => () => { imagePreviewsRef.current.forEach((item) => URL.revokeObjectURL(item.url)) }, [])
   const uploadImages = async (record) => {
     if (imageFiles.length === 0) return record
-    const images = await Promise.all(imageFiles.map(async (file) => {
+    const results = await Promise.allSettled(imageFiles.map(async (file) => {
       const payload = new FormData(); payload.append('file', file)
       return readJson(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images`, { method: 'POST', headers: csrfHeaders(), body: payload })
     }))
-    setImageFiles([])
+    const images = results.filter((item) => item.status === 'fulfilled').map((item) => item.value)
+    const failed = imageFiles.filter((_, index) => results[index].status === 'rejected')
+    // Keep only what still needs sending, so a retry cannot duplicate an upload.
+    imageFiles.filter((file) => !failed.includes(file)).forEach(removeSelectedImage)
+    if (failed.length) setError(results.find((item) => item.status === 'rejected').reason?.message || t('moodImageLimit'))
     return { ...record, images: [...(record.images || []), ...images] }
   }
   const submit = async (event) => {
@@ -185,8 +209,8 @@ function MoodCheckinContent({ t, onReflect }) {
       setSavedRecord(record); setForm(emptyForm); await refresh()
     } catch (requestError) { setError(requestError.message) }
   }
-  const startEdit = (record) => { setError(''); setSavedRecord(null); setImageFiles([]); setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
-  const cancelEdit = () => { setSavedRecord(null); setImageFiles([]); setForm(emptyForm) }
+  const startEdit = (record) => { setError(''); setSavedRecord(null); clearSelectedImages(); setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
+  const cancelEdit = () => { setSavedRecord(null); clearSelectedImages(); setForm(emptyForm) }
   const remove = async (date) => { if (!window.confirm(`Delete the Mood Check-in for ${date}?`)) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) cancelEdit(); await refresh() } catch (requestError) { setError(requestError.message) } }
   const removeImage = async (record, image) => { try { await apiFetch(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images/${encodeURIComponent(image.id)}`, { method: 'DELETE', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } }
   const orderedRecords = [...records].sort((left, right) => left.date.localeCompare(right.date))
@@ -196,7 +220,7 @@ function MoodCheckinContent({ t, onReflect }) {
   const commonMood = Object.entries(moodCounts).sort((left, right) => right[1] - left[1])[0]?.[0] || '—'
   const chips = [t('moodChipCalm'), t('moodChipTired'), t('moodChipHopeful'), t('moodChipNervous')]
   return <><div className="mood-page-actions"><button className="secondary-button" onClick={refresh}><RefreshCw size={16} />{t('refresh')}</button></div><ErrorText error={error} />
-    <div className="two-column mood-top"><form className="data-panel checkin-form" onSubmit={submit}><h2>{isEditing ? `${t('editingCheckinFor')} ${form.date}` : t('todayCheckin')}</h2><label>{t('moodLabel')}<input required value={form.mood} placeholder={t('moodPlaceholder')} onChange={(event) => setForm((current) => ({ ...current, mood: event.target.value }))} /></label><div className="mood-chip-row">{chips.map((chip) => <button className={form.mood === chip ? 'selected' : ''} type="button" key={chip} onClick={() => setForm((current) => ({ ...current, mood: chip }))}>{chip}</button>)}</div><label>{t('intensity')} <b>{form.intensity}/5</b><div className="mood-intensity-row">{[1, 2, 3, 4, 5].map((level) => <button className={form.intensity === level ? 'selected' : ''} type="button" key={level} onClick={() => setForm((current) => ({ ...current, intensity: level }))} aria-label={`${t('intensity')} ${level}/5`}>{level}</button>)}</div></label><label>{t('note')}<textarea rows="3" value={form.note} placeholder={t('notePlaceholder')} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label><label className="mood-photo-field">{t('moodImages')}<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" aria-label={t('moodImages')} multiple onChange={chooseImages} /><small>{t('moodImageHelp')}</small>{imageFiles.length > 0 && <span className="image-file-list">{imageFiles.map((file) => file.name).join(', ')}</span>}</label><div className="checkin-form-actions"><button className="primary-button">{isEditing ? t('updateCheckin') : t('save')}</button><button type="button" className="secondary-button" onClick={() => onReflect({ ...form, date: form.date || new Date().toISOString().slice(0, 10) })}><Sparkles size={16} />{t('talkAboutCheckin')}</button>{isEditing && <button type="button" className="secondary-button" onClick={cancelEdit}><X size={16} />{t('cancelEdit')}</button>}</div>{savedRecord && <div className="mood-reflection-callout" role="status"><span>{t('moodReflectionReady')}</span><button type="button" className="secondary-button" onClick={() => onReflect(savedRecord)}><Sparkles size={16} />{t('talkAboutCheckin')}</button></div>}</form><section className="data-panel trend-panel"><div className="mood-trend-title"><h2>{t('recentTrend')}</h2><div className="mood-period-tabs">{[[30, t('thirtyDays')], [7, t('sevenDays')], ['all', t('all')]].map(([value, label]) => <button type="button" className={trendDays === value ? 'selected' : ''} key={value} onClick={() => setTrendDays(value)}>{label}</button>)}</div></div><MoodChart points={chartPoints} showPoints={trendDays !== 30} /><div className="mood-summary-strip"><div><span>{t('averageIntensity')}</span><strong>{averageIntensity}</strong></div><div><span>{t('recordCount')}</span><strong>{chartPoints.length}</strong></div><div><span>{t('mostFrequentMood')}</span><strong>{commonMood}</strong></div></div><section className="mood-observation"><h3>{t('moodObservation')}</h3><p>{weekly?.summary || t('noWeeklySummary')}</p><button type="button" className="secondary-button" onClick={() => onReflect(chartPoints.at(-1) || { date: new Date().toISOString().slice(0, 10), mood: form.mood, intensity: form.intensity, note: form.note })}><Sparkles size={16} />{t('talkAboutTrend')}</button></section></section></div>
+    <div className="two-column mood-top"><form className="data-panel checkin-form" onSubmit={submit}><h2>{isEditing ? `${t('editingCheckinFor')} ${form.date}` : t('todayCheckin')}</h2><label>{t('moodLabel')}<input required value={form.mood} placeholder={t('moodPlaceholder')} onChange={(event) => setForm((current) => ({ ...current, mood: event.target.value }))} /></label><div className="mood-chip-row">{chips.map((chip) => <button className={form.mood === chip ? 'selected' : ''} type="button" key={chip} onClick={() => setForm((current) => ({ ...current, mood: chip }))}>{chip}</button>)}</div><label>{t('intensity')} <b>{form.intensity}/5</b><div className="mood-intensity-row">{[1, 2, 3, 4, 5].map((level) => <button className={form.intensity === level ? 'selected' : ''} type="button" key={level} onClick={() => setForm((current) => ({ ...current, intensity: level }))} aria-label={`${t('intensity')} ${level}/5`}>{level}</button>)}</div></label><label>{t('note')}<textarea rows="3" value={form.note} placeholder={t('notePlaceholder')} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} /></label><div className="mood-photo-field"><span>{t('moodImages')}</span><div className="mood-image-picker">{imagePreviews.map(({ file, url }) => <figure key={url}><img src={url} alt={file.name} /><button type="button" title={t('removeMoodImage')} onClick={() => removeSelectedImage(file)}><X size={14} /></button></figure>)}<label className="mood-photo-add"><Plus size={26} /><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" aria-label={t('moodImages')} multiple onChange={chooseImages} /></label></div><small>{t('moodImageHelp')}</small></div><div className="checkin-form-actions"><button className="primary-button">{isEditing ? t('updateCheckin') : t('save')}</button><button type="button" className="secondary-button" onClick={() => onReflect({ ...form, date: form.date || new Date().toISOString().slice(0, 10) })}><Sparkles size={16} />{t('talkAboutCheckin')}</button>{isEditing && <button type="button" className="secondary-button" onClick={cancelEdit}><X size={16} />{t('cancelEdit')}</button>}</div>{savedRecord && <div className="mood-reflection-callout" role="status"><span>{t('moodReflectionReady')}</span><button type="button" className="secondary-button" onClick={() => onReflect(savedRecord)}><Sparkles size={16} />{t('talkAboutCheckin')}</button></div>}</form><section className="data-panel trend-panel"><div className="mood-trend-title"><h2>{t('recentTrend')}</h2><div className="mood-period-tabs">{[[30, t('thirtyDays')], [7, t('sevenDays')], ['all', t('all')]].map(([value, label]) => <button type="button" className={trendDays === value ? 'selected' : ''} key={value} onClick={() => setTrendDays(value)}>{label}</button>)}</div></div><MoodChart points={chartPoints} showPoints={trendDays !== 30} /><div className="mood-summary-strip"><div><span>{t('averageIntensity')}</span><strong>{averageIntensity}</strong></div><div><span>{t('recordCount')}</span><strong>{chartPoints.length}</strong></div><div><span>{t('mostFrequentMood')}</span><strong>{commonMood}</strong></div></div><section className="mood-observation"><h3>{t('moodObservation')}</h3><p>{weekly?.summary || t('noWeeklySummary')}</p><button type="button" className="secondary-button" onClick={() => onReflect(chartPoints.at(-1) || { date: new Date().toISOString().slice(0, 10), mood: form.mood, intensity: form.intensity, note: form.note })}><Sparkles size={16} />{t('talkAboutTrend')}</button></section></section></div>
     <section className="data-panel"><h2>{t('recentCheckins')}</h2><Loading loading={loading} t={t} />{records.length === 0 && !loading ? <p className="empty-state">{t('noCheckins')}</p> : <div className="record-list">{[...records].reverse().map((record) => <article className={`record-row ${form.date === record.date ? 'editing' : ''}`} key={record.date}><div><strong>{record.mood}</strong><span>{record.date} · {record.intensity}/5</span>{record.note && <p className="record-note">{record.note}</p>}<MoodImageGrid record={record} onRemove={removeImage} t={t} /></div><div className="record-actions"><button className="icon-button" title={t('talkAboutCheckin')} onClick={() => onReflect(record)}><Sparkles size={16} /></button><button className="icon-button" title={`${t('editCheckin')} ${record.date}`} onClick={() => startEdit(record)}><Pencil size={16} /></button><button className="danger-icon" title={`${t('delete')} ${record.date}`} onClick={() => remove(record.date)}><Trash2 size={16} /></button></div></article>)}</div>}</section>
   </>
 }

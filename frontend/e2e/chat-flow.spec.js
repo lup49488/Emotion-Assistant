@@ -26,6 +26,30 @@ test.beforeEach(async ({ request }) => {
   await request.post(`${testApiBaseUrl}/__test/reset`)
 })
 
+for (const theme of ['light', 'dark']) {
+  test(`${theme}-theme login keeps the form compact without a raised background sheet`, async ({ page }) => {
+    await page.addInitScript((value) => localStorage.setItem('mindful-theme', value), theme)
+    await page.goto('/')
+    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
+    const loginSurface = await page.locator('.login-form').evaluate((form) => {
+      const style = getComputedStyle(form)
+      const formRect = form.getBoundingClientRect()
+      const inputRect = form.querySelector('input')?.getBoundingClientRect()
+      return {
+        background: style.backgroundColor,
+        borderTopWidth: style.borderTopWidth,
+        boxShadow: style.boxShadow,
+        containsInputs: Boolean(inputRect && inputRect.left >= formRect.left && inputRect.right <= formRect.right),
+      }
+    })
+    // The form must not paint its own sheet in either theme.
+    expect(loginSurface.background).toBe('rgba(0, 0, 0, 0)')
+    expect(loginSurface.borderTopWidth).toBe('0px')
+    expect(loginSurface.boxShadow).toBe('none')
+    expect(loginSurface.containsInputs).toBe(true)
+  })
+}
+
 test('login, cited reply, feedback, and regeneration work together', async ({ page }) => {
   await signIn(page)
 
@@ -256,6 +280,16 @@ test('a Mood Check-in can retain and remove a private image attachment', async (
   await page.getByRole('button', { name: 'Mood check-in' }).click()
   await page.getByRole('textbox', { name: 'Mood' }).fill('hopeful')
   await page.getByLabel('Photos').setInputFiles({ name: 'mood.png', mimeType: 'image/png', buffer: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5JwAAAABJRU5ErkJggg==', 'base64') })
+  const selectedImage = page.getByRole('img', { name: 'mood.png' })
+  await expect(selectedImage).toBeVisible()
+  const pickerOrder = await page.locator('.mood-image-picker').evaluate((picker) => {
+    const preview = picker.querySelector('figure')?.getBoundingClientRect()
+    const add = picker.querySelector('.mood-photo-add')?.getBoundingClientRect()
+    return { previewRight: preview?.right, addLeft: add?.left }
+  })
+  expect(pickerOrder.previewRight).toBeDefined()
+  expect(pickerOrder.addLeft).toBeDefined()
+  expect(pickerOrder.previewRight).toBeLessThanOrEqual(pickerOrder.addLeft)
   await page.getByRole('button', { name: 'Save check-in' }).click()
 
   const image = page.getByRole('img', { name: 'Mood Check-in photo' })
