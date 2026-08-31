@@ -194,6 +194,16 @@ test('memory saving policy can be changed from personal data', async ({ page }) 
   await expect(page.getByText('Conversation memory extraction is disabled. Manual changes remain available.')).toBeVisible()
 })
 
+test('English system summaries stay English while user-entered mood labels stay unchanged', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Personal data' }).click()
+  await expect(page.getByText('Memory quality is healthy.')).toBeVisible()
+
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await expect(page.getByRole('heading', { name: 'A small reflection' })).toBeVisible()
+  await expect(page.getByText('No weekly summary available.')).toBeVisible()
+})
+
 test('chat header controls set a gentle tone and open the model reply window', async ({ page }) => {
   await signIn(page)
 

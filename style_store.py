@@ -307,10 +307,11 @@ def retrieve_style(
     prefix = _normalized_prefix(source_prefix)
     index = _read_index(chunks)
     top_k = max(1, min(int(top_k), len(chunks)))
-    # The FAISS index covers every style document, so a prefix filter must search
-    # a wider candidate pool; otherwise the nearest neighbours may all belong to
-    # other style families and the filtered result would be empty.
-    search_k = min(len(chunks), top_k * STYLE_PREFIX_CANDIDATE_MULTIPLIER) if prefix else top_k
+    # The FAISS index covers every style document. For prefix-scoped retrieval,
+    # search the full small style index before filtering; otherwise cross-lingual
+    # queries can return only same-language neighbours and leave a valid scoped
+    # corpus empty after filtering.
+    search_k = len(chunks) if prefix else top_k
     similarities, indices = index.search(encode_queries([query]), search_k)
     results: list[dict[str, Any]] = []
     for score, i in zip(similarities[0], indices[0]):

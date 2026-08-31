@@ -824,6 +824,16 @@
         "operationId": "memory_quality_api_v1_memory_quality_get",
         "parameters": [
           {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "zh",
+              "title": "Locale"
+            }
+          },
+          {
             "name": "chatbot_session",
             "in": "cookie",
             "required": false,
@@ -1441,6 +1451,16 @@
               "minimum": 1,
               "default": 7,
               "title": "Days"
+            }
+          },
+          {
+            "name": "locale",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "zh",
+              "title": "Locale"
             }
           },
           {

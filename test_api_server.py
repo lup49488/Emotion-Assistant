@@ -115,6 +115,15 @@ def test_login_sets_signed_cookie_and_memory_quality_uses_it(monkeypatch, tmp_pa
     assert "report" in response.json()
 
 
+def test_memory_quality_uses_requested_locale(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        _login(client, monkeypatch, tmp_path)
+        response = client.get("/api/v1/memory/quality?locale=en")
+
+    assert response.status_code == 200
+    assert "Memory quality report" in response.json()["report"]
+
+
 def test_chat_requires_signed_session_cookie():
     with TestClient(api_server.app, base_url="https://testserver") as client:
         response = client.post("/api/v1/chat", json={"message": "hello"})

@@ -44,3 +44,4 @@ evaluation/EXPERIMENT_DESIGN.md
 
 # Editor backup files.
 *.bak
+.freebuff/project-id

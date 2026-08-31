@@ -12,7 +12,13 @@ function ErrorText({ error }) { return error ? <p className="inline-error" role=
 
 function Loading({ loading, t }) { return loading ? <span className="loading-label"><RefreshCw size={14} className="spin" />{t('loading')}</span> : null }
 
-export function MemoryPage({ t }) {
+function localizedMemoryReason(reason, locale) {
+  if (locale !== 'en' || typeof reason !== 'string') return reason
+  const match = reason.match(/^情绪模型置信度\s+([\d.]+)\s+达到情绪记录阈值\s+([\d.]+)$/)
+  return match ? `Emotion model confidence ${match[1]} met the emotion-memory threshold ${match[2]}.` : reason
+}
+
+export function MemoryPage({ t, locale }) {
   const [snapshot, setSnapshot] = useState(null)
   const [quality, setQuality] = useState('')
   const [error, setError] = useState('')
@@ -22,14 +28,14 @@ export function MemoryPage({ t }) {
   const [editingInterestIndex, setEditingInterestIndex] = useState(null)
   const [interestDraft, setInterestDraft] = useState('')
   const [memorySaveMode, setMemorySaveMode] = useState('confirm')
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true); setError('')
     try {
-      const [memory, report, preference] = await Promise.all([readJson('/api/v1/memory'), readJson('/api/v1/memory/quality'), readJson('/api/v1/memory/preference')])
+      const [memory, report, preference] = await Promise.all([readJson('/api/v1/memory'), readJson(`/api/v1/memory/quality?locale=${encodeURIComponent(locale)}`), readJson('/api/v1/memory/preference')])
       setSnapshot(memory); setQuality(report.report); setMemorySaveMode(preference.mode)
     } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
-  }
-  useEffect(() => { refresh() }, [])
+  }, [locale])
+  useEffect(() => { refresh() }, [refresh])
   const saveLongTerm = async (items) => {
     setError('')
     try {
@@ -112,7 +118,7 @@ export function MemoryPage({ t }) {
     <ErrorText error={error} /><Loading loading={loading} t={t} />
     {snapshot && <>
       <div className="stat-grid">{summary.map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
-      <div className="memory-v2-grid"><div className="memory-v2-primary"><section className="data-panel"><div className="panel-title-row"><h2>{t('pendingMemories')}</h2></div><PendingMemoryList items={pendingMemory} onEdit={editPending} onResolve={resolvePending} t={t} /></section><section className="data-panel"><div className="panel-title-row"><h2>{t('longTermMemory')}</h2><button className="icon-button" title={t('addMemory')} onClick={addMemory}><Plus size={17} /></button></div><p className="data-panel-copy">{t('longTermDescription')}</p>{snapshot.long_memory.length === 0 ? <p className="empty-state">{t('noLongTerm')}</p> : <div className="memory-list">{snapshot.long_memory.map((item, index) => <article className="memory-row" key={`${item.time || 'manual'}-${index}`}>{editingIndex === index ? <><textarea value={memoryDraft} rows="3" aria-label={t('memoryText')} onChange={(event) => setMemoryDraft(event.target.value)} /><div className="memory-row-actions"><button className="primary-button" onClick={() => saveEdit(index)}>{t('saveMemory')}</button><button className="secondary-button" onClick={() => { setEditingIndex(null); if (!item.text) setSnapshot((current) => ({ ...current, long_memory: current.long_memory.filter((_, itemIndex) => itemIndex !== index) })) }}><X size={15} />{t('cancel')}</button></div></> : <><div><p>{item.text}</p><span>{item.kind || 'memory'} {item.time ? `· ${String(item.time).slice(0, 10)}` : ''}</span></div><div className="memory-row-actions"><button className="icon-button" title={t('editMemory')} onClick={() => startEdit(index)}><Pencil size={15} /></button><button className="danger-icon" title={t('deleteMemory')} onClick={() => removeMemory(index)}><Trash2 size={16} /></button></div></>}</article>)}</div>}</section><section className="data-panel"><div className="panel-title-row"><h2>{t('interests')}</h2><button className="icon-button" title={t('addMemory')} onClick={addInterest}><Plus size={17} /></button></div><p className="data-panel-copy">{t('interestDescription')}</p>{snapshot.interest_memory.length === 0 ? <p className="empty-state">{t('noInterests')}</p> : <div className="memory-list">{snapshot.interest_memory.map((item, index) => <article className="memory-row" key={`${item.time || 'interest'}-${index}`}>{editingInterestIndex === index ? <><textarea value={interestDraft} rows="3" aria-label={t('memoryText')} onChange={(event) => setInterestDraft(event.target.value)} /><div className="memory-row-actions"><button className="primary-button" onClick={() => saveInterestEdit(index)}>{t('saveMemory')}</button><button className="secondary-button" onClick={() => { setEditingInterestIndex(null); if (!item.text) setSnapshot((current) => ({ ...current, interest_memory: current.interest_memory.filter((_, itemIndex) => itemIndex !== index) })) }}><X size={15} />{t('cancel')}</button></div></> : <><div><p>{item.text || String(item)}</p><span>{item.kind || 'interest'} {item.time ? `· ${String(item.time).slice(0, 10)}` : ''}</span></div><div className="memory-row-actions"><button className="icon-button" title={t('editMemory')} onClick={() => startInterestEdit(index)}><Pencil size={15} /></button><button className="danger-icon" title={t('deleteMemory')} onClick={() => removeInterest(index)}><Trash2 size={16} /></button></div></>}</article>)}</div>}</section></div><aside className="memory-v2-sidebar"><section className="data-panel"><h2>{t('memorySaveMode')}</h2><div className="memory-policy-options">{[['auto', t('memorySaveAuto')], ['confirm', t('memorySaveConfirm')], ['off', t('memorySaveOff')]].map(([mode, label]) => <label className={memorySaveMode === mode ? 'selected' : ''} key={mode}><input type="radio" name="memory-save-mode" value={mode} checked={memorySaveMode === mode} onChange={() => updateMemorySaveMode(mode)} /><span><b>{label}</b><small>{t(`memorySaveMode_${mode}`)}</small></span></label>)}</div><p className="report-text memory-quality-note">{quality || t('noQualityResult')}</p></section><section className="data-panel"><h2>{t('recentEvents')}</h2><MemoryAuditList events={snapshot.memory_events} limit={3} onUndo={undoAudit} t={t} />{snapshot.memory_events.length > 3 && <details className="memory-event-details"><summary>{t('viewAll')}</summary><div className="memory-event-scroll"><MemoryAuditList events={snapshot.memory_events.slice(0, -3)} onUndo={undoAudit} t={t} /></div></details>}</section></aside></div>
+      <div className="memory-v2-grid"><div className="memory-v2-primary"><section className="data-panel"><div className="panel-title-row"><h2>{t('pendingMemories')}</h2></div><PendingMemoryList items={pendingMemory} onEdit={editPending} onResolve={resolvePending} t={t} /></section><section className="data-panel"><div className="panel-title-row"><h2>{t('longTermMemory')}</h2><button className="icon-button" title={t('addMemory')} onClick={addMemory}><Plus size={17} /></button></div><p className="data-panel-copy">{t('longTermDescription')}</p>{snapshot.long_memory.length === 0 ? <p className="empty-state">{t('noLongTerm')}</p> : <div className="memory-list">{snapshot.long_memory.map((item, index) => <article className="memory-row" key={`${item.time || 'manual'}-${index}`}>{editingIndex === index ? <><textarea value={memoryDraft} rows="3" aria-label={t('memoryText')} onChange={(event) => setMemoryDraft(event.target.value)} /><div className="memory-row-actions"><button className="primary-button" onClick={() => saveEdit(index)}>{t('saveMemory')}</button><button className="secondary-button" onClick={() => { setEditingIndex(null); if (!item.text) setSnapshot((current) => ({ ...current, long_memory: current.long_memory.filter((_, itemIndex) => itemIndex !== index) })) }}><X size={15} />{t('cancel')}</button></div></> : <><div><p>{item.text}</p><span>{item.kind || 'memory'} {item.time ? `· ${String(item.time).slice(0, 10)}` : ''}</span></div><div className="memory-row-actions"><button className="icon-button" title={t('editMemory')} onClick={() => startEdit(index)}><Pencil size={15} /></button><button className="danger-icon" title={t('deleteMemory')} onClick={() => removeMemory(index)}><Trash2 size={16} /></button></div></>}</article>)}</div>}</section><section className="data-panel"><div className="panel-title-row"><h2>{t('interests')}</h2><button className="icon-button" title={t('addMemory')} onClick={addInterest}><Plus size={17} /></button></div><p className="data-panel-copy">{t('interestDescription')}</p>{snapshot.interest_memory.length === 0 ? <p className="empty-state">{t('noInterests')}</p> : <div className="memory-list">{snapshot.interest_memory.map((item, index) => <article className="memory-row" key={`${item.time || 'interest'}-${index}`}>{editingInterestIndex === index ? <><textarea value={interestDraft} rows="3" aria-label={t('memoryText')} onChange={(event) => setMemoryDraft(event.target.value)} /><div className="memory-row-actions"><button className="primary-button" onClick={() => saveInterestEdit(index)}>{t('saveMemory')}</button><button className="secondary-button" onClick={() => { setEditingInterestIndex(null); if (!item.text) setSnapshot((current) => ({ ...current, interest_memory: current.interest_memory.filter((_, itemIndex) => itemIndex !== index) })) }}><X size={15} />{t('cancel')}</button></div></> : <><div><p>{item.text || String(item)}</p><span>{item.kind || 'interest'} {item.time ? `· ${String(item.time).slice(0, 10)}` : ''}</span></div><div className="memory-row-actions"><button className="icon-button" title={t('editMemory')} onClick={() => startInterestEdit(index)}><Pencil size={15} /></button><button className="danger-icon" title={t('deleteMemory')} onClick={() => removeInterest(index)}><Trash2 size={16} /></button></div></>}</article>)}</div>}</section></div><aside className="memory-v2-sidebar"><section className="data-panel"><h2>{t('memorySaveMode')}</h2><div className="memory-policy-options">{[['auto', t('memorySaveAuto')], ['confirm', t('memorySaveConfirm')], ['off', t('memorySaveOff')]].map(([mode, label]) => <label className={memorySaveMode === mode ? 'selected' : ''} key={mode}><input type="radio" name="memory-save-mode" value={mode} checked={memorySaveMode === mode} onChange={() => updateMemorySaveMode(mode)} /><span><b>{label}</b><small>{t(`memorySaveMode_${mode}`)}</small></span></label>)}</div><p className="report-text memory-quality-note">{quality || t('noQualityResult')}</p></section><section className="data-panel"><h2>{t('recentEvents')}</h2><MemoryAuditList events={snapshot.memory_events} limit={3} onUndo={undoAudit} t={t} locale={locale} />{snapshot.memory_events.length > 3 && <details className="memory-event-details"><summary>{t('viewAll')}</summary><div className="memory-event-scroll"><MemoryAuditList events={snapshot.memory_events.slice(0, -3)} onUndo={undoAudit} t={t} locale={locale} /></div></details>}</section></aside></div>
     </>}
   </section>
 }
@@ -129,19 +135,19 @@ function PendingMemoryList({ items, onEdit, onResolve, t }) {
   })}</div>
 }
 
-function MemoryAuditList({ events, limit, onUndo, t }) {
+function MemoryAuditList({ events, limit, onUndo, t, locale }) {
   const sections = { stable: t('stableProfile'), interest: t('interests'), long: t('longTerm'), emotion: t('emotion'), none: t('memoryTitle') }
   const actions = { added: t('memoryEventAdded'), updated: t('memoryEventUpdated'), merged: t('memoryEventMerged'), unchanged: t('memoryEventUnchanged'), skipped: t('memoryEventSkipped'), pending: t('memoryEventPending'), confirmed: t('memoryEventConfirmed'), rejected: t('memoryEventRejected'), reverted: t('memoryEventReverted') }
   const visibleEvents = [...events].reverse().slice(0, limit || 20)
   if (visibleEvents.length === 0) return <p className="empty-state">{t('noEvents')}</p>
-  return <div className="memory-list">{visibleEvents.map((event) => <article className="memory-row memory-audit-row" key={event.id}><div><p><strong>{sections[event.section] || event.section} · {actions[event.action] || event.action}</strong></p><p>{event.text || t('memoryTitle')}</p><span>{event.time} · {event.reason}</span>{event.source_text && <span>{t('memorySource')}: {event.source_text}</span>}{event.undone_at && <span>{t('memoryEventReverted')}</span>}</div>{event.undoable && <button className="secondary-button" title={t('undoMemory')} onClick={() => onUndo(event.id)}><Undo2 size={15} />{t('undoMemory')}</button>}</article>)}</div>
+  return <div className="memory-list">{visibleEvents.map((event) => <article className="memory-row memory-audit-row" key={event.id}><div><p><strong>{sections[event.section] || event.section} · {actions[event.action] || event.action}</strong></p><p>{event.text || t('memoryTitle')}</p><span>{event.time} · {localizedMemoryReason(event.reason, locale)}</span>{event.source_text && <span>{t('memorySource')}: {event.source_text}</span>}{event.undone_at && <span>{t('memoryEventReverted')}</span>}</div>{event.undoable && <button className="secondary-button" title={t('undoMemory')} onClick={() => onUndo(event.id)}><Undo2 size={15} />{t('undoMemory')}</button>}</article>)}</div>
 }
 
-export function MoodPage({ t, onReflect }) {
-  return <section className="feature-page mood-page v2-feature-page"><header className="feature-header mood-feature-header"><div><span className="mood-kicker">{t('moodTitle')}</span><h1>{t('moodWorkspaceTitle')}</h1><p>{t('moodWorkspaceDescription')}</p></div></header><MoodCheckinContent t={t} onReflect={onReflect} /></section>
+export function MoodPage({ t, onReflect, locale }) {
+  return <section className="feature-page mood-page v2-feature-page"><header className="feature-header mood-feature-header"><div><span className="mood-kicker">{t('moodTitle')}</span><h1>{t('moodWorkspaceTitle')}</h1><p>{t('moodWorkspaceDescription')}</p></div></header><MoodCheckinContent t={t} onReflect={onReflect} locale={locale} /></section>
 }
 
-function MoodCheckinContent({ t, onReflect }) {
+function MoodCheckinContent({ t, onReflect, locale }) {
   const [records, setRecords] = useState([])
   const [weekly, setWeekly] = useState(null)
   const emptyForm = { date: null, mood: '', intensity: 3, note: '' }
@@ -154,11 +160,11 @@ function MoodCheckinContent({ t, onReflect }) {
   const [savedRecord, setSavedRecord] = useState(null)
   const [trendDays, setTrendDays] = useState(30)
   const isEditing = Boolean(form.date)
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     setLoading(true); setError('')
-    try { const [all, trend] = await Promise.all([readJson('/api/v1/mood/checkins'), readJson('/api/v1/mood/weekly')]); setRecords(all.records); setWeekly(trend) } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
-  }
-  useEffect(() => { refresh() }, [])
+    try { const [all, trend] = await Promise.all([readJson('/api/v1/mood/checkins'), readJson(`/api/v1/mood/weekly?locale=${encodeURIComponent(locale)}`)]); setRecords(all.records); setWeekly(trend) } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
+  }, [locale])
+  useEffect(() => { refresh() }, [refresh])
   // Editing a check-in that already has photos: the cap covers stored ones too.
   const existingImageCount = (records.find((record) => record.date === form.date)?.images || []).length
   const chooseImages = (event) => {

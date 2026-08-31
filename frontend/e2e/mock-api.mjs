@@ -114,7 +114,7 @@ const server = http.createServer(async (request, response) => {
     return response.end()
   }
   if (request.method === 'GET' && url.pathname === '/api/v1/memory') return send(response, 200, memorySnapshot)
-  if (request.method === 'GET' && url.pathname === '/api/v1/memory/quality') return send(response, 200, { report: 'Memory quality is healthy.' })
+  if (request.method === 'GET' && url.pathname === '/api/v1/memory/quality') return send(response, 200, { report: url.searchParams.get('locale') === 'en' ? 'Memory quality is healthy.' : '记忆质量良好。' })
   if (request.method === 'GET' && url.pathname === '/api/v1/memory/preference') return send(response, 200, { mode: memorySaveMode })
   if (request.method === 'PUT' && url.pathname === '/api/v1/memory/preference') {
     memorySaveMode = ['auto', 'confirm', 'off'].includes(body.mode) ? body.mode : 'confirm'
@@ -167,7 +167,9 @@ const server = http.createServer(async (request, response) => {
     response.writeHead(204)
     return response.end()
   }
-  if (request.method === 'GET' && url.pathname === '/api/v1/mood/weekly') return send(response, 200, { points: [], summary: 'No weekly summary available.', analysis: '' })
+  if (request.method === 'GET' && url.pathname === '/api/v1/mood/weekly') return send(response, 200, url.searchParams.get('locale') === 'en'
+    ? { points: [], summary: 'No weekly summary available.', analysis: '' }
+    : { points: [], summary: '暂无一周心情总结。', analysis: '' })
   if (request.method === 'POST' && url.pathname === '/api/v1/chat/stream') {
     const item = conversation(body.conversation_id)
     if (body.message === 'Trigger retryable error' && !body.retry_last_response) {

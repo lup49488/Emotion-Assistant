@@ -295,28 +295,39 @@ def format_weekly_mood_summary(
     user_id: str,
     end_date: str | None = None,
     days: int = 7,
+    locale: str = "zh",
 ) -> str:
+    is_english = (locale or "").lower().startswith("en")
     points = get_weekly_mood_points(user_id, end_date=end_date, days=days)
     recorded = [point for point in points if point["intensity"] is not None]
     if not recorded:
         start = points[0]["date"]
         end = points[-1]["date"]
-        return f"{start} 到 {end} 暂无 Mood Check-in 数据。"
+        return f"No Mood Check-ins from {start} to {end}." if is_english else f"{start} 到 {end} 暂无 Mood Check-in 数据。"
 
     values = [int(point["intensity"]) for point in recorded]
     average = sum(values) / len(values)
     max_point = max(recorded, key=lambda point: int(point["intensity"]))
     min_point = min(recorded, key=lambda point: int(point["intensity"]))
-    trend = "记录不足，暂不判断趋势"
+    trend = "Not enough records to describe a trend yet." if is_english else "记录不足，暂不判断趋势"
     if len(recorded) >= 2:
         first = int(recorded[0]["intensity"])
         last = int(recorded[-1]["intensity"])
         if last > first:
-            trend = "本周后段强度比前段更高"
+            trend = "Intensity was higher later in the week." if is_english else "本周后段强度比前段更高"
         elif last < first:
-            trend = "本周后段强度比前段更低"
+            trend = "Intensity was lower later in the week." if is_english else "本周后段强度比前段更低"
         else:
-            trend = "本周前后强度基本持平"
+            trend = "Intensity was broadly steady across the week." if is_english else "本周前后强度基本持平"
+
+    if is_english:
+        return "\n".join([
+            f"Recorded days: {len(recorded)}/{len(points)}",
+            f"Average intensity: {average:.1f}/5",
+            f"Highest: {max_point['date']} {max_point['mood']} {max_point['intensity']}/5",
+            f"Lowest: {min_point['date']} {min_point['mood']} {min_point['intensity']}/5",
+            f"Trend: {trend}",
+        ])
 
     return "\n".join([
         f"记录天数：{len(recorded)}/{len(points)}",
@@ -327,19 +338,24 @@ def format_weekly_mood_summary(
     ])
 
 
-def format_mood_fluctuation_analysis(points: list[dict[str, Any]]) -> str:
+def format_mood_fluctuation_analysis(points: list[dict[str, Any]], locale: str = "zh") -> str:
     """Summarize changes in self-reported intensity without inferring a diagnosis."""
+    is_english = (locale or "").lower().startswith("en")
     recorded = [point for point in points if point.get("intensity") is not None]
     if not recorded:
-        return "暂无足够的 Mood Check-in 数据，记录几天后可查看情绪波动分析。"
+        return "Not enough Mood Check-in data yet. Add a few days of records to view a pattern." if is_english else "暂无足够的 Mood Check-in 数据，记录几天后可查看情绪波动分析。"
 
     values = [int(point["intensity"]) for point in recorded]
     intensity_range = max(values) - min(values)
-    lines = [
+    lines = ([
+        "Mood pattern (based on self-reported intensity; not a medical assessment)",
+        f"Recorded days: {len(recorded)}/{len(points)}",
+        f"Intensity range: {min(values)} to {max(values)}/5 (spread {intensity_range})",
+    ] if is_english else [
         "情绪波动分析（基于自评强度，不构成医学判断）",
         f"有效记录：{len(recorded)}/{len(points)} 天",
         f"强度范围：{min(values)} 到 {max(values)}/5，跨度 {intensity_range}",
-    ]
+    ])
 
     adjacent_changes: list[tuple[dict[str, Any], dict[str, Any], int]] = []
     for previous, current in zip(recorded, recorded[1:]):
@@ -353,36 +369,40 @@ def format_mood_fluctuation_analysis(points: list[dict[str, Any]]) -> str:
         largest_previous, largest_current, largest_change = max(
             adjacent_changes, key=lambda item: abs(item[2])
         )
-        direction = "上升" if largest_change > 0 else "下降" if largest_change < 0 else "持平"
+        direction = ("up" if largest_change > 0 else "down" if largest_change < 0 else "steady") if is_english else ("上升" if largest_change > 0 else "下降" if largest_change < 0 else "持平")
         average_change = sum(absolute_changes) / len(absolute_changes)
         if intensity_range >= 3 or average_change >= 2:
-            fluctuation = "较明显"
+            fluctuation = "more noticeable" if is_english else "较明显"
         elif intensity_range >= 2 or average_change >= 1:
-            fluctuation = "中等"
+            fluctuation = "moderate" if is_english else "中等"
         else:
-            fluctuation = "较平稳"
-        lines.extend([
+            fluctuation = "fairly steady" if is_english else "较平稳"
+        lines.extend(([
+            f"Average day-to-day change: {average_change:.1f}",
+            f"Largest day-to-day change: {largest_previous['date']} to {largest_current['date']}, {direction} {abs(largest_change)} point(s)",
+            f"Variation: {fluctuation}",
+        ] if is_english else [
             f"连续记录平均变化：{average_change:.1f}",
             f"最大单日变化：{largest_previous['date']} 到 {largest_current['date']} {direction} {abs(largest_change)} 点",
             f"波动程度：{fluctuation}",
-        ])
+        ]))
     else:
-        lines.append("连续记录不足，暂不计算单日波动。")
+        lines.append("Not enough consecutive records to calculate day-to-day change." if is_english else "连续记录不足，暂不计算单日波动。")
 
     if len(recorded) >= 2:
         recent_change = int(recorded[-1]["intensity"]) - int(recorded[0]["intensity"])
         if recent_change > 0:
-            recent_text = f"近期强度较首条记录上升 {recent_change} 点"
+            recent_text = f"Intensity is {recent_change} point(s) higher than the first record." if is_english else f"近期强度较首条记录上升 {recent_change} 点"
         elif recent_change < 0:
-            recent_text = f"近期强度较首条记录下降 {abs(recent_change)} 点"
+            recent_text = f"Intensity is {abs(recent_change)} point(s) lower than the first record." if is_english else f"近期强度较首条记录下降 {abs(recent_change)} 点"
         else:
-            recent_text = "近期强度与首条记录基本持平"
-        lines.append(f"近期变化：{recent_text}")
+            recent_text = "Intensity is broadly steady compared with the first record." if is_english else "近期强度与首条记录基本持平"
+        lines.append(f"Recent change: {recent_text}" if is_english else f"近期变化：{recent_text}")
 
     latest = recorded[-1]
-    negative_moods = {"疲惫", "焦虑", "难过", "生气", "压力大"}
+    negative_moods = {"疲惫", "焦虑", "难过", "生气", "压力大", "tired", "anxious", "sad", "angry", "stressed"}
     if latest["mood"] in negative_moods and int(latest["intensity"]) >= 4:
-        lines.append("关怀提示：最近记录为高强度不适感受；若持续或影响生活，可以考虑和信任的人或专业人士聊聊。")
+        lines.append("A gentle note: your latest record describes high-intensity discomfort. If it continues or affects daily life, consider talking with someone you trust or a qualified professional." if is_english else "关怀提示：最近记录为高强度不适感受；若持续或影响生活，可以考虑和信任的人或专业人士聊聊。")
     return "\n".join(lines)
 
 
@@ -390,7 +410,8 @@ def format_weekly_mood_analysis(
     user_id: str,
     end_date: str | None = None,
     days: int = 7,
+    locale: str = "zh",
 ) -> str:
     return format_mood_fluctuation_analysis(
-        get_weekly_mood_points(user_id, end_date=end_date, days=days)
+        get_weekly_mood_points(user_id, end_date=end_date, days=days), locale=locale
     )

@@ -831,12 +831,12 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
 
 
 @app.get("/api/v1/memory/quality", response_model=MemoryQualityResponse)
-def memory_quality(user_id: CurrentUser) -> dict[str, str]:
+def memory_quality(user_id: CurrentUser, locale: str = Query(default="zh")) -> dict[str, str]:
     # The signed session cookie has already authenticated the user.
     with session_store.session(user_id) as state:
         from gui_memory import build_memory_quality_report
 
-        return {"report": build_memory_quality_report(user_id, state)}
+        return {"report": build_memory_quality_report(user_id, state, locale)}
 
 
 @app.post("/api/v1/rag/feedback", response_model=RagFeedbackResponse)
@@ -916,13 +916,14 @@ def weekly_mood(
     user_id: CurrentUser,
     end_date: str | None = None,
     days: int = Query(default=7, ge=1, le=31),
+    locale: str = Query(default="zh"),
 ) -> dict[str, Any]:
     try:
         points = get_weekly_mood_points(user_id, end_date=end_date, days=days)
         return {
             "points": points,
-            "summary": format_weekly_mood_summary(user_id, end_date=end_date, days=days),
-            "analysis": format_mood_fluctuation_analysis(points),
+            "summary": format_weekly_mood_summary(user_id, end_date=end_date, days=days, locale=locale),
+            "analysis": format_mood_fluctuation_analysis(points, locale=locale),
         }
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc

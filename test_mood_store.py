@@ -134,6 +134,20 @@ def test_format_weekly_mood_summary_describes_recorded_days(isolated_users_dir):
     assert "最低：2026-07-12 平静 2/5" in text
 
 
+def test_mood_summaries_are_english_when_requested(isolated_users_dir):
+    add_mood_checkin("alice", "平静", 2, "A", "2026-07-10")
+    add_mood_checkin("alice", "焦虑", 5, "B", "2026-07-11")
+
+    summary = format_weekly_mood_summary("alice", end_date="2026-07-11", locale="en")
+    analysis = format_weekly_mood_analysis("alice", end_date="2026-07-11", locale="en")
+
+    assert "Recorded days: 2/7" in summary
+    assert "Highest: 2026-07-11 焦虑 5/5" in summary
+    assert "Mood pattern" in analysis
+    assert "Largest day-to-day change: 2026-07-10 to 2026-07-11, up 3 point(s)" in analysis
+    assert "A gentle note:" in analysis
+
+
 def test_weekly_mood_analysis_reports_fluctuation_and_care_note(isolated_users_dir):
     add_mood_checkin("alice", "平静", 1, "A", "2026-07-10")
     add_mood_checkin("alice", "焦虑", 5, "B", "2026-07-11")
