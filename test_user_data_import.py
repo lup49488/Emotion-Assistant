@@ -58,7 +58,17 @@ def test_failed_replace_rolls_back_instead_of_leaving_half_the_account(isolated_
     _seed(isolated_user)
     raw = _export_bytes(isolated_user, long_memory=[{"text": "新记忆", "time": "2026-08-04T00:00:00"}])
 
-    with patch.object(user_data_import, "restore_conversations", side_effect=RuntimeError("disk full")):
+    original_restore_conversations = user_data_import.restore_conversations
+    attempts = 0
+
+    def fail_initial_import(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("disk full")
+        return original_restore_conversations(*args, **kwargs)
+
+    with patch.object(user_data_import, "restore_conversations", side_effect=fail_initial_import):
         with pytest.raises(RuntimeError):
             user_data_import.import_user_export(isolated_user, raw, mode="replace")
 
