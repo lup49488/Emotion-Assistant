@@ -124,6 +124,10 @@ const server = http.createServer(async (request, response) => {
     memorySnapshot.interest_memory = Array.isArray(body.items) ? body.items : []
     return send(response, 200, memorySnapshot)
   }
+  if (request.method === 'PUT' && url.pathname === '/api/v1/memory/long-term') {
+    memorySnapshot.long_memory = Array.isArray(body.items) ? body.items : []
+    return send(response, 200, memorySnapshot)
+  }
   if (request.method === 'POST' && url.pathname === '/api/v1/import/external/preview') return send(response, 200, {
     source: 'chatgpt', conversations: 2, messages: 8, sample_titles: ['A useful imported conversation'], profile_fields: [{ key: 'name', label: 'Name', value: 'Example user' }],
   })

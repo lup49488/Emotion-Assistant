@@ -331,9 +331,12 @@ def _apply_memory_import(user_id: str, imported: dict[str, Any], *, mode: str) -
 
 
 def _apply_import(user_id: str, imported: dict[str, Any], *, mode: str) -> dict[str, int | str]:
-    memories = _apply_memory_import(user_id, imported, mode=mode)
+    # Restore independent stores before replacing the in-session memory state. If
+    # a conversation or Mood Check-in write fails, the existing memory remains
+    # intact and rollback has less work to do.
     conversations = restore_conversations(user_id, imported["conversations"], mode=mode)
     moods = restore_mood_checkins(user_id, imported["mood_checkins"], mode=mode)
+    memories = _apply_memory_import(user_id, imported, mode=mode)
     return {
         "mode": mode,
         "conversations": conversations,
