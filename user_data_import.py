@@ -348,17 +348,31 @@ def _apply_import(user_id: str, imported: dict[str, Any], *, mode: str) -> dict[
 
 
 def _snapshot_for_rollback(user_id: str) -> dict[str, Any]:
-    snapshot = build_user_export_payload(user_id)
+    """Capture what the replace is about to overwrite, from the same source.
+
+    build_user_export_payload() reloads the account from storage, but the import
+    writes through session_store's cached SessionState. Those are two different
+    objects, so snapshotting the reloaded copy can restore something other than
+    what was replaced. Reading the live session keeps the rollback exact.
+    """
+    from chatbot import session_store
+
+    with session_store.session(user_id) as state:
+        memory = {
+            "history": list(state.history),
+            "emotion_memory": list(state.emotion_memory),
+            "long_memory": list(state.long_memory),
+            "stable_profile": list(state.stable_profile),
+            "interest_memory": list(state.interest_store.items),
+            "memory_events": list(state.memory_events),
+            "pending_memory": list(state.pending_memory),
+        }
+    exported = build_user_export_payload(user_id)
     return {
-        "history": list(snapshot["history"]),
-        "conversations": _validate_conversations(snapshot["conversations"]),
-        "emotion_memory": list(snapshot["emotion_memory"]),
-        "long_memory": list(snapshot["long_memory"]),
-        "stable_profile": list(snapshot["stable_profile"]),
-        "interest_memory": list(snapshot["interest_memory"]),
-        "memory_events": list(snapshot["memory_events"]),
-        "pending_memory": list(snapshot["pending_memory"]),
-        "mood_checkins": list(snapshot["mood_checkins"]),
+        **memory,
+        # These two live in their own stores, which the import writes directly.
+        "conversations": _validate_conversations(exported["conversations"]),
+        "mood_checkins": list(exported["mood_checkins"]),
     }
 
 

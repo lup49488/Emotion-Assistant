@@ -263,3 +263,39 @@ def test_unsupported_payloads_are_rejected(isolated_user):
         user_data_import.preview_external_import(b"")
     with pytest.raises(ValueError, match="No supported conversations"):
         user_data_import.preview_external_import(b"[]")
+
+
+def test_rollback_restores_what_was_overwritten_not_the_stored_copy(isolated_user):
+    """The snapshot must come from the state the import writes through.
+
+    session_store caches a SessionState per user and the import mutates that
+    cached object, while build_user_export_payload() reloads from storage. If the
+    snapshot is taken from the reloaded copy, a rollback restores whichever
+    version storage happened to hold rather than the one that was replaced.
+    """
+    _seed(isolated_user)
+    store = chatbot.session_store
+    with store.session(isolated_user):
+        pass  # make sure the user is cached
+    # Put the cache ahead of storage, the way an in-flight session does.
+    store._sessions[isolated_user].long_memory.append(
+        {"text": "仅在缓存中的记忆", "time": "2026-08-02T00:00:00"}
+    )
+
+    raw = _export_bytes(isolated_user, long_memory=[{"text": "新记忆", "time": "2026-08-04T00:00:00"}])
+    attempts = 0
+    original = user_data_import.restore_conversations
+
+    def fail_once(*args, **kwargs):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("disk full")
+        return original(*args, **kwargs)
+
+    with patch.object(user_data_import, "restore_conversations", side_effect=fail_once):
+        with pytest.raises(RuntimeError):
+            user_data_import.import_user_export(isolated_user, raw, mode="replace")
+
+    restored = [item["text"] for item in export_store.build_user_export_payload(isolated_user)["long_memory"]]
+    assert restored == ["旧记忆", "仅在缓存中的记忆"]
