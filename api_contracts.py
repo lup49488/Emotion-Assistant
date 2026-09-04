@@ -161,6 +161,34 @@ class MemorySavePreferenceResponse(ContractModel):
     mode: Literal["auto", "confirm", "off"]
 
 
+class ReplyBasisPreferenceRequest(ContractModel):
+    enabled: bool = False
+    correction: Literal["supportive", "steady", "encouraging"] | None = None
+
+
+class ReplyBasisPreferenceResponse(ContractModel):
+    enabled: bool
+    correction: Literal["supportive", "steady", "encouraging"] | None = None
+
+
+class ReplyBasis(ContractModel):
+    enabled: bool
+    used: bool
+    mode: Literal["supportive", "steady", "encouraging"]
+    source: Literal["disabled", "message", "corrected"]
+    turn_id: str | None = None
+
+
+class ReplyBasisTurnCorrectionRequest(ContractModel):
+    turn_id: str = Field(min_length=1, max_length=64)
+    action: Literal["not_this", "frustrated", "skip"]
+
+
+class ReplyBasisTurnCorrectionResponse(ContractModel):
+    memory_action: Literal["updated", "not_found"]
+    preference: ReplyBasisPreferenceResponse
+
+
 class PendingMemoryUpdateRequest(ContractModel):
     text: str = Field(min_length=1, max_length=2_000)
 
@@ -171,6 +199,7 @@ class ChatResponse(ContractModel):
     citations: list[dict[str, Any]] = Field(default_factory=list)
     citation_trace_id: str | None = None
     rag_status: RagEvidenceStatus = Field(default_factory=lambda: RagEvidenceStatus(status="not_requested"))
+    response_basis: ReplyBasis | None = None
 
 
 class RagFeedbackRequest(ContractModel):

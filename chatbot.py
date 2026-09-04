@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import logging
 import os
+import uuid
+from collections.abc import Callable
 from typing import Generator
 
 import goemotions_local as goemotions
@@ -61,6 +63,8 @@ from memory_store import (
     update_stable_profile,
 )
 from prompt_builder import build_messages
+from reply_basis import build_reply_basis
+from reply_basis_store import get_reply_basis_preference
 from service_errors import ServiceError
 from style_store import build_style_context
 from safety import (
@@ -142,6 +146,7 @@ def chat(
     mood_checkin: dict[str, Any] | None = None,
     quoted_message: dict[str, str] | None = None,
     reply_to_message_id: str | None = None,
+    on_reply_basis: Callable[[dict[str, str | bool]], None] | None = None,
 ) -> Generator[str, None, None]:
     user_text = user_text.strip()
     if not user_text:
@@ -161,7 +166,13 @@ def chat(
         yield crisis_reply
         return
 
-    smart_memory_filter(state, user_text, emo_label, emo_score)
+    turn_id = uuid.uuid4().hex
+    smart_memory_filter(state, user_text, emo_label, emo_score, turn_id=turn_id)
+    reply_basis = build_reply_basis(
+        get_reply_basis_preference(state.user_id), emo_label, emo_score, turn_id=turn_id,
+    )
+    if on_reply_basis is not None:
+        on_reply_basis(reply_basis)
 
     config = model_config or ModelRuntimeConfig()
     # Provider 层用此标识做按用户限额与用量归集。
@@ -179,8 +190,13 @@ def chat(
         style_context=style_context,
         mood_checkin=mood_checkin,
         quoted_message=quoted_message,
+        reply_basis=reply_basis,
     )
-    full_messages = [messages[0], *state.history, messages[1]]
+    # A Mood Check-in reflection starts a new, record-scoped conversation.
+    # Carrying earlier working history into it can make the model answer about
+    # a previously selected date instead of the record the user just chose.
+    prior_history = [] if mood_checkin is not None else state.history
+    full_messages = [messages[0], *prior_history, messages[1]]
 
     collected_chunks: list[str] = []
     try:
@@ -241,6 +257,7 @@ def chat_sync(
     mood_checkin: dict[str, Any] | None = None,
     quoted_message: dict[str, str] | None = None,
     reply_to_message_id: str | None = None,
+    on_reply_basis: Callable[[dict[str, str | bool]], None] | None = None,
 ) -> str:
     return "".join(chat(
         state,
@@ -254,6 +271,7 @@ def chat_sync(
         mood_checkin=mood_checkin,
         quoted_message=quoted_message,
         reply_to_message_id=reply_to_message_id,
+        on_reply_basis=on_reply_basis,
     ))
 
 
@@ -301,6 +319,7 @@ def handle_user_message_stream(
     mood_checkin: dict[str, Any] | None = None,
     quoted_message: dict[str, str] | None = None,
     reply_to_message_id: str | None = None,
+    on_reply_basis: Callable[[dict[str, str | bool]], None] | None = None,
 ) -> Generator[str, None, None]:
     with session_store.session(user_id) as state:
         yield from chat(
@@ -315,6 +334,7 @@ def handle_user_message_stream(
             mood_checkin=mood_checkin,
             quoted_message=quoted_message,
             reply_to_message_id=reply_to_message_id,
+            on_reply_basis=on_reply_basis,
         )
 
 

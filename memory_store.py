@@ -56,6 +56,7 @@ def queue_pending_memory_confirmation(
     source_text: str,
     reason: str,
     score: float,
+    turn_id: str | None = None,
 ) -> dict[str, Any]:
     """Queue an inferred durable-memory candidate until the user approves it."""
     if section not in MEMORY_SECTIONS:
@@ -81,6 +82,7 @@ def queue_pending_memory_confirmation(
         "reason": reason,
         "score": round(float(score), 3),
         "created_at": datetime.now().isoformat(timespec="seconds"),
+        "turn_id": turn_id,
     }
     state.pending_memory.append(pending)
     record_memory_event(
@@ -91,6 +93,7 @@ def queue_pending_memory_confirmation(
         reason=reason,
         score=score,
         source_text=source_text,
+        turn_id=turn_id,
     )
     expire_overflowing_pending_memory(state)
     return pending
@@ -691,6 +694,7 @@ def record_memory_event(
     source_text: str | None = None,
     before: dict[str, Any] | None = None,
     after: dict[str, Any] | None = None,
+    turn_id: str | None = None,
 ) -> dict[str, Any]:
     """Record a user-visible audit event for a memory decision.
 
@@ -721,6 +725,8 @@ def record_memory_event(
         event["before"] = dict(before)
     if after is not None:
         event["after"] = dict(after)
+    if turn_id:
+        event["turn_id"] = turn_id
     event["undoable"] = bool(section in MEMORY_SECTIONS and after is not None)
     state.memory_events.append(event)
     state.memory_events = state.memory_events[-MEMORY_EVENT_LIMIT:]
@@ -791,6 +797,59 @@ def undo_memory_event(state: Any, event_id: str) -> dict[str, Any]:
     return event
 
 
+def correct_turn_emotion_memory(state: Any, turn_id: str, action: str) -> str:
+    """Apply a user's correction to only the emotional memory from one turn."""
+    if action not in {"frustrated", "not_this", "skip"}:
+        raise ValueError("Unsupported reply-basis correction.")
+    changed = False
+    for pending in list(state.pending_memory):
+        if pending.get("section") != "emotion" or pending.get("turn_id") != turn_id:
+            continue
+        candidate = pending.setdefault("candidate", {})
+        if action == "frustrated":
+            candidate["label"] = "anger"
+            record_memory_event(
+                state, section="emotion", action="corrected", text=str(candidate.get("text", "")),
+                reason="User corrected this turn's emotional context to frustration.", turn_id=turn_id,
+            )
+        else:
+            state.pending_memory.remove(pending)
+            record_memory_event(
+                state, section="emotion", action="rejected", text=str(candidate.get("text", "")),
+                reason="User chose not to use this turn as emotional context.", turn_id=turn_id,
+            )
+        changed = True
+
+    for event in reversed(state.memory_events):
+        if event.get("section") != "emotion" or event.get("turn_id") != turn_id or event.get("action") != "added":
+            continue
+        after = event.get("after")
+        if not isinstance(after, dict):
+            continue
+        index = next((i for i, item in enumerate(state.emotion_memory) if item == after), None)
+        if index is None:
+            continue
+        before = dict(state.emotion_memory[index])
+        if action == "frustrated":
+            state.emotion_memory[index] = {**before, "label": "anger", "corrected_by_user": True}
+            outcome = "corrected"
+            reason = "User corrected this turn's emotional context to frustration."
+        else:
+            del state.emotion_memory[index]
+            outcome = "rejected"
+            reason = "User chose not to use this turn as emotional context."
+        event["undoable"] = False
+        event["superseded_at"] = datetime.now().isoformat(timespec="seconds")
+        record_memory_event(
+            state, section="emotion", action=outcome, text=str(event.get("text", "")), reason=reason,
+            before=before, after=dict(state.emotion_memory[index]) if action == "frustrated" else None,
+            turn_id=turn_id,
+        )
+        changed = True
+        break
+    return "updated" if changed else "not_found"
+
+
 def latest_memory_receipt(state: Any) -> str:
     if not state.memory_events:
         return "记忆回执：本轮没有记忆判断记录。"
@@ -822,7 +881,9 @@ def latest_memory_receipt(state: Any) -> str:
     return f"记忆回执：{section}{action} {content}。原因：{reason}"
 
 
-def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: float) -> str:
+def smart_memory_filter(
+    state: Any, user_text: str, emo_label: str, emo_score: float, turn_id: str | None = None,
+) -> str:
     score = score_memory(user_text, emo_label, emo_score)
     save_mode = getattr(state, "memory_save_mode", DEFAULT_MEMORY_SAVE_MODE)
     if save_mode not in MEMORY_SAVE_MODES:
@@ -837,6 +898,7 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
             text="",
             reason="Automatic memory saving is disabled for this user.",
             score=score,
+            turn_id=turn_id,
         )
         return "discard"
     emotion_recorded = (
@@ -854,11 +916,13 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
                 f"{EMOTION_CONFIDENCE_THRESHOLD:.2f}."
             ),
             score=score,
+            turn_id=turn_id,
         )
     elif emotion_recorded:
         # Emotion history has its own confidence gate. It should not depend on
         # personal-fact keywords or the unrelated long-term-memory score.
         update_mid_term(state, emo_label, emo_score)
+        emotion_after = dict(state.emotion_memory[-1])
         record_memory_event(
             state,
             section="emotion",
@@ -870,6 +934,8 @@ def smart_memory_filter(state: Any, user_text: str, emo_label: str, emo_score: f
             ),
             score=score,
             source_text=user_text,
+            after=emotion_after,
+            turn_id=turn_id,
         )
     profile = extract_personal_profile(user_text)
     if profile is not None:

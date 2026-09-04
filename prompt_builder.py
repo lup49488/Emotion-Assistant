@@ -2,14 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from emotion import (
-    detect_emotion_fluctuation,
-    emotion_to_style,
-    fluctuation_to_style,
-    intensity_to_level,
-    summarize_emotion_trend,
-)
 from memory_store import retrieve_interests
+from reply_basis import reply_style
 
 
 def build_messages(
@@ -21,13 +15,10 @@ def build_messages(
     style_context: str = "",
     mood_checkin: dict[str, Any] | None = None,
     quoted_message: dict[str, str] | None = None,
+    reply_basis: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
-    has_reliable_emotion = emo_label != "uncertain"
-    level = intensity_to_level(emo_score) if has_reliable_emotion else "unknown"
-    style = emotion_to_style(emo_label, level)
-    trend = summarize_emotion_trend(state.emotion_memory)
-    fluct_level, fluct_direction = detect_emotion_fluctuation(state.emotion_memory, emo_label, emo_score)
-    fluct_style = fluctuation_to_style(fluct_level)
+    basis = reply_basis or {"enabled": False, "used": False, "mode": "steady", "source": "disabled"}
+    style = reply_style(basis)
     related_interests = retrieve_interests(user_text, state)
     interest_text = "\n".join(f"- {item.get('text', '')}" for item in related_interests) or "无"
     stable_profile_text = "\n".join(
@@ -89,11 +80,9 @@ def build_messages(
 只有当用户明确要求翻译、总结或解释代码时，才严格返回工具 JSON，例如：
 {{"tool": "translate", "args": {{"text": "你好", "target_lang": "en"}}}}
 
-当前情绪估计：{"未能可靠判断（不作为情绪标签）" if not has_reliable_emotion else f"{emo_label}，强度 {emo_score:.2f}，程度 {level}"}
-近期情绪趋势：{trend}
-情绪波动：{fluct_level}，方向：{fluct_direction}
-回复风格：{style}
-波动处理：{fluct_style}
+本轮沟通依据：{"用户已开启温和语境，并选择了后续回复的表达方式。" if basis.get("source") == "corrected" else "用户已选择让本轮文字作为温和语境参考。" if basis.get("used") else "用户未开启温和语境；请使用自然、清晰、平稳的表达。"}
+回复方式：{style}
+不要向用户声称或暗示你识别、诊断或量化了其情绪。不要输出情绪标签、强度、分数、置信度、趋势或推断过程；这项沟通依据只用于调整表达方式。
 偏好信息：
 {preference_text}
 

@@ -7,6 +7,7 @@ const moodRecords = []
 const testImage = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL5JwAAAABJRU5ErkJggg==', 'base64')
 let memorySaveMode = 'confirm'
 let stylePrefix = ''
+let replyBasisPreference = { enabled: false, correction: null }
 const mockPort = Number(process.env.E2E_MOCK_PORT || 18000)
 const frontendOrigin = process.env.E2E_FRONTEND_ORIGIN || 'http://127.0.0.1:4174'
 const memorySnapshot = {
@@ -23,6 +24,7 @@ function resetState() {
   loggedIn = false
   memorySaveMode = 'confirm'
   stylePrefix = ''
+  replyBasisPreference = { enabled: false, correction: null }
   conversations.splice(0, conversations.length)
   moodRecords.splice(0, moodRecords.length, {
     date: '2026-07-29', mood: 'calm', intensity: 3,
@@ -75,6 +77,18 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'PUT' && url.pathname === '/api/v1/style/preference') {
     stylePrefix = ['温柔型', '专业型'].includes(body.style_prefix) ? body.style_prefix : ''
     return send(response, 200, { style_prefix: stylePrefix, available: ['温柔型', '专业型'] })
+  }
+  if (request.method === 'GET' && url.pathname === '/api/v1/reply-basis/preference') return send(response, 200, replyBasisPreference)
+  if (request.method === 'PUT' && url.pathname === '/api/v1/reply-basis/preference') {
+    replyBasisPreference = {
+      enabled: Boolean(body.enabled),
+      correction: ['supportive', 'steady', 'encouraging'].includes(body.correction) ? body.correction : null,
+    }
+    return send(response, 200, replyBasisPreference)
+  }
+  if (request.method === 'POST' && url.pathname === '/api/v1/reply-basis/corrections') {
+    if (['frustrated', 'not_this'].includes(body.action)) replyBasisPreference = { enabled: true, correction: 'steady' }
+    return send(response, 200, { memory_action: 'updated', preference: replyBasisPreference })
   }
   if (request.method === 'POST' && url.pathname === '/api/v1/auth/login') {
     loggedIn = true
@@ -213,6 +227,8 @@ const server = http.createServer(async (request, response) => {
     response.write(`event: chunk\ndata: ${JSON.stringify({ text: reply.slice(10) })}\n\n`)
     response.write(`event: archived\ndata: ${JSON.stringify({ user_message_id: userMessage.id, assistant_message_id: assistantMessage.id })}\n\n`)
     if (body.use_knowledge) response.write(`event: citations\ndata: ${JSON.stringify({ trace_id: 'e2e-trace', citations: [{ source: 'deployment_guide.md', chunk_index: 0, score: 0.93, excerpt: 'Deployment guide excerpt' }] })}\n\n`)
+    const mode = replyBasisPreference.correction || (body.message.includes('happy') ? 'encouraging' : 'supportive')
+    response.write(`event: response_basis\ndata: ${JSON.stringify({ enabled: replyBasisPreference.enabled, used: replyBasisPreference.enabled, mode, source: replyBasisPreference.correction ? 'corrected' : replyBasisPreference.enabled ? 'message' : 'disabled', turn_id: `turn-${assistantMessage.id}` })}\n\n`)
     return response.end('event: done\ndata: {}\n\n')
   }
   if (request.method === 'POST' && url.pathname === '/api/v1/rag/feedback') return send(response, 200, { trace_id: body.trace_id, helpful: Boolean(body.helpful), comment: body.comment || '', created_at: '2026-07-23T00:00:00' })

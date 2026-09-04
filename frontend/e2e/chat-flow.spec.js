@@ -30,7 +30,7 @@ for (const theme of ['light', 'dark']) {
   test(`${theme}-theme login keeps the form compact without a raised background sheet`, async ({ page }) => {
     await page.addInitScript((value) => localStorage.setItem('mindful-theme', value), theme)
     await page.goto('/')
-    await expect(page.getByRole('heading', { name: 'Welcome back' })).toBeVisible()
+    await expect(page.locator('.login-form h2')).toBeVisible()
     const loginSurface = await page.locator('.login-form').evaluate((form) => {
       const style = getComputedStyle(form)
       const formRect = form.getBoundingClientRect()
@@ -252,6 +252,31 @@ test('desktop reply context uses a dedicated right workspace column', async ({ p
   expect(sidebarTypeScale.copy).toBeGreaterThanOrEqual(15)
 })
 
+test('reply context can be enabled and corrected without showing emotion scores', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Reply context' }).click()
+  await page.getByLabel('Use gentle context').check()
+  await page.getByRole('button', { name: 'More steady' }).click()
+  await page.getByPlaceholder('Message Serenova').fill('I need a plan for tomorrow.')
+  await page.getByRole('button', { name: 'Message Serenova' }).click()
+  await expect(page.getByText('This reply uses a clear, steady approach.')).toBeVisible()
+  await expect(page.getByText('Based on your saved choice for future replies.')).toBeVisible()
+  await expect(page.getByRole('complementary', { name: 'Reply context' })).not.toContainText(/\b\d+(?:\.\d+)?\s*\/\s*\d+\b|confidence/i)
+})
+
+test('reply-context correction changes the matched turn and future reply approach', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Reply context' }).click()
+  await page.getByLabel('Use gentle context').check()
+  await page.getByPlaceholder('Message Serenova').fill('I am overwhelmed today.')
+  await page.getByRole('button', { name: 'Message Serenova' }).click()
+  await page.getByRole('button', { name: 'More like frustrated' }).click()
+  await expect(page.getByText('This message was corrected to frustration; future replies will use a steadier approach.')).toBeVisible()
+  await page.getByPlaceholder('Message Serenova').fill('What should I do next?')
+  await page.getByRole('button', { name: 'Message Serenova' }).click()
+  await expect(page.getByText('This reply uses a clear, steady approach.')).toBeVisible()
+})
+
 test('a Serenova export file can be selected and imported', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Privacy & export' }).click()
@@ -355,20 +380,26 @@ test('tablet Mood Check-in keeps form controls within their panel', async ({ pag
   expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1)
 })
 
-test('mobile sidebar navigation has no horizontal overflow and applies theme changes', async ({ page }) => {
+test('mobile bottom navigation keeps chat primary and opens each workspace without overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)
 
-  await expect(page.locator('.mobile-app-bar')).toBeVisible()
-  await page.getByTitle('Open sidebar').click()
+  await expect(page.locator('.mobile-bottom-navigation')).toBeVisible()
+  await expect(page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'Chat' })).toHaveClass(/selected/)
+  await page.locator('.mobile-chat-menu').click()
   await expect(page.locator('.mobile-sidebar')).toBeVisible()
-  await expect(page.locator('.mobile-sidebar').getByRole('button', { name: 'Personal data' })).toBeVisible()
   await expect(page.locator('.mobile-sidebar').getByText('Conversations')).toBeVisible()
   await page.locator('.mobile-sidebar .preferences-controls select').first().selectOption('dark')
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark')
-  await page.locator('.mobile-sidebar').getByRole('button', { name: 'Personal data' }).click()
+  await page.locator('.mobile-sidebar .mobile-sidebar-close').click()
   await expect(page.locator('.mobile-sidebar')).toHaveCount(0)
+  await page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'Personal data' }).click()
   await expect(page.getByRole('heading', { name: 'What your assistant remembers about you' })).toBeVisible()
+  await expect(page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'Personal data' })).toHaveClass(/selected/)
+  await page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'More' }).click()
+  await expect(page.getByRole('complementary', { name: 'More workspace options' })).toBeVisible()
+  await page.getByRole('complementary', { name: 'More workspace options' }).getByRole('button', { name: 'Knowledge & RAG' }).click()
+  await expect(page.getByRole('heading', { name: 'Knowledge & RAG' })).toBeVisible()
   const widths = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }))
   expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth + 1)
 })

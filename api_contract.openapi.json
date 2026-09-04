@@ -600,6 +600,226 @@
         }
       }
     },
+    "/api/v1/reply-basis/preference": {
+      "get": {
+        "summary": "Read Reply Basis Preference",
+        "operationId": "read_reply_basis_preference_api_v1_reply_basis_preference_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplyBasisPreferenceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Reply Basis Preference",
+        "operationId": "update_reply_basis_preference_api_v1_reply_basis_preference_put",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyBasisPreferenceRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplyBasisPreferenceResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/reply-basis/corrections": {
+      "post": {
+        "summary": "Correct Reply Basis Turn",
+        "operationId": "correct_reply_basis_turn_api_v1_reply_basis_corrections_post",
+        "parameters": [
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplyBasisTurnCorrectionRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplyBasisTurnCorrectionResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/session": {
       "get": {
         "summary": "Session Info",
@@ -4129,6 +4349,16 @@
           },
           "rag_status": {
             "$ref": "#/components/schemas/RagEvidenceStatus"
+          },
+          "response_basis": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ReplyBasis"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "additionalProperties": false,
@@ -5615,6 +5845,162 @@
           "release"
         ],
         "title": "RagStatusResponse"
+      },
+      "ReplyBasis": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "used": {
+            "type": "boolean",
+            "title": "Used"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "supportive",
+              "steady",
+              "encouraging"
+            ],
+            "title": "Mode"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "disabled",
+              "message",
+              "corrected"
+            ],
+            "title": "Source"
+          },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled",
+          "used",
+          "mode",
+          "source"
+        ],
+        "title": "ReplyBasis"
+      },
+      "ReplyBasisPreferenceRequest": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled",
+            "default": false
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "supportive",
+                  "steady",
+                  "encouraging"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "ReplyBasisPreferenceRequest"
+      },
+      "ReplyBasisPreferenceResponse": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "correction": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": [
+                  "supportive",
+                  "steady",
+                  "encouraging"
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Correction"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "ReplyBasisPreferenceResponse"
+      },
+      "ReplyBasisTurnCorrectionRequest": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "maxLength": 64,
+            "minLength": 1,
+            "title": "Turn Id"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "not_this",
+              "frustrated",
+              "skip"
+            ],
+            "title": "Action"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "turn_id",
+          "action"
+        ],
+        "title": "ReplyBasisTurnCorrectionRequest"
+      },
+      "ReplyBasisTurnCorrectionResponse": {
+        "properties": {
+          "memory_action": {
+            "type": "string",
+            "enum": [
+              "updated",
+              "not_found"
+            ],
+            "title": "Memory Action"
+          },
+          "preference": {
+            "$ref": "#/components/schemas/ReplyBasisPreferenceResponse"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "memory_action",
+          "preference"
+        ],
+        "title": "ReplyBasisTurnCorrectionResponse"
       },
       "SessionResponse": {
         "properties": {

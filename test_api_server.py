@@ -17,6 +17,7 @@ import rag_feedback_store
 import style_store
 from service_errors import ServiceError
 import model_warmup
+import memory_store
 import session_store
 from auth_store import change_access_key
 from conversation_store import append_exchange
@@ -161,7 +162,7 @@ def test_password_change_invalidates_existing_signed_cookie(monkeypatch, tmp_pat
 
 
 def test_chat_stream_emits_chunks_receipt_and_done(monkeypatch, tmp_path):
-    monkeypatch.setattr(api_server, "_chat_chunks", lambda user_id, request, knowledge_context=None: iter(["你好", "，", "在的"]))
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda user_id, request, knowledge_context=None, **_kwargs: iter(["你好", "，", "在的"]))
 
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
@@ -185,7 +186,7 @@ def test_chat_stream_emits_real_rag_citations_and_accepts_owned_feedback(monkeyp
         "context": "[source 1 | guide.md]\nDeployment guide",
         "citations": [{"source": "guide.md", "chunk_index": 0, "score": 0.91, "excerpt": "Deployment guide"}],
     })
-    monkeypatch.setattr(api_server, "_chat_chunks", lambda user_id, request, knowledge_context=None: iter(["Answer"]))
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda user_id, request, knowledge_context=None, **_kwargs: iter(["Answer"]))
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
         with client.stream("POST", "/api/v1/chat/stream", json={"message": "How to deploy?", "use_knowledge": True}, headers=headers) as response:
@@ -290,7 +291,7 @@ def test_chat_stream_crisis_reply_overrides_the_rag_refusal(monkeypatch, tmp_pat
 
 
 def test_chat_stream_emits_structured_retryable_service_error(monkeypatch, tmp_path):
-    def failing_chunks(*_):
+    def failing_chunks(*_, **__):
         raise ServiceError("provider_timeout", "provider timed out", retryable=True)
         yield "unreachable"
 
@@ -306,7 +307,7 @@ def test_chat_stream_emits_structured_retryable_service_error(monkeypatch, tmp_p
 
 
 def test_chat_stream_emits_retryable_empty_model_response(monkeypatch, tmp_path):
-    def empty_response(*_):
+    def empty_response(*_, **__):
         raise ServiceError("empty_model_response", "no displayable text", retryable=True)
         yield "unreachable"
 
@@ -478,8 +479,8 @@ def test_mood_image_routes_reject_a_malformed_date_without_an_error(monkeypatch,
 
 def test_mood_reflection_context_uses_saved_history_through_selected_date(monkeypatch):
     points = [
-        {"date": "2026-08-19", "mood": "calm", "intensity": 2, "note": "Recovered."},
-        {"date": "2026-08-20", "mood": "anxious", "intensity": 4, "note": "Interview soon."},
+        {"date": "2026-09-02", "mood": "calm", "intensity": 2, "note": "Recovered."},
+        {"date": "2026-09-04", "mood": "anxious", "intensity": 4, "note": "Interview soon."},
     ]
     monkeypatch.setattr(api_server, "load_mood_checkins", lambda user_id: [*points])
     monkeypatch.setattr(api_server, "get_weekly_mood_points", lambda user_id, end_date, days: [*points])
@@ -488,9 +489,10 @@ def test_mood_reflection_context_uses_saved_history_through_selected_date(monkey
 
     context = api_server._mood_reflection_context(
         "api-alice",
-        {"date": "2026-08-20", "mood": "client value", "intensity": 1, "note": "client note"},
+        {"date": "2026-09-04", "mood": "client value", "intensity": 1, "note": "client note"},
     )
 
+    assert context["date"] == "2026-09-04"
     assert context["mood"] == "anxious"
     assert context["recent_checkins"] == points
     assert context["weekly_summary"] == "Trend summary"
@@ -940,6 +942,63 @@ def test_style_preference_update_requires_csrf(monkeypatch, tmp_path):
         response = client.put("/api/v1/style/preference", json={"style_prefix": "温柔型"})
 
     assert response.status_code == 403
+
+
+def test_reply_basis_preference_and_stream_share_a_scoreless_payload(monkeypatch, tmp_path):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    def fake_stream(_user_id, _message, **kwargs):
+        kwargs["on_reply_basis"]({"enabled": True, "used": True, "mode": "steady", "source": "corrected"})
+        yield "A clear reply."
+
+    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        initial = client.get("/api/v1/reply-basis/preference")
+        saved = client.put(
+            "/api/v1/reply-basis/preference",
+            json={"enabled": True, "correction": "steady"}, headers=headers,
+        )
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "hello"}, headers=headers) as response:
+            body = "".join(response.iter_text())
+
+    assert initial.json() == {"enabled": False, "correction": None}
+    assert saved.json() == {"enabled": True, "correction": "steady"}
+    assert 'event: response_basis' in body
+    assert '"mode": "steady"' in body
+    assert "score" not in body.lower()
+
+
+def test_reply_basis_correction_updates_or_withdraws_only_the_matched_turn(monkeypatch, tmp_path):
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with api_server.session_store.session("api-alice") as state:
+            memory_store.update_mid_term(state, "anxiety", 0.8)
+            memory_store.record_memory_event(
+                state, section="emotion", action="added", text="I am overwhelmed",
+                reason="test", after=dict(state.emotion_memory[-1]), turn_id="turn-auto",
+            )
+            state.pending_memory.append({
+                "id": "pending-1", "section": "emotion", "turn_id": "turn-pending",
+                "candidate": {"text": "I feel tense", "label": "fear", "confidence": 0.8},
+            })
+
+        corrected = client.post(
+            "/api/v1/reply-basis/corrections",
+            json={"turn_id": "turn-auto", "action": "frustrated"}, headers=headers,
+        )
+        withdrawn = client.post(
+            "/api/v1/reply-basis/corrections",
+            json={"turn_id": "turn-pending", "action": "skip"}, headers=headers,
+        )
+        with api_server.session_store.session("api-alice") as state:
+            labels = [item["label"] for item in state.emotion_memory]
+            pending_ids = [item["id"] for item in state.pending_memory]
+
+    assert corrected.json() == {"memory_action": "updated", "preference": {"enabled": True, "correction": "steady"}}
+    assert withdrawn.json()["memory_action"] == "updated"
+    assert labels == ["anger"]
+    assert pending_ids == []
 
 
 class _StubRequest:

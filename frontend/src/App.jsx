@@ -6,6 +6,7 @@ import {
   Bot,
   ChevronDown,
   ChevronLeft,
+  Ellipsis,
   Check,
   CirclePlus,
   Copy,
@@ -82,6 +83,7 @@ function App() {
   const [whyOpen, setWhyOpen] = useState(false)
   const [toneOpen, setToneOpen] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
+  const [mobileMoreOpen, setMobileMoreOpen] = useState(false)
   const [options, setOptions] = useState({
     provider: '', model: '', baseUrl: '', apiKey: '',
     useKnowledge: false, useStyle: true, stylePrefix: '', profile: 'balanced',
@@ -89,6 +91,7 @@ function App() {
   const [providerCatalog, setProviderCatalog] = useState(FALLBACK_PROVIDER_CATALOG)
   const [editableModelField, setEditableModelField] = useState({ baseUrl: false, apiKey: false })
   const [stylePrefixes, setStylePrefixes] = useState([])
+  const [replyBasisPreference, setReplyBasisPreference] = useState({ enabled: false, correction: null })
   const messageEndRef = useRef(null)
   const activeRequestRef = useRef(null)
   const t = (key) => translate(locale, key)
@@ -170,6 +173,11 @@ function App() {
         setOptions((current) => ({ ...current, stylePrefix: preference.style_prefix || '' }))
       } catch {
         // A missing style preference must not block sign-in.
+      }
+      try {
+        setReplyBasisPreference(await readJson('/api/v1/reply-basis/preference'))
+      } catch {
+        // A missing optional reply-basis preference must not block sign-in.
       }
       await refreshConversations()
     } catch {
@@ -383,6 +391,11 @@ function App() {
               ? { ...item, citations: payload.citations || [], citationTraceId: payload.trace_id || null }
               : item))
           }
+          if (eventName === 'response_basis') {
+            setMessages((current) => current.map((item, index) => index === current.length - 1
+              ? { ...item, responseBasis: payload }
+              : item))
+          }
           if (eventName === 'rag_status') {
             receivedRagStatus = Boolean(payload.enforced)
             setMessages((current) => current.map((item, index) => index === current.length - 1
@@ -421,6 +434,33 @@ function App() {
       })
     } catch (error) {
       setNotice(error.message)
+    }
+  }
+
+  async function saveReplyBasisPreference(nextPreference) {
+    setReplyBasisPreference(nextPreference)
+    try {
+      const saved = await readJson('/api/v1/reply-basis/preference', {
+        method: 'PUT', headers: csrfHeaders(), body: JSON.stringify(nextPreference),
+      })
+      setReplyBasisPreference(saved)
+    } catch (error) {
+      setNotice(error.message || t('replyBasisSaveFailed'))
+    }
+  }
+
+  async function correctReplyBasisTurn(responseBasis, action) {
+    if (!responseBasis?.turn_id) return
+    try {
+      const saved = await readJson('/api/v1/reply-basis/corrections', {
+        method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ turn_id: responseBasis.turn_id, action }),
+      })
+      setReplyBasisPreference(saved.preference)
+      setMessages((current) => current.map((item) => item.responseBasis?.turn_id === responseBasis.turn_id
+        ? { ...item, turnCorrection: action }
+        : item))
+    } catch (error) {
+      setNotice(error.message || t('replyBasisSaveFailed'))
     }
   }
 
@@ -474,6 +514,7 @@ function App() {
   const navigateWorkspace = (viewId) => {
     setActiveView(viewId)
     setMobileSidebarOpen(false)
+    setMobileMoreOpen(false)
     setSettingsOpen(false)
     setWhyOpen(false)
     setToneOpen(false)
@@ -499,7 +540,7 @@ function App() {
   }
 
   return (
-    <main className={`app-shell ${isChatView ? 'chat-workspace' : 'feature-workspace'} ${settingsOpen ? 'settings-open' : 'settings-closed'} ${whyOpen ? 'context-open' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''}`}>
+    <main className={`app-shell ${isChatView ? 'chat-workspace' : 'feature-workspace'} ${settingsOpen ? 'settings-open' : 'settings-closed'} ${whyOpen ? 'context-open' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${mobileMoreOpen ? 'mobile-more-open' : ''}`}>
       <NavigationRail activeView={activeView} navigateWorkspace={navigateWorkspace} t={t} visibleNavigation={visibleNavigation} />
       <section className="workspace-frame">
         <WorkspaceTopbar locale={locale} setLocale={setLocale} setTheme={setTheme} t={t} theme={theme} />
@@ -562,7 +603,7 @@ function App() {
 
       <div className="mobile-app-bar">{isChatView && <button className="icon-button" title={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={19} /></button>}<span>{mobileTitle}</span></div>
       {isChatView ? <><section className="chat-panel">
-        <header className="chat-header"><div className="chat-title-block"><h1>{activeTitle}</h1><div className="chat-summary-row"><div className="tone-control"><button className={`conversation-summary tone-summary ${toneOpen ? 'active' : ''}`} aria-expanded={toneOpen} onClick={() => { setSettingsOpen(false); setToneOpen((open) => !open) }}><Sparkles size={13} />{t('conversationTone')}：{activeToneLabel}<ChevronDown size={13} /></button>{toneOpen && <ToneMenu activeStyle={options.stylePrefix} onClose={() => setToneOpen(false)} onSelect={saveStylePrefix} styleName={styleName} styles={visibleStylePrefixes} t={t} />}</div><button className="conversation-summary model-summary" aria-label={t('modelResponseSettings')} onClick={() => { setToneOpen(false); setWhyOpen(false); setSettingsOpen(true) }}><Settings2 size={13} />{activeModelLabel} · {activeToneLabel}{options.useKnowledge && <> · {t('knowledgeShort')}</>}<ChevronDown size={13} /></button></div></div><div className="chat-header-actions"><button className={`icon-button context-toggle ${whyOpen ? 'active' : ''}`} title={t('replyContext')} aria-label={t('replyContext')} onClick={() => { setSettingsOpen(false); setToneOpen(false); setWhyOpen((open) => !open) }}><Info size={18} /></button><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('modelResponseSettings')} onClick={() => { setWhyOpen(false); setToneOpen(false); setSettingsOpen((open) => !open) }}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></div></header>
+        <header className="chat-header"><button className="mobile-chat-menu icon-button" title={t('openSidebar')} aria-label={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={22} /></button><div className="chat-title-block"><h1>{activeTitle}</h1><div className="chat-summary-row"><div className="tone-control"><button className={`conversation-summary tone-summary ${toneOpen ? 'active' : ''}`} aria-expanded={toneOpen} onClick={() => { setSettingsOpen(false); setToneOpen((open) => !open) }}><Sparkles size={13} />{t('conversationTone')}：{activeToneLabel}<ChevronDown size={13} /></button>{toneOpen && <ToneMenu activeStyle={options.stylePrefix} onClose={() => setToneOpen(false)} onSelect={saveStylePrefix} styleName={styleName} styles={visibleStylePrefixes} t={t} />}</div><button className="conversation-summary model-summary" aria-label={t('modelResponseSettings')} onClick={() => { setToneOpen(false); setWhyOpen(false); setSettingsOpen(true) }}><Settings2 size={13} />{activeModelLabel} · {activeToneLabel}{options.useKnowledge && <> · {t('knowledgeShort')}</>}<ChevronDown size={13} /></button></div></div><div className="chat-header-actions"><button className={`icon-button context-toggle ${whyOpen ? 'active' : ''}`} title={t('replyContext')} aria-label={t('replyContext')} onClick={() => { setSettingsOpen(false); setToneOpen(false); setWhyOpen((open) => !open) }}><Info size={18} /></button><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('modelResponseSettings')} onClick={() => { setWhyOpen(false); setToneOpen(false); setSettingsOpen((open) => !open) }}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></div></header>
         <div className="messages" aria-live="polite">
           {!hasMessages && <Welcome onPrompt={sendMessage} t={t} />}
           {messages.map((message, index) => <Message key={message.id || `${message.role}-${index}`} message={message} index={index} quotedMessage={message.quotedMessage || messagesById.get(message.reply_to_message_id)} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onQuote={quoteMessage} onRetry={sendMessage} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
@@ -573,10 +614,11 @@ function App() {
         <Composer draft={draft} setDraft={setDraft} sendMessage={sendMessage} isSending={isSending} cancelGeneration={cancelGeneration} quotedMessage={quotedMessage} clearQuote={() => setQuotedMessage(null)} t={t} />
       </section>
 
-      {whyOpen && <ReplyContextPanel latestMessage={latestAssistantMessage} onClose={() => setWhyOpen(false)} options={options} tone={activeToneLabel} t={t} />}
+      {whyOpen && <ReplyContextPanel latestMessage={latestAssistantMessage} onClose={() => setWhyOpen(false)} options={options} tone={activeToneLabel} preference={replyBasisPreference} onSavePreference={saveReplyBasisPreference} onCorrectTurn={correctReplyBasisTurn} t={t} />}
       {settingsOpen && <ModelSettingsPanel activeModelLabel={activeModelLabel} changeProvider={changeProvider} editableModelField={editableModelField} modelChoices={modelChoices} onClose={() => setSettingsOpen(false)} options={options} providerCatalog={providerCatalog} saveStylePrefix={saveStylePrefix} setEditableModelField={setEditableModelField} setOptions={setOptions} styleName={styleName} stylePrefixes={visibleStylePrefixes} t={t} />}</> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} locale={locale} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} locale={locale} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
         </div>
       </section>
+      <MobileBottomNavigation activeView={activeView} moreOpen={mobileMoreOpen} navigateWorkspace={navigateWorkspace} setMoreOpen={setMobileMoreOpen} t={t} visibleNavigation={visibleNavigation} />
     </main>
   )
 }
@@ -609,6 +651,20 @@ function NavigationRail({ activeView, navigateWorkspace, t, visibleNavigation })
   </aside>
 }
 
+function MobileBottomNavigation({ activeView, moreOpen, navigateWorkspace, setMoreOpen, t, visibleNavigation }) {
+  const primaryIds = ['chat', 'memory', 'mood']
+  const primaryItems = primaryIds.map((id) => visibleNavigation.find((item) => item.id === id)).filter(Boolean)
+  const moreItems = visibleNavigation.filter((item) => !primaryIds.includes(item.id))
+  return <>
+    {moreOpen && <button className="mobile-more-backdrop" aria-label={t('closeSidebar')} onClick={() => setMoreOpen(false)} />}
+    <nav className="mobile-bottom-navigation" aria-label={t('workspaceNavigation')}>
+      {primaryItems.map(({ id, label, icon: Icon }) => <button key={id} className={activeView === id ? 'selected' : ''} aria-current={activeView === id ? 'page' : undefined} onClick={() => navigateWorkspace(id)}><Icon size={25} /><span>{t(label)}</span></button>)}
+      <button className={moreOpen ? 'selected' : ''} aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><Ellipsis size={26} /><span>{t('more')}</span></button>
+    </nav>
+    {moreOpen && <aside className="mobile-more-sheet" aria-label={t('moreNavigation')}><div className="mobile-more-sheet-title"><span>{t('more')}</span><button className="icon-button" title={t('closeSidebar')} onClick={() => setMoreOpen(false)}><X size={18} /></button></div>{moreItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => navigateWorkspace(id)}><Icon size={20} /><span>{t(label)}</span><ChevronLeft size={17} /></button>)}</aside>}
+  </>
+}
+
 function ToneMenu({ activeStyle, onClose, onSelect, styleName, styles, t }) {
   const availableStyles = styles.length ? styles : ['温柔型', '专业型']
   const selectStyle = async (style) => { await onSelect(style); onClose() }
@@ -632,12 +688,14 @@ function ModelSettingsPanel({ activeModelLabel, changeProvider, editableModelFie
   </aside>
 }
 
-function ReplyContextPanel({ latestMessage, onClose, options, tone, t }) {
+function ReplyContextPanel({ latestMessage, onClose, options, tone, preference, onSavePreference, onCorrectTurn, t }) {
   const citations = latestMessage?.citations || []
+  const responseBasis = latestMessage?.responseBasis
   return <aside className="reply-context open" aria-label={t('replyContext')}>
     <div className="context-title"><div><Info size={18} /><h2>{t('replyContext')}</h2></div><button className="icon-button" title={t('closeContext')} onClick={onClose}><X size={18} /></button></div>
     <p className="context-copy">{t('replyContextDescription')}</p>
     <section className="context-section gentle-context"><h3>{t('responseApproach')}</h3><p>{t('responseApproachCopy').replace('{tone}', tone)}</p><p>{t('contextPrivacyNote')}</p></section>
+    <section className="context-section reply-basis"><h3>{t('replyBasis')}</h3><p>{responseBasis?.used ? t(`replyBasis_${responseBasis.mode}`) : t('replyBasisDisabled')}</p>{responseBasis?.used && <small>{responseBasis.source === 'corrected' ? t('replyBasisCorrected') : t('replyBasisMessage')}</small>}<label className="reply-basis-toggle"><input type="checkbox" checked={preference.enabled} onChange={(event) => onSavePreference({ ...preference, enabled: event.target.checked })} />{t('replyBasisEnable')}</label><p className="reply-basis-description">{t('replyBasisDescription')}</p>{responseBasis?.used && <div className="reply-basis-turn-actions"><span>{latestMessage?.turnCorrection ? t(`replyBasisTurn_${latestMessage.turnCorrection}`) : t('replyBasisTurnCorrection')}</span>{!latestMessage?.turnCorrection && <><button onClick={() => onCorrectTurn(responseBasis, 'not_this')}>{t('replyBasisTurnNotThis')}</button><button onClick={() => onCorrectTurn(responseBasis, 'frustrated')}>{t('replyBasisTurnFrustrated')}</button><button onClick={() => onCorrectTurn(responseBasis, 'skip')}>{t('replyBasisTurnSkip')}</button></>}</div>}{preference.enabled && <div className="reply-basis-actions"><span>{t('replyBasisCorrection')}</span><button className={!preference.correction ? 'selected' : ''} onClick={() => onSavePreference({ ...preference, correction: null })}>{t('replyBasisAuto')}</button><button className={preference.correction === 'supportive' ? 'selected' : ''} onClick={() => onSavePreference({ ...preference, correction: 'supportive' })}>{t('replyBasisSupportive')}</button><button className={preference.correction === 'steady' ? 'selected' : ''} onClick={() => onSavePreference({ ...preference, correction: 'steady' })}>{t('replyBasisSteady')}</button><button className={preference.correction === 'encouraging' ? 'selected' : ''} onClick={() => onSavePreference({ ...preference, correction: 'encouraging' })}>{t('replyBasisEncouraging')}</button></div>}</section>
     <section className="context-section"><h3>{t('sources')}</h3>{citations.length ? <div className="context-citations">{citations.map((citation, index) => <span key={`${citation.source || citation}-${index}`}>{citation.source || citation}</span>)}</div> : <p>{t('contextNoSources')}</p>}</section>
     <section className="context-section"><h3>{t('contextSettings')}</h3><dl className="context-settings"><div><dt>{t('knowledgeRetrieval')}</dt><dd>{options.useKnowledge ? t('contextOn') : t('contextOff')}</dd></div><div><dt>{t('styleReference')}</dt><dd>{options.useStyle ? t('contextOn') : t('contextOff')}</dd></div></dl></section>
   </aside>

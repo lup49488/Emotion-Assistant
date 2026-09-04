@@ -936,6 +936,19 @@ body, #root { background:var(--canvas); color:var(--ink); }
 .chat-workspace-content.reply-context-open .reply-context .context-citations span,
 .chat-workspace-content.reply-context-open .reply-context .context-settings > div { font-size: 15px; }
 .chat-workspace-content.reply-context-open .reply-context .context-settings { gap: 13px; }
+.reply-basis { display: grid; gap: 12px; }
+.reply-basis > p, .reply-basis small { margin: 0; }
+.reply-basis small, .reply-basis-description { color: var(--muted); }
+.reply-basis-toggle { display: flex; align-items: center; gap: 9px; color: var(--ink); font-size: 14px; cursor: pointer; }
+.reply-basis-toggle input { width: 16px; height: 16px; accent-color: var(--accent); }
+.reply-basis-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.reply-basis-actions > span { width: 100%; color: var(--muted); font-size: 13px; }
+.reply-basis-actions button { min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; }
+.reply-basis-actions button.selected { border-color: var(--accent); background: var(--accent-wash); color: var(--ink); }
+.reply-basis-turn-actions { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; }
+.reply-basis-turn-actions > span { width: 100%; color: var(--muted); font-size: 13px; }
+.reply-basis-turn-actions button { min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; }
+.reply-basis-turn-actions button:hover { border-color: var(--accent); color: var(--ink); }
 .feature-workspace-content { display: block; overflow: hidden; }
 .feature-workspace-content .feature-main { min-height: 0; max-height: none; height: 100%; overflow-y: auto; }
 .chat-workspace-content .mobile-app-bar,
@@ -958,4 +971,114 @@ body, #root { background:var(--canvas); color:var(--ink); }
   .chat-workspace-content .mobile-app-bar,
   .feature-workspace-content .mobile-app-bar { display: flex; }
   .feature-workspace-content .mobile-app-bar { justify-content: center; }
+}
+
+/* Mobile keeps the conversation as the primary surface; workspace destinations live in the bottom bar. */
+.mobile-bottom-navigation,
+.mobile-more-sheet,
+.mobile-more-backdrop,
+.mobile-chat-menu { display: none; }
+
+@media (max-width: 900px) {
+  .chat-workspace-content .mobile-app-bar { display: none; }
+  .chat-workspace-content .chat-panel {
+    min-height: calc(100dvh - 72px);
+    height: calc(100dvh - 72px);
+    max-height: calc(100dvh - 72px);
+  }
+  .chat-header {
+    display: grid;
+    grid-template-columns: 38px minmax(0, 1fr) auto;
+    gap: 8px;
+    min-height: 76px;
+    padding: 10px 14px 8px;
+  }
+  .mobile-chat-menu { display: grid; width: 38px; height: 38px; place-items: center; align-self: start; }
+  .chat-title-block { min-width: 0; text-align: center; }
+  .chat-header h1 { overflow: hidden; font-size: 20px; text-overflow: ellipsis; white-space: nowrap; }
+  .chat-summary-row { justify-content: center; }
+  .tone-summary { max-width: 100%; justify-content: center; }
+  .model-summary, .chat-header-actions .settings-toggle { display: none; }
+  .chat-header-actions { align-self: start; }
+  .chat-header-actions .icon-button { width: 38px; height: 38px; }
+  .messages { padding: 18px 14px; }
+  .composer-wrap { padding: 8px 14px 12px; }
+  .composer { width: 100%; }
+  .feature-workspace-content .feature-main { padding-bottom: 94px; }
+  .feature-workspace-content .mobile-app-bar { min-height: 58px; }
+
+  .mobile-bottom-navigation {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 65;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    min-height: 72px;
+    padding: 7px 10px calc(7px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--line);
+    background: color-mix(in srgb, var(--canvas) 94%, transparent);
+    box-shadow: 0 -12px 28px rgba(5, 6, 16, .12);
+    backdrop-filter: blur(18px);
+  }
+  .mobile-bottom-navigation button {
+    display: grid;
+    min-width: 0;
+    place-items: center;
+    gap: 3px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--muted);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+  .mobile-bottom-navigation button svg { color: var(--accent-deep); }
+  .mobile-bottom-navigation button.selected { background: var(--accent-wash); color: var(--accent-deep); }
+  .mobile-bottom-navigation button.selected svg { color: var(--accent-bright, var(--accent-deep)); }
+  .mobile-more-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 63;
+    display: block;
+    border: 0;
+    background: rgba(7, 8, 17, .4);
+  }
+  .mobile-more-sheet {
+    position: fixed;
+    right: 10px;
+    bottom: calc(80px + env(safe-area-inset-bottom));
+    left: 10px;
+    z-index: 64;
+    display: grid;
+    gap: 5px;
+    padding: 12px;
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .mobile-more-sheet-title { display: flex; min-height: 34px; align-items: center; justify-content: space-between; padding: 0 4px; color: var(--ink); font-size: 15px; font-weight: 700; }
+  .mobile-more-sheet-title .icon-button { width: 34px; height: 34px; }
+  .mobile-more-sheet > button {
+    display: grid;
+    grid-template-columns: 26px minmax(0, 1fr) 20px;
+    min-height: 48px;
+    align-items: center;
+    gap: 10px;
+    padding: 0 10px;
+    border: 0;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+    text-align: left;
+  }
+  .mobile-more-sheet > button:hover,
+  .mobile-more-sheet > button:focus-visible { background: var(--accent-wash); color: var(--accent-deep); }
+  .mobile-more-sheet > button > svg:first-child { color: var(--accent-deep); }
+  .mobile-more-sheet > button > svg:last-child { justify-self: end; transform: rotate(180deg); color: var(--muted); }
 }

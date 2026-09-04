@@ -49,6 +49,10 @@ from api_contracts import (
     PendingMemoryUpdateRequest,
     MemorySavePreferenceRequest,
     MemorySavePreferenceResponse,
+    ReplyBasisPreferenceRequest,
+    ReplyBasisPreferenceResponse,
+    ReplyBasisTurnCorrectionRequest,
+    ReplyBasisTurnCorrectionResponse,
     MemoryQualityResponse,
     MemorySnapshotResponse,
     MoodCheckinListResponse,
@@ -105,6 +109,7 @@ from mood_image_store import delete_mood_checkin_images, delete_mood_image, get_
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
 from memory_store import (
     confirm_pending_memory,
+    correct_turn_emotion_memory,
     reconcile_memory_ownership,
     record_memory_event,
     reject_pending_memory,
@@ -121,6 +126,7 @@ from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from rag_feedback_store import create_citation_trace, feedback_summary, submit_feedback
 from style_preference_store import get_style_prefix, set_style_prefix
+from reply_basis_store import get_reply_basis_preference, set_reply_basis_preference
 from style_store import style_prefixes
 from user_data_import import import_external_export, import_user_export, preview_external_import
 from service_errors import ServiceError
@@ -555,6 +561,30 @@ def update_memory_save_preference(
     return {"mode": mode}
 
 
+@app.get("/api/v1/reply-basis/preference", response_model=ReplyBasisPreferenceResponse)
+def read_reply_basis_preference(user_id: CurrentUser) -> dict[str, bool | str | None]:
+    return get_reply_basis_preference(user_id)
+
+
+@app.put("/api/v1/reply-basis/preference", response_model=ReplyBasisPreferenceResponse)
+def update_reply_basis_preference(
+    request: ReplyBasisPreferenceRequest, user_id: CsrfCurrentUser,
+) -> dict[str, bool | str | None]:
+    return set_reply_basis_preference(user_id, request.enabled, request.correction)
+
+
+@app.post("/api/v1/reply-basis/corrections", response_model=ReplyBasisTurnCorrectionResponse)
+def correct_reply_basis_turn(
+    request: ReplyBasisTurnCorrectionRequest, user_id: CsrfCurrentUser,
+) -> dict[str, Any]:
+    with session_store.session(user_id) as state:
+        memory_action = correct_turn_emotion_memory(state, request.turn_id, request.action)
+    preference = get_reply_basis_preference(user_id)
+    if request.action in {"frustrated", "not_this"}:
+        preference = set_reply_basis_preference(user_id, True, "steady")
+    return {"memory_action": memory_action, "preference": preference}
+
+
 @app.get("/api/v1/auth/session", response_model=SessionResponse)
 def session_info(user_id: CurrentUser) -> dict[str, Any]:
     allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
@@ -631,6 +661,7 @@ def _chat_chunks(
     request: ChatRequest,
     knowledge_context: str | None = None,
     quoted_message: dict[str, str] | None = None,
+    reply_basis_sink: list[dict[str, str | bool]] | None = None,
 ) -> Generator[str, None, None]:
     if request.retry_last_response:
         remove_last_exchange(user_id, request.conversation_id, request.message)
@@ -657,6 +688,7 @@ def _chat_chunks(
         mood_checkin=_mood_reflection_context(user_id, request.mood_checkin.model_dump()) if request.mood_checkin else None,
         quoted_message=quoted_message,
         reply_to_message_id=request.quoted_message_id,
+        on_reply_basis=reply_basis_sink.append if reply_basis_sink is not None else None,
     )
 
 
@@ -731,7 +763,8 @@ def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
         logger.info("event=chat_completed request_id=%s provider=%s streaming=false rag_status=insufficient crisis=%s", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER, from_crisis_layer)
         return {"reply": reply, "citations": [], "citation_trace_id": None, "rag_status": rag_status}
     try:
-        chunks = _chat_chunks(user_id, request, bundle["context"], quoted_message) if quoted_message else _chat_chunks(user_id, request, bundle["context"])
+        reply_basis: list[dict[str, str | bool]] = []
+        chunks = _chat_chunks(user_id, request, bundle["context"], quoted_message, reply_basis) if quoted_message else _chat_chunks(user_id, request, bundle["context"], reply_basis_sink=reply_basis)
         reply = "".join(chunks)
     except Exception:
         duration_ms = int((time.perf_counter() - started) * 1000)
@@ -742,7 +775,7 @@ def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
     chat_finished(True, duration_ms, streaming=False)
     logger.info("event=chat_completed request_id=%s provider=%s streaming=false duration_ms=%s reply_chars=%s", get_request_id(), request.provider or DEFAULT_LLM_PROVIDER, duration_ms, len(reply))
     trace_id = create_citation_trace(user_id, request.conversation_id, bundle["citations"])
-    payload = {"reply": reply, "citations": bundle["citations"], "citation_trace_id": trace_id, "rag_status": rag_status}
+    payload = {"reply": reply, "citations": bundle["citations"], "citation_trace_id": trace_id, "rag_status": rag_status, "response_basis": reply_basis[-1] if reply_basis else None}
     if request.show_memory_receipt:
         with session_store.session(user_id) as state:
             payload["memory_receipt"] = latest_memory_receipt(state)
@@ -796,7 +829,8 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
                 yield f"event: rag_status\ndata: {json.dumps(rag_status, ensure_ascii=False)}\n\n"
             # 始终复用 bundle 已检索出的上下文（与非流式 /chat 一致），
             # 避免 use_knowledge=True 但检索为空时在 chatbot 内部重复检索。
-            generator = _chat_chunks(user_id, request, bundle["context"], quoted_message) if quoted_message else _chat_chunks(user_id, request, bundle["context"])
+            reply_basis: list[dict[str, str | bool]] = []
+            generator = _chat_chunks(user_id, request, bundle["context"], quoted_message, reply_basis) if quoted_message else _chat_chunks(user_id, request, bundle["context"], reply_basis_sink=reply_basis)
             async for chunk in iterate_in_threadpool(generator):
                 yield f"event: chunk\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
             archived = await run_in_threadpool(last_exchange_message_ids, user_id, request.conversation_id, request.message)
@@ -805,6 +839,8 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             trace_id = await run_in_threadpool(create_citation_trace, user_id, request.conversation_id, bundle["citations"])
             if bundle["citations"]:
                 yield f"event: citations\ndata: {json.dumps({'trace_id': trace_id, 'citations': bundle['citations']}, ensure_ascii=False)}\n\n"
+            if reply_basis:
+                yield f"event: response_basis\ndata: {json.dumps(reply_basis[-1], ensure_ascii=False)}\n\n"
             if request.show_memory_receipt:
                 receipt = await run_in_threadpool(_memory_receipt, user_id)
                 yield f"event: receipt\ndata: {json.dumps({'text': receipt}, ensure_ascii=False)}\n\n"

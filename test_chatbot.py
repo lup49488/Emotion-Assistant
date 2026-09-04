@@ -94,6 +94,42 @@ class TestChatStreamingFallback(unittest.TestCase):
         self.assertTrue(captured.exception.retryable)
         self.assertFalse(state.history)
 
+    def test_mood_reflection_does_not_reuse_a_previous_record_discussion(self):
+        state = chatbot.SessionState()
+        state.history = [
+            {"role": "user", "content": "Please discuss my 2026-09-02 Mood Check-in."},
+            {"role": "assistant", "content": "Your 2026-09-02 record sounded tiring."},
+        ]
+        captured_messages = []
+
+        def capture_stream(messages, _config):
+            captured_messages.extend(messages)
+            return iter(["Let us focus on the selected record."])
+
+        with patch.object(chatbot, "safe_analyze", return_value=("neutral", 0.0)), \
+            patch.object(chatbot, "smart_memory_filter", return_value="discard"), \
+            patch.object(chatbot, "stream_model_response", side_effect=capture_stream):
+            reply = "".join(chatbot.chat(
+                state,
+                "Please discuss this Mood Check-in.",
+                use_knowledge=False,
+                use_style=False,
+                mood_checkin={
+                    "date": "2026-09-04",
+                    "mood": "frustrated",
+                    "intensity": 4,
+                    "note": "A difficult afternoon.",
+                    "recent_checkins": [],
+                    "weekly_summary": "No material change.",
+                    "fluctuation_analysis": "Limited data.",
+                },
+            ))
+
+        prompt_text = "\n".join(str(message["content"]) for message in captured_messages)
+        self.assertEqual(reply, "Let us focus on the selected record.")
+        self.assertIn("2026-09-04", prompt_text)
+        self.assertNotIn("2026-09-02", prompt_text)
+
 
 # ═══════════════════════════════════════════════════════════
 # 2. score_memory / smart_memory_filter — 阈值边界
@@ -799,10 +835,22 @@ class TestMemoryExistsAndInterestExtraction(unittest.TestCase):
         assert "你的名字是 Serenova" in messages[0]["content"]
         assert "普通回答不要主动反复强调自己的名字或身份" in messages[0]["content"]
 
-    def test_prompt_does_not_present_uncertain_as_an_emotion_label(self):
+    def test_prompt_keeps_emotion_labels_and_scores_out_of_reply_instructions(self):
         messages = build_messages(chatbot.SessionState(), "I feel okay", "uncertain", 0.59)
 
-        assert "未能可靠判断（不作为情绪标签）" in messages[0]["content"]
+        prompt = messages[0]["content"]
+        assert "当前情绪估计" not in prompt
+        assert "强度 0.59" not in prompt
+        assert "不要输出情绪标签、强度、分数、置信度" in prompt
+
+    def test_prompt_uses_the_same_gentle_basis_exposed_by_the_api(self):
+        messages = build_messages(
+            chatbot.SessionState(), "I need help", "anxiety", 0.95,
+            reply_basis={"enabled": True, "used": True, "mode": "supportive", "source": "message"},
+        )
+
+        assert "用户已选择让本轮文字作为温和语境参考" in messages[0]["content"]
+        assert "温和、稳定、结构化" in messages[0]["content"]
 
     def test_prompt_includes_selected_mood_checkin_as_bounded_background(self):
         messages = build_messages(
