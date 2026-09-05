@@ -11,7 +11,18 @@ services:
     environment:
       API_SERVER_HOST: 0.0.0.0
       API_SERVER_PORT: 8000
-      API_SESSION_SECRET: ${API_SESSION_SECRET:?Set API_SESSION_SECRET in .env before starting Docker}
+      # Secret values are mounted as files and loaded by env_loader.py. Remove
+      # the corresponding populated entries from .env after migration.
+      API_SESSION_SECRET_FILE: /run/secrets/api_session_secret
+      LLM_API_KEY_FILE: /run/secrets/llm_api_key
+      OPENAI_API_KEY_FILE: /run/secrets/openai_api_key
+      OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+      DEEPSEEK_API_KEY_FILE: /run/secrets/deepseek_api_key
+      NVIDIA_NIM_API_KEY_FILE: /run/secrets/nvidia_nim_api_key
+      ANTHROPIC_API_KEY_FILE: /run/secrets/anthropic_api_key
+      HF_TOKEN_FILE: /run/secrets/hf_token
+      CHATBOT_ADMIN_RECOVERY_KEY_FILE: /run/secrets/chatbot_admin_recovery_key
+      DIALOGUE_REGRESSION_ACCESS_KEY_FILE: /run/secrets/dialogue_regression_access_key
       API_PUBLIC_MODE: ${API_PUBLIC_MODE:-false}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
       API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}
@@ -45,6 +56,17 @@ services:
       retries: 5
       start_period: 45s
     restart: unless-stopped
+    secrets:
+      - api_session_secret
+      - llm_api_key
+      - openai_api_key
+      - openrouter_api_key
+      - deepseek_api_key
+      - nvidia_nim_api_key
+      - anthropic_api_key
+      - hf_token
+      - chatbot_admin_recovery_key
+      - dialogue_regression_access_key
 
   web:
     build:
@@ -57,3 +79,25 @@ services:
       - "127.0.0.1:8080:80"
     mem_limit: ${WEB_MEMORY_LIMIT:-256m}
     restart: unless-stopped
+
+secrets:
+  api_session_secret:
+    file: ./secrets/api_session_secret.txt
+  llm_api_key:
+    file: ./secrets/llm_api_key.txt
+  openai_api_key:
+    file: ./secrets/openai_api_key.txt
+  openrouter_api_key:
+    file: ./secrets/openrouter_api_key.txt
+  deepseek_api_key:
+    file: ./secrets/deepseek_api_key.txt
+  nvidia_nim_api_key:
+    file: ./secrets/nvidia_nim_api_key.txt
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key.txt
+  hf_token:
+    file: ./secrets/hf_token.txt
+  chatbot_admin_recovery_key:
+    file: ./secrets/chatbot_admin_recovery_key.txt
+  dialogue_regression_access_key:
+    file: ./secrets/dialogue_regression_access_key.txt

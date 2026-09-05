@@ -4,11 +4,13 @@ import re
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent
-from env_loader import load_project_env_if_enabled
+from env_loader import load_file_secrets, load_project_env_if_enabled
 
 # 测试环境通过 CHATBOT_SKIP_DOTENV 跳过加载本机 .env，避免开发者的生产配置
 # （如 API_TRUSTED_HOSTS、API_PUBLIC_MODE）泄漏进测试并影响结果。
 # 该判断放在 env_loader 里，任何在导入期加载项目 .env 的模块都必须走这个入口。
+# Mounted container secrets take precedence over blank values from .env.
+LOADED_SECRET_FILES: list[Path] = load_file_secrets()
 LOADED_ENV_FILES: list[Path] = load_project_env_if_enabled(BASE_DIR)
 
 _logger = logging.getLogger(__name__)

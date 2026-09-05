@@ -5,6 +5,7 @@
 .claude
 .env
 .env.local
+secrets
 .venv
 __pycache__
 *.pyc

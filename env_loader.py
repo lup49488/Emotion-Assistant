@@ -4,6 +4,31 @@ import os
 from pathlib import Path
 
 
+def load_file_secrets() -> list[Path]:
+    """Load Docker/Kubernetes-style ``NAME_FILE`` secrets into the process.
+
+    The file path is supplied by the container runtime. A non-empty explicit
+    environment variable remains authoritative, while an empty value from an
+    env file is replaced by the mounted secret. This keeps local tests and
+    non-container deployments compatible with the existing environment API.
+    """
+    loaded: list[Path] = []
+    for file_var, raw_path in list(os.environ.items()):
+        if not file_var.endswith("_FILE") or not raw_path.strip():
+            continue
+
+        secret_name = file_var[:-5]
+        secret_path = Path(raw_path.strip())
+        if not secret_path.is_file():
+            continue
+
+        value = secret_path.read_text(encoding="utf-8").strip()
+        if value and not (os.getenv(secret_name) or "").strip():
+            os.environ[secret_name] = value
+            loaded.append(secret_path)
+    return loaded
+
+
 def _strip_inline_comment(value: str) -> str:
     in_single = False
     in_double = False
