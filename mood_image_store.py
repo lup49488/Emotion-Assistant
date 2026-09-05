@@ -8,11 +8,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from config import MOOD_MAX_IMAGES_PER_USER, MOOD_MAX_IMAGE_BYTES_PER_USER
 from session_store import user_dir, user_file_lock, validate_user_id
 
 
 MAX_IMAGES_PER_CHECKIN = 3
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
+MAX_IMAGES_PER_USER = MOOD_MAX_IMAGES_PER_USER
+MAX_IMAGE_BYTES_PER_USER = MOOD_MAX_IMAGE_BYTES_PER_USER
 _IMAGE_ID_PATTERN = re.compile(r"^[a-f0-9]{32}$")
 _DATE_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _IMAGE_TYPES = {
@@ -21,6 +24,8 @@ _IMAGE_TYPES = {
     "gif": ("image/gif", ".gif"),
     "webp": ("image/webp", ".webp"),
 }
+# Derived so a newly supported format is counted against the quota automatically.
+_IMAGE_SUFFIXES = {suffix for _, suffix in _IMAGE_TYPES.values()}
 
 
 def _validate_date(checkin_date: str) -> str:
@@ -66,7 +71,19 @@ def list_mood_images(user_id: str, checkin_date: str) -> list[dict[str, Any]]:
     directory = _optional_attachment_dir(user_id, checkin_date)
     if directory is None or not directory.exists():
         return []
-    return [_metadata(path) for path in sorted(directory.iterdir()) if path.is_file() and path.suffix.lower() in {".png", ".jpg", ".gif", ".webp"}]
+    return [_metadata(path) for path in sorted(directory.iterdir()) if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES]
+
+
+def _user_image_usage(user_id: str) -> tuple[int, int]:
+    """Return this user's stored image count and total bytes across every check-in."""
+    root = user_dir(validate_user_id(user_id)) / "mood_images"
+    if not root.exists():
+        return 0, 0
+    files = [
+        path for path in root.rglob("*")
+        if path.is_file() and path.suffix.lower() in _IMAGE_SUFFIXES
+    ]
+    return len(files), sum(path.stat().st_size for path in files)
 
 
 def save_mood_image(user_id: str, checkin_date: str, contents: bytes) -> dict[str, Any]:
@@ -82,6 +99,13 @@ def save_mood_image(user_id: str, checkin_date: str, contents: bytes) -> dict[st
         directory.mkdir(parents=True, exist_ok=True)
         if len(list_mood_images(user_id, checkin_date)) >= MAX_IMAGES_PER_CHECKIN:
             raise ValueError(f"A Mood Check-in can contain at most {MAX_IMAGES_PER_CHECKIN} images.")
+        image_count, image_bytes = _user_image_usage(user_id)
+        if image_count >= MAX_IMAGES_PER_USER:
+            raise ValueError(f"A user can store at most {MAX_IMAGES_PER_USER} Mood Check-in images.")
+        if image_bytes + len(contents) > MAX_IMAGE_BYTES_PER_USER:
+            # Rounded rather than floored so a sub-megabyte quota is not reported as "0 MB".
+            limit_mb = round(MAX_IMAGE_BYTES_PER_USER / (1024 * 1024), 1)
+            raise ValueError(f"A user can store at most {limit_mb} MB of Mood Check-in images.")
         image_id = uuid.uuid4().hex
         target = directory / f"{image_id}{suffix}"
         temporary = directory / f".{image_id}.upload"

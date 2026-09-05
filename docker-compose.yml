@@ -50,7 +50,7 @@ services:
     # Override in .env after measuring the host under realistic traffic.
     mem_limit: ${API_MEMORY_LIMIT:-3g}
     healthcheck:
-      test: ["CMD", "python", "-c", "import os; from urllib.request import Request, urlopen; host=(os.getenv('API_TRUSTED_HOSTS') or 'localhost').split(',')[0].strip() or 'localhost'; urlopen(Request('http://127.0.0.1:8000/health', headers={'Host': host}), timeout=3)"]
+      test: ["CMD", "python", "-c", "import os; from urllib.request import Request, urlopen; host=(os.getenv('API_TRUSTED_HOSTS') or 'localhost').split(',')[0].strip() or 'localhost'; urlopen(Request('http://127.0.0.1:8000/health/ready', headers={'Host': host}), timeout=3)"]
       interval: 20s
       timeout: 5s
       retries: 5

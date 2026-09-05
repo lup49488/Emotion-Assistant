@@ -66,6 +66,12 @@ def test_local_docker_http_uses_trusted_host(monkeypatch):
     assert reporter.failures == []
     assert all(call[1] == "chat.serenova.dev" for call in calls)
     assert calls[0][2] == "HEAD"
+    assert [call[0] for call in calls] == [
+        "http://127.0.0.1:8080/",
+        "http://127.0.0.1:8080/health/live",
+        "http://127.0.0.1:8080/health/ready",
+        "http://127.0.0.1:8080/api/v1/status",
+    ]
 
 
 def test_public_http_accepts_cloudflare_access_redirect(monkeypatch):

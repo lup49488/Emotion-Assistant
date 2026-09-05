@@ -9,6 +9,7 @@ from config import BASE_DIR
 from conversation_store import list_conversations, get_conversation
 from mood_store import load_mood_checkins
 from session_store import load_state, validate_user_id
+from file_security import restrict_directory, restrict_file
 
 EXPORTS_DIR = BASE_DIR / "exports"
 
@@ -48,8 +49,9 @@ def build_user_export_payload(user_id: str) -> dict[str, Any]:
 
 def export_user_data(user_id: str) -> Path:
     user_id = validate_user_id(user_id)
-    EXPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    restrict_directory(EXPORTS_DIR)
     target = EXPORTS_DIR / _safe_export_name(user_id)
     payload = build_user_export_payload(user_id)
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    restrict_file(target)
     return target

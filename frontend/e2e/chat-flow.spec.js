@@ -356,6 +356,31 @@ test('a historical Mood Check-in can be discussed from its record action', async
   await expect(page.locator('.message.assistant .message-body').last()).toContainText('Mood reflection: calm (3/5)')
 })
 
+// Both the timezone and the clock are pinned so the local and UTC calendar
+// dates always disagree: UTC+14 at 12:30 UTC is already the next day. Without
+// the fixed instant this test silently stops proving anything for most of the
+// day, and the expected dates are written out rather than recomputed with the
+// same arithmetic the application uses.
+test.describe('mood check-in dates in a far-from-UTC timezone', () => {
+  const timezoneId = 'Pacific/Kiritimati'
+  const fixedInstant = new Date('2026-03-10T12:30:00.000Z')
+  const localDate = '2026-03-11'
+  const utcDate = '2026-03-10'
+  test.use({ timezoneId })
+
+  test('a new Mood Check-in uses the browser local calendar date', async ({ page }) => {
+    await page.clock.setFixedTime(fixedInstant)
+    await signIn(page)
+    await page.getByRole('button', { name: 'Mood check-in' }).click()
+
+    await page.getByRole('textbox', { name: 'Mood' }).fill('relieved')
+    await page.getByRole('button', { name: 'Save check-in' }).click()
+
+    await expect(page.locator('.record-row').filter({ hasText: `${localDate} · 3/5` })).toContainText('relieved')
+    await expect(page.locator('.record-row').filter({ hasText: `${utcDate} · 3/5` })).toHaveCount(0)
+  })
+})
+
 test('tablet Mood Check-in keeps form controls within their panel', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 })
   await signIn(page)

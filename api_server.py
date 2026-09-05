@@ -19,6 +19,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
 from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, Response, UploadFile, status
 from fastapi.exceptions import RequestValidationError
@@ -43,6 +44,7 @@ from api_contracts import (
     ExportResponse,
     HealthResponse,
     InterestMemoryUpdateRequest,
+    LivenessResponse,
     LoginRequest,
     LoginResponse,
     LongTermMemoryUpdateRequest,
@@ -105,7 +107,7 @@ from knowledge_store import (
     release_gate_status,
 )
 from job_store import get_job, job_manager, list_jobs, mark_interrupted_jobs
-from mood_image_store import delete_mood_checkin_images, delete_mood_image, get_mood_image_path, list_mood_images, save_mood_image
+from mood_image_store import MAX_IMAGE_BYTES, delete_mood_checkin_images, delete_mood_image, get_mood_image_path, list_mood_images, save_mood_image
 from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
 from memory_store import (
     confirm_pending_memory,
@@ -246,6 +248,28 @@ def _rag_admin_users() -> set[str]:
     return {item.strip() for item in configured.split(",") if item.strip()}
 
 
+async def _read_upload_limited(file: UploadFile, max_bytes: int) -> bytes:
+    """Read multipart content incrementally, including chunked requests."""
+    chunks: list[bytes] = []
+    total = 0
+    chunk_size = 64 * 1024
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise HTTPException(status_code=413, detail="Uploaded file exceeds the configured size limit.")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _reject_server_endpoint_override(request: ChatRequest) -> None:
+    """Never send a server-managed credential to a caller-selected endpoint."""
+    if request.base_url and request.base_url.strip() and not (request.api_key and request.api_key.strip()):
+        raise HTTPException(status_code=422, detail="A custom Base URL requires a request-provided API key.")
+
+
 def _can_manage_knowledge(user_id: str) -> bool:
     return user_id in _rag_admin_users()
 
@@ -321,8 +345,20 @@ async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse
 
 
 @app.exception_handler(ServiceError)
-async def service_error_handler(_: Request, exc: ServiceError) -> JSONResponse:
-    payload = ApiError(code=exc.code, message=str(exc), retryable=exc.retryable)
+async def service_error_handler(request: Request, exc: ServiceError) -> JSONResponse:
+    # Provider and library exceptions can contain URLs, filesystem paths, or
+    # credential-related diagnostics. Keep details in protected logs only.
+    # Handled exceptions never reach the observability middleware, so this
+    # handler is the only place the detail can still be recorded.
+    logger.warning(
+        "event=service_error request_id=%s method=%s path=%s code=%s detail=%s",
+        get_request_id(), request.method, request.url.path, exc.code, exc, exc_info=exc,
+    )
+    payload = ApiError(
+        code=exc.code,
+        message="服务暂时不可用，请稍后重试。",
+        retryable=exc.retryable,
+    )
     return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload.model_dump())
 
 
@@ -452,7 +488,9 @@ def _health_payload() -> dict[str, Any]:
     components = {
         "storage": storage,
         "warmup": {"status": warmup_state},
-        "rag": {"status": "ok", "detail": knowledge_status()},
+        # Keep public liveness coarse; detailed corpus paths and document names
+        # belong behind authenticated operator endpoints.
+        "rag": {"status": "ok"},
     }
     overall = "degraded" if any(component["status"] == "degraded" for component in components.values()) else "ok"
     return {
@@ -463,10 +501,25 @@ def _health_payload() -> dict[str, Any]:
     }
 
 
-@app.get("/health", response_model=HealthResponse)
+@app.get("/health", response_model=HealthResponse, deprecated=True)
 def health() -> dict[str, Any]:
-    """Public liveness/readiness report without configuration secrets."""
+    """Deprecated compatibility report that always returns 200; use /health/live or /health/ready."""
     return _health_payload()
+
+
+@app.get("/health/live", response_model=LivenessResponse)
+def health_live() -> dict[str, str]:
+    """Report process liveness without treating optional startup work as failure."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready", response_model=HealthResponse)
+def health_ready() -> dict[str, Any] | JSONResponse:
+    """Report whether this instance can safely receive proxied application traffic."""
+    payload = _health_payload()
+    if payload["status"] != "ok":
+        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
+    return payload
 
 
 @app.get("/api/v1/status", response_model=StatusResponse)
@@ -503,8 +556,25 @@ def contract_info() -> dict[str, str]:
     return {"api_version": "v1", "contract_version": API_CONTRACT_VERSION, "openapi_path": "/openapi.json"}
 
 
+def _login_origin_allowed(origin: str, raw_request: Request) -> bool:
+    """Accept the configured browser origins plus the request's own origin.
+
+    Same-origin deployments serve the frontend next to the API through one
+    reverse proxy and therefore never configure API_CORS_ORIGINS. Requiring
+    membership there would reject every production login. The Host header this
+    falls back to is already constrained by TrustedHostMiddleware.
+    """
+    if origin in _cors_origins():
+        return True
+    host = raw_request.headers.get("host", "").strip()
+    return bool(host) and urlsplit(origin).netloc == host
+
+
 @app.post("/api/v1/auth/login", response_model=LoginResponse)
 def login(request: LoginRequest, response: Response, raw_request: Request) -> dict[str, Any]:
+    origin = raw_request.headers.get("origin", "").strip()
+    if origin and not _login_origin_allowed(origin, raw_request):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cross-site login is not permitted.")
     client_ip = _client_ip(raw_request)
     allowed, retry_after = login_allowed(client_ip, request.user_id)
     if not allowed:
@@ -749,6 +819,7 @@ def _resolve_insufficient_evidence(
 @app.post("/api/v1/chat", response_model=ChatResponse)
 def chat(request: ChatRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
     started = time.perf_counter()
+    _reject_server_endpoint_override(request)
     quoted_message = _quoted_message_context(user_id, request)
     bundle = _knowledge_bundle(request)
     rag_status = _rag_status(bundle)
@@ -799,6 +870,7 @@ def _memory_receipt(user_id: str) -> str:
 )
 async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> StreamingResponse:
     request_id = get_request_id()
+    _reject_server_endpoint_override(request)
     quoted_message = _quoted_message_context(user_id, request)
 
     async def event_source():
@@ -851,14 +923,14 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
         except ServiceError as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(False, duration_ms, streaming=True)
-            logger.warning("event=chat_failed request_id=%s code=%s streaming=true", request_id, exc.code)
-            error = ApiError(code=exc.code, message=str(exc), retryable=exc.retryable)
+            logger.warning("event=chat_failed request_id=%s code=%s detail=%s streaming=true", request_id, exc.code, exc, exc_info=exc)
+            error = ApiError(code=exc.code, message="模型服务暂时不可用，请稍后重试。", retryable=exc.retryable)
             yield f"event: error\ndata: {error.model_dump_json()}\n\n"
         except Exception as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(False, duration_ms, streaming=True)
             logger.exception("event=chat_failed request_id=%s provider=%s streaming=true", request_id, request.provider or DEFAULT_LLM_PROVIDER)
-            error = ApiError(code="generation_failed", message=str(exc), retryable=True)
+            error = ApiError(code="generation_failed", message="模型服务暂时不可用，请稍后重试。", retryable=True)
             yield f"event: error\ndata: {error.model_dump_json()}\n\n"
         finally:
             reset_request_id(token)
@@ -912,7 +984,7 @@ async def upload_mood_image(
     try:
         if not any(record["date"] == checkin_date for record in load_mood_checkins(user_id)):
             raise HTTPException(status_code=404, detail="Mood Check-in was not found.")
-        return save_mood_image(user_id, checkin_date, await file.read())
+        return save_mood_image(user_id, checkin_date, await _read_upload_limited(file, MAX_IMAGE_BYTES))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     finally:
@@ -1158,7 +1230,7 @@ async def upload_rag_document(file: Annotated[UploadFile, File(...)], user_id: C
         allowed = ", ".join(sorted(SUPPORTED_EXTENSIONS))
         raise HTTPException(status_code=422, detail=f"Unsupported document type. Allowed: {allowed}.")
 
-    contents = await file.read()
+    contents = await _read_upload_limited(file, API_MAX_KNOWLEDGE_UPLOAD_BYTES)
     if not contents:
         raise HTTPException(status_code=422, detail="The uploaded document is empty.")
     if len(contents) > API_MAX_KNOWLEDGE_UPLOAD_BYTES:
@@ -1277,7 +1349,7 @@ async def import_data(
 ) -> dict[str, int | str]:
     if not (file.filename or "").lower().endswith(".json"):
         raise HTTPException(status_code=422, detail="Import file must be a JSON export.")
-    raw = await file.read()
+    raw = await _read_upload_limited(file, API_MAX_REQUEST_BYTES)
     try:
         return import_user_export(user_id, raw, mode=mode)
     except ValueError as exc:
@@ -1291,7 +1363,7 @@ async def preview_external_data_import(
     if not (file.filename or "").lower().endswith((".json", ".zip")):
         raise HTTPException(status_code=422, detail="Choose a JSON or ZIP conversation export.")
     try:
-        return preview_external_import(await file.read())
+        return preview_external_import(await _read_upload_limited(file, API_MAX_REQUEST_BYTES))
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -1308,7 +1380,7 @@ async def import_external_data(
         selected = json.loads(profile_fields)
         if not isinstance(selected, list) or any(not isinstance(item, str) for item in selected):
             raise ValueError("Selected profile fields are invalid.")
-        return import_external_export(user_id, await file.read(), mode=mode, selected_profile_fields=selected)
+        return import_external_export(user_id, await _read_upload_limited(file, API_MAX_REQUEST_BYTES), mode=mode, selected_profile_fields=selected)
     except (ValueError, json.JSONDecodeError) as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 

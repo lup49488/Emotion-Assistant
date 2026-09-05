@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from config import BASE_DIR
+from file_security import restrict_directory, restrict_file
 
 
 DEFAULT_DATABASE_PATH = BASE_DIR / "data" / "chatbot.db"
@@ -34,13 +35,20 @@ def database_path() -> Path:
 @contextmanager
 def connection() -> Iterator[sqlite3.Connection]:
     path = database_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
+    restrict_directory(path.parent)
+    restrict_file(path)
+    restrict_file(path.with_name(path.name + "-wal"))
+    restrict_file(path.with_name(path.name + "-shm"))
     conn = sqlite3.connect(path, timeout=30.0)
+    restrict_file(path)
     conn.row_factory = sqlite3.Row
     try:
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA busy_timeout = 5000")
         conn.execute("PRAGMA journal_mode = WAL")
+        # SQLite may create these sidecar files after the connection opens.
+        restrict_file(path.with_name(path.name + "-wal"))
+        restrict_file(path.with_name(path.name + "-shm"))
         ensure_schema(conn)
         yield conn
         conn.commit()

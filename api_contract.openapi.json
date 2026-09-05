@@ -11,8 +11,47 @@
     "/health": {
       "get": {
         "summary": "Health",
-        "description": "Public liveness/readiness report without configuration secrets.",
+        "description": "Deprecated compatibility report that always returns 200; use /health/live or /health/ready.",
         "operationId": "health_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "deprecated": true
+      }
+    },
+    "/health/live": {
+      "get": {
+        "summary": "Health Live",
+        "description": "Report process liveness without treating optional startup work as failure.",
+        "operationId": "health_live_health_live_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LivenessResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "summary": "Health Ready",
+        "description": "Report whether this instance can safely receive proxied application traffic.",
+        "operationId": "health_ready_health_ready_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -4860,6 +4899,19 @@
           "name"
         ],
         "title": "KnowledgeDocument"
+      },
+      "LivenessResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "ok",
+            "title": "Status",
+            "default": "ok"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "LivenessResponse"
       },
       "LoginRequest": {
         "properties": {

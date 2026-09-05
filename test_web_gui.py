@@ -3,12 +3,14 @@ import json
 import re
 from pathlib import Path
 
+import auth_rate_limit
 import export_store
 import gui_knowledge
 import gui_memory
 import session_store
 import chatbot
 import Web_GUI
+from config import API_AUTH_MAX_ATTEMPTS
 from gui_model_options import PROVIDER_CHOICES
 from gui_i18n import EN_TRANSLATIONS, localize_status_text
 from gui_auth import authorize_or_message
@@ -273,6 +275,52 @@ def test_weekly_mood_chart_defaults_to_light_palette():
     assert 'data-chart-theme="light"' in chart
     assert "background:#ffffff" in chart
     assert 'fill="#6b7280"' in chart
+
+
+def test_gradio_admin_auth_only_accepts_allowlisted_operators(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(Web_GUI, "API_OPERATIONS_USER_IDS", "ops-admin")
+    Web_GUI.save_access_key_from_gui("ops-admin", "ops-admin-secret")
+    Web_GUI.save_access_key_from_gui("alice", "alice-secret")
+    auth_rate_limit.clear_login_failures(Web_GUI._GRADIO_AUTH_SOURCE, "ops-admin")
+
+    try:
+        assert Web_GUI._gradio_admin_auth("ops-admin", "ops-admin-secret") is True
+        assert Web_GUI._gradio_admin_auth("alice", "alice-secret") is False
+        assert Web_GUI._gradio_admin_auth("ops-admin", "wrong-secret") is False
+    finally:
+        auth_rate_limit.clear_login_failures(Web_GUI._GRADIO_AUTH_SOURCE, "ops-admin")
+
+
+def test_gradio_admin_auth_never_initialises_a_missing_operator_key(tmp_path, monkeypatch):
+    # authorize() sets the access key on first use, so the allowlist alone must
+    # not let whoever reaches the login form first claim an operator ID.
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(Web_GUI, "API_OPERATIONS_USER_IDS", "ops-admin")
+
+    try:
+        assert Web_GUI._gradio_admin_auth("ops-admin", "attacker-chosen") is False
+        assert Web_GUI._gradio_admin_auth("ops-admin", "attacker-chosen") is False
+    finally:
+        auth_rate_limit.clear_login_failures(Web_GUI._GRADIO_AUTH_SOURCE, "ops-admin")
+
+
+def test_gradio_admin_auth_throttles_repeated_password_guesses(tmp_path, monkeypatch):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(Web_GUI, "API_OPERATIONS_USER_IDS", "ops-admin")
+    Web_GUI.save_access_key_from_gui("ops-admin", "ops-admin-secret")
+    auth_rate_limit.clear_login_failures(Web_GUI._GRADIO_AUTH_SOURCE, "ops-admin")
+
+    try:
+        for _ in range(API_AUTH_MAX_ATTEMPTS):
+            assert Web_GUI._gradio_admin_auth("ops-admin", "wrong-secret") is False
+        # Once the bucket is exhausted even the correct password is refused.
+        assert Web_GUI._gradio_admin_auth("ops-admin", "ops-admin-secret") is False
+
+        auth_rate_limit.clear_login_failures(Web_GUI._GRADIO_AUTH_SOURCE, "ops-admin")
+        assert Web_GUI._gradio_admin_auth("ops-admin", "ops-admin-secret") is True
+    finally:
+        auth_rate_limit.clear_login_failures(Web_GUI._GRADIO_AUTH_SOURCE, "ops-admin")
 
 
 def test_load_theme_and_weekly_chart_requires_access_key(tmp_path, monkeypatch):

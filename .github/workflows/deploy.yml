@@ -7,6 +7,11 @@ on:
     types: [completed]
     branches: [main]
   workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Full 40-character commit SHA to deploy. Leave empty to deploy the current origin/main tip.
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -69,26 +74,46 @@ jobs:
             "echo ssh-auth-ok"
 
       - name: Deploy to VPS
+        id: deploy_revision
         shell: bash
         env:
           VPS_HOST: ${{ secrets.VPS_HOST }}
           VPS_USER: ${{ secrets.VPS_USER }}
           VPS_PORT: ${{ secrets.VPS_PORT }}
+          DEPLOY_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.commit_sha }}
         run: |
+          # A workflow_run always carries a SHA; a manual dispatch may leave it
+          # empty, which the VPS resolves to the current origin/main tip.
+          if [ -n "$DEPLOY_SHA" ] && ! [[ "$DEPLOY_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "commit_sha must be a full 40-character commit SHA." >&2
+            exit 1
+          fi
+          if [ "${{ github.event_name }}" = "workflow_run" ] && [ -z "$DEPLOY_SHA" ]; then
+            echo "workflow_run did not provide a head SHA." >&2
+            exit 1
+          fi
           ssh \
             -i ~/.ssh/deploy_key \
             -p "$VPS_PORT" \
             -o IdentitiesOnly=yes \
             -o BatchMode=yes \
-            "$VPS_USER@$VPS_HOST" << 'EOF'
+            "$VPS_USER@$VPS_HOST" "DEPLOY_SHA=$DEPLOY_SHA bash -s" << 'EOF'
               set -euo pipefail
 
               cd /opt/Emotion-Assistant
 
-              echo "Updating repository..."
+              echo "Resolving CI-verified deployment revision..."
+              previous_sha="$(git rev-parse HEAD)"
               git fetch origin main
-              git checkout main
-              git pull --ff-only origin main
+              if [ -z "$DEPLOY_SHA" ]; then
+                DEPLOY_SHA="$(git rev-parse origin/main)"
+                echo "No commit SHA supplied; deploying the origin/main tip $DEPLOY_SHA."
+              fi
+              git cat-file -e "${DEPLOY_SHA}^{commit}"
+              git merge-base --is-ancestor "$DEPLOY_SHA" origin/main
+              git checkout --detach "$DEPLOY_SHA"
+              deployed_sha="$(git rev-parse HEAD)"
+              test "$deployed_sha" = "$DEPLOY_SHA"
 
               echo "Validating Docker Compose configuration..."
               docker compose config --quiet
@@ -109,7 +134,13 @@ jobs:
                 --public-url "https://${app_host}/" \
                 --cloudflared
 
-              echo "Deployment completed."
+              # Recorded for the manual rollback procedure documented in
+              # DEPLOYMENT_CLOUDFLARE.md; no workflow step reads these back.
+              state_directory=/opt/Emotion-Assistant/.deployment
+              mkdir -p "$state_directory"
+              printf '%s\n' "$previous_sha" > "$state_directory/previous_sha"
+              printf '%s\n' "$deployed_sha" > "$state_directory/current_sha"
+              echo "Deployment completed. current=$deployed_sha previous=$previous_sha"
           EOF
 
       - name: Remove deploy key

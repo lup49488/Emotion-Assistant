@@ -41,6 +41,27 @@ def test_parallel_uploads_cannot_exceed_the_per_checkin_cap(store):
     assert len(rejected) == attempts - store.MAX_IMAGES_PER_CHECKIN
 
 
+def test_per_user_count_quota_spans_every_checkin(store, monkeypatch):
+    # The per-check-in cap alone lets one user grow storage without bound by
+    # spreading uploads across dates, so the quota has to count the whole tree.
+    monkeypatch.setattr(store, "MAX_IMAGES_PER_USER", 2)
+    store.save_mood_image("alice", "2026-07-18", PNG)
+    store.save_mood_image("alice", "2026-07-19", PNG)
+
+    with pytest.raises(ValueError, match="at most 2 Mood Check-in images"):
+        store.save_mood_image("alice", "2026-07-20", PNG)
+
+
+def test_per_user_byte_quota_rejects_the_upload_that_would_exceed_it(store, monkeypatch):
+    monkeypatch.setattr(store, "MAX_IMAGES_PER_USER", 100)
+    monkeypatch.setattr(store, "MAX_IMAGE_BYTES_PER_USER", len(PNG) + 1)
+    store.save_mood_image("alice", "2026-07-18", PNG)
+
+    with pytest.raises(ValueError, match="MB of Mood Check-in images"):
+        store.save_mood_image("alice", "2026-07-19", PNG)
+    assert store.list_mood_images("alice", "2026-07-19") == []
+
+
 @pytest.mark.parametrize("checkin_date", ["not-a-date", "2026-13-45", "../../etc", "", "2026-7-8"])
 def test_read_paths_treat_a_malformed_date_as_missing(store, checkin_date):
     # Read paths answer "no such image" instead of raising, which would surface as a 500.

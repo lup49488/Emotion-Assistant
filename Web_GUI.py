@@ -27,6 +27,7 @@ from chatbot import (
 )
 from config import (
     BASE_DIR,
+    API_OPERATIONS_USER_IDS,
     DEFAULT_MAX_NEW_TOKENS,
     DEFAULT_TEMPERATURE,
     DEFAULT_TOP_P,
@@ -42,11 +43,14 @@ from config import (
     LOADED_ENV_FILES,
     STYLE_ENABLED,
 )
+from auth_rate_limit import clear_login_failures, login_allowed, record_login_failure
 from gui_auth import (
     AUTH_REQUIRED_MESSAGE,
     admin_recover_access_key,
     admin_recovery_status,
+    has_access_key,
     authorize_or_message as _authorize_or_message,
+    authorize as _authorize,
     change_saved_access_key,
     save_or_verify_access_key,
 )
@@ -134,6 +138,34 @@ setup_gui_logging()
 logger = logging.getLogger(__name__)
 
 LOCAL_ENV_PATH = BASE_DIR / ".env.local"
+
+# Shared rate-limit bucket for the address-less Gradio basic-auth form.
+_GRADIO_AUTH_SOURCE = "gradio-ui"
+
+
+def _gradio_admin_auth(username: str, password: str) -> bool:
+    """Allow only configured operator users to enter the legacy Gradio UI.
+
+    ``has_access_key`` is checked first on purpose: ``authorize`` initialises the
+    access key on first use, so without it whoever reaches this form first could
+    claim an operator ID that has no key yet.
+    """
+    allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
+    username = (username or "").strip()
+    if not username or username not in allowed or not has_access_key(username):
+        return False
+    # Gradio's basic auth exposes no client address, so every attempt shares one
+    # bucket. That is coarse but still bounds offline-style guessing here.
+    permitted, retry_after = login_allowed(_GRADIO_AUTH_SOURCE, username)
+    if not permitted:
+        logger.warning("event=gradio_login_throttled user=%s retry_after=%s", username, retry_after)
+        return False
+    _, error = _authorize(username, password)
+    if error is not None:
+        record_login_failure(_GRADIO_AUTH_SOURCE, username)
+        return False
+    clear_login_failures(_GRADIO_AUTH_SOURCE, username)
+    return True
 
 _status_lock = threading.Lock()
 _warmup_status = "未启动"
@@ -1276,11 +1308,20 @@ with gr.Blocks(title="Serenova") as demo:
     )
 
 if __name__ == "__main__":
+    if os.getenv("API_PUBLIC_MODE", "false").lower() == "true":
+        raise RuntimeError(
+            "生产公网模式已禁用旧 Gradio 管理界面；请使用受保护的 FastAPI 管理接口。"
+        )
+    if not API_OPERATIONS_USER_IDS.strip():
+        raise RuntimeError(
+            "旧 Gradio 管理界面需要先配置 API_OPERATIONS_USER_IDS，且只允许管理员登录。"
+        )
     start_background_warmup(initial_provider)
     demo.launch(
         server_name=os.getenv("GRADIO_SERVER_NAME", "127.0.0.1"),
         server_port=int(os.getenv("GRADIO_SERVER_PORT", "7860")),
         share=os.getenv("GRADIO_SHARE", "false").lower() == "true",
+        auth=_gradio_admin_auth,
         css=THEME_CSS,
         i18n=GUI_I18N,
         footer_links=["settings"],

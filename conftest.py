@@ -20,6 +20,33 @@ import pytest
 # 使测试在干净的默认配置下运行，不受开发者部署配置影响。
 os.environ.setdefault("CHATBOT_SKIP_DOTENV", "1")
 
+# 只跳过 .env 并不够：开发者常把同一批变量导出到 shell/系统环境里，它们会绕过
+# 上面的开关继续渗入测试。例如本机导出的 LLM_MAX_NEW_TOKENS 会改掉 ChatRequest
+# 的默认值，使 api_contract.openapi.json 快照对不上。因此以 .env.example 作为项目
+# 变量清单，在导入任何项目模块之前把它们从环境中清掉。
+_TEST_CONTROLLED_ENV = {"API_PRELOAD_MODELS"}
+
+
+def _clear_ambient_project_environment() -> None:
+    example = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env.example")
+    try:
+        with open(example, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        name = line.split("=", 1)[0].strip()
+        if name and name not in _TEST_CONTROLLED_ENV:
+            os.environ.pop(name, None)
+
+
+_clear_ambient_project_environment()
+# 测试不得触发真实的模型下载或加载，与 CI 的作业级设置保持一致。
+os.environ["API_PRELOAD_MODELS"] = "false"
+
 
 @pytest.fixture(autouse=True)
 def _isolate_storage_backend(monkeypatch):

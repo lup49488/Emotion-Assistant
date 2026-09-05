@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import io
 import json
+import logging
 import zipfile
 import os
 from pathlib import Path
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -21,6 +23,43 @@ import memory_store
 import session_store
 from auth_store import change_access_key
 from conversation_store import append_exchange
+
+
+class _ChunkedUpload:
+    def __init__(self, payload: bytes, chunk_size: int = 3):
+        self.payload = payload
+        self.chunk_size = chunk_size
+        self.offset = 0
+
+    async def read(self, _size: int) -> bytes:
+        if self.offset >= len(self.payload):
+            return b""
+        chunk = self.payload[self.offset:self.offset + self.chunk_size]
+        self.offset += len(chunk)
+        return chunk
+
+
+def test_chunked_upload_reader_enforces_limit_without_content_length():
+    import asyncio
+
+    accepted = asyncio.run(api_server._read_upload_limited(_ChunkedUpload(b"12345"), 5))
+    assert accepted == b"12345"
+
+    with pytest.raises(api_server.HTTPException) as exc_info:
+        asyncio.run(api_server._read_upload_limited(_ChunkedUpload(b"123456"), 5))
+    assert exc_info.value.status_code == 413
+
+
+def test_server_managed_llm_key_cannot_follow_request_base_url():
+    request = api_server.ChatRequest(message="hello", base_url="http://127.0.0.1:9")
+    with __import__("pytest").raises(api_server.HTTPException) as exc_info:
+        api_server._reject_server_endpoint_override(request)
+    assert exc_info.value.status_code == 422
+
+    # A caller-supplied key remains an explicit opt-in for custom providers.
+    api_server._reject_server_endpoint_override(
+        api_server.ChatRequest(message="hello", base_url="https://provider.example", api_key="user-key")
+    )
 
 
 def _login(client, monkeypatch, tmp_path, user_id="api-alice", access_key="api-secret"):
@@ -44,6 +83,64 @@ def test_health_reports_storage_backend():
     assert response.json()["components"]["storage"]["status"] == "ok"
     assert "metrics" in response.json()
     assert response.headers["X-Request-ID"] == "health-check-1"
+
+
+def test_health_endpoints_separate_liveness_from_readiness(monkeypatch):
+    degraded = {
+        "status": "degraded",
+        "storage_backend": "sqlite",
+        "components": {
+            "storage": {"status": "degraded", "detail": "OperationalError"},
+            "warmup": {"status": "ok", "detail": None},
+            "rag": {"status": "ok", "detail": None},
+        },
+        "metrics": {},
+    }
+    monkeypatch.setattr(api_server, "_health_payload", lambda: degraded)
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        live = client.get("/health/live")
+        ready = client.get("/health/ready")
+
+    assert live.status_code == 200
+    assert live.json() == {"status": "ok"}
+    assert ready.status_code == 503
+    assert ready.json() == degraded
+
+
+def test_login_blocks_a_foreign_origin_but_allows_the_requests_own_origin(monkeypatch, tmp_path):
+    # A same-origin deployment serves the frontend beside the API and never sets
+    # API_CORS_ORIGINS, so its own Host must be accepted or every login fails.
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    credentials = {"user_id": "origin-alice", "access_key": "origin-secret"}
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        blocked = client.post("/api/v1/auth/login", json=credentials, headers={"Origin": "https://evil.example"})
+        allowed = client.post("/api/v1/auth/login", json=credentials, headers={"Origin": "https://testserver"})
+
+    assert blocked.status_code == 403
+    assert allowed.status_code == 200
+
+
+def test_service_error_is_redacted_for_clients_but_kept_in_the_log(monkeypatch, tmp_path, caplog):
+    # Handled exceptions never reach the observability middleware, so the
+    # handler itself has to record what it stops returning.
+    def failing_chunks(*_, **__):
+        raise ServiceError("provider_timeout", "https://provider.example/v1 key=sk-secret timed out", retryable=True)
+
+    monkeypatch.setattr(api_server, "_chat_chunks", failing_chunks)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with caplog.at_level(logging.WARNING, logger="api_server"):
+            response = client.post("/api/v1/chat", json={"message": "hi"}, headers=headers)
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["code"] == "provider_timeout"
+    assert body["retryable"] is True
+    assert "provider.example" not in body["message"]
+    assert "sk-secret" not in body["message"]
+    assert any("event=service_error" in record.getMessage() for record in caplog.records)
+    assert "sk-secret" in caplog.text
 
 
 def test_versioned_status_exposes_safe_runtime_metrics():

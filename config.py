@@ -210,6 +210,11 @@ OPS_ALERT_AVERAGE_LATENCY_MS = max(1, _env_int("OPS_ALERT_AVERAGE_LATENCY_MS", 5
 OPS_ALERT_PROVIDER_FAILURES = max(1, _env_int("OPS_ALERT_PROVIDER_FAILURES", 3))
 OPS_ALERT_JOB_FAILURES = max(1, _env_int("OPS_ALERT_JOB_FAILURES", 1))
 
+# Per-user Mood Check-in image storage quota. Operators may lower these below
+# the per-check-in limits to effectively disable new uploads.
+MOOD_MAX_IMAGES_PER_USER = max(0, _env_int("MOOD_MAX_IMAGES_PER_USER", 30))
+MOOD_MAX_IMAGE_BYTES_PER_USER = max(0, _env_int("MOOD_MAX_IMAGE_BYTES_PER_USER", 50 * 1024 * 1024))
+
 LOCAL_MODEL_DTYPE = os.getenv("LOCAL_MODEL_DTYPE", "auto").lower()
 LOCAL_MODEL_ATTN_IMPLEMENTATION = os.getenv("LOCAL_MODEL_ATTN_IMPLEMENTATION", "").strip() or None
 LOCAL_MODEL_LOW_CPU_MEM_USAGE = os.getenv("LOCAL_MODEL_LOW_CPU_MEM_USAGE", "true").lower() == "true"

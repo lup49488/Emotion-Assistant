@@ -105,9 +105,9 @@ def check_docker_configuration(reporter: CheckReporter) -> None:
             "Docker Nginx must overwrite X-Forwarded-For so callers cannot forge the rate-limit address.",
         ),
         (
-            "headers={'Host': host}" in compose_flat,
-            "Docker Compose healthcheck uses a trusted Host header",
-            "Docker Compose healthcheck must send an API_TRUSTED_HOSTS-compatible Host header.",
+            "/health/ready" in compose_flat and "headers={'Host': host}" in compose_flat,
+            "Docker Compose healthcheck uses the trusted ready endpoint",
+            "Docker Compose healthcheck must call /health/ready with an API_TRUSTED_HOSTS-compatible Host header.",
         ),
         (
             "API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}" in compose_file,
@@ -143,6 +143,11 @@ def check_docker_configuration(reporter: CheckReporter) -> None:
             "APP_UID: ${APP_UID:-1000}" in compose_file and "APP_GID: ${APP_GID:-1000}" in compose_file,
             "Docker Compose passes host UID/GID into the API image",
             "Docker Compose must pass APP_UID/APP_GID so bind mounts are writable.",
+        ),
+        (
+            "location = /health/ready" in nginx_config and "location = /health/live" in nginx_config,
+            "Docker Nginx proxies liveness and readiness endpoints",
+            "Docker Nginx must proxy /health/live and /health/ready to the API.",
         ),
     ]
     for passed, ok_message, fail_message in checks:
@@ -273,7 +278,8 @@ def check_local_docker_http(reporter: CheckReporter) -> None:
     host = _first_trusted_host()
     checks = (
         ("http://127.0.0.1:8080/", "HEAD", {200, 304}),
-        ("http://127.0.0.1:8080/health", "GET", {200}),
+        ("http://127.0.0.1:8080/health/live", "GET", {200}),
+        ("http://127.0.0.1:8080/health/ready", "GET", {200}),
         ("http://127.0.0.1:8080/api/v1/status", "GET", {200}),
     )
     for url, method, expected in checks:

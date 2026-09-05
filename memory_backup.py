@@ -7,6 +7,7 @@ from typing import Any
 
 from config import BASE_DIR
 from session_store import validate_user_id
+from file_security import restrict_directory, restrict_file
 
 
 BACKUPS_DIR = BASE_DIR / "exports" / "memory_backups"
@@ -50,9 +51,10 @@ def build_memory_backup_payload(user_id: str, state: Any) -> dict[str, Any]:
 
 def create_memory_backup(user_id: str, state: Any, *, reason: str = "manual") -> Path:
     payload = build_memory_backup_payload(user_id, state)
-    BACKUPS_DIR.mkdir(parents=True, exist_ok=True)
+    restrict_directory(BACKUPS_DIR)
     target = BACKUPS_DIR / _backup_name(user_id, reason)
     target.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    restrict_file(target)
     return target
 
 

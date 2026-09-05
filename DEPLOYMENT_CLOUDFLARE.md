@@ -132,3 +132,29 @@ sudo systemctl status cloudflared
 
 Use a named tunnel for this project. Quick Tunnels (`trycloudflare.com`) are
 not suitable because they do not support the application's SSE chat stream.
+
+## 5. Deployed revision and rollback
+
+`.github/workflows/deploy.yml` checks the working copy out at the exact commit
+CI verified, so `/opt/Emotion-Assistant` sits on a **detached HEAD**. A manual
+`git pull` there does nothing; deploy through the workflow instead. Trigger it
+manually with `workflow_dispatch` and a full 40-character `commit_sha`, or leave
+that input empty to deploy the current `origin/main` tip.
+
+Each deployment records where it came from:
+
+```bash
+cat /opt/Emotion-Assistant/.deployment/current_sha    # what is running now
+cat /opt/Emotion-Assistant/.deployment/previous_sha   # what it replaced
+```
+
+To roll back, re-run the workflow with `commit_sha` set to the recorded
+`previous_sha`, so the rollback goes through the same health checks. Only if the
+workflow itself is unavailable, do it on the host:
+
+```bash
+cd /opt/Emotion-Assistant
+git checkout --detach "$(cat .deployment/previous_sha)"
+docker compose up --build -d
+python3 deployment_check.py --skip-dependencies --docker-runtime --local-docker-http
+```

@@ -37,6 +37,10 @@ class HealthComponent(ContractModel):
     detail: str | None = None
 
 
+class LivenessResponse(ContractModel):
+    status: Literal["ok"] = "ok"
+
+
 class HealthResponse(ContractModel):
     status: Literal["ok", "degraded"]
     storage_backend: Literal["json", "sqlite"]
