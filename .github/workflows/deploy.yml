@@ -125,7 +125,7 @@ jobs:
               docker compose ps
 
               echo "Running deployment health checks..."
-              app_host="$(grep -E '^API_TRUSTED_HOSTS=' .env | head -n 1 | cut -d= -f2- | cut -d, -f1)"
+              app_host="$(grep -E '^API_TRUSTED_HOSTS=' .env | head -n 1 | cut -d= -f2- | cut -d, -f1 | tr -d '\r\n')"
               test -n "$app_host"
               python3 deployment_check.py \
                 --skip-dependencies \
