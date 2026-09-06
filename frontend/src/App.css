@@ -635,19 +635,30 @@ body, #root { background:var(--canvas); color:var(--ink); }
 
 /* Chat V2 fidelity: a quieter, more readable conversation workspace. */
 .chat-header {
+  /* height: auto cancels the 76px fixed height from the base .chat-header rule,
+     which otherwise caps this box and, above ~1500px where the title reaches its
+     30px clamp, clips 4px off the bottom of the status chips. The title and chips
+     ellipsize, so the header still cannot grow past one row. */
+  height: auto;
   min-height: 114px;
   padding: 24px 42px 18px;
   align-items: flex-start;
+  overflow: hidden;
 }
-.chat-title-block { min-width: 0; }
+.chat-title-block { min-width: 0; flex: 1; }
 .chat-header h1 {
   font-size: clamp(24px, 2vw, 30px);
   line-height: 1.2;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-summary-row {
   display: flex;
-  flex-wrap: wrap;
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: nowrap;
   gap: 8px;
   margin-top: 10px;
 }
@@ -666,6 +677,7 @@ body, #root { background:var(--canvas); color:var(--ink); }
   line-height: 1;
   white-space: nowrap;
 }
+.tone-summary, .model-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .conversation-summary:hover,
 .conversation-summary.active {
   border-color: var(--accent);
@@ -1081,4 +1093,11 @@ body, #root { background:var(--canvas); color:var(--ink); }
   .mobile-more-sheet > button:focus-visible { background: var(--accent-wash); color: var(--accent-deep); }
   .mobile-more-sheet > button > svg:first-child { color: var(--accent-deep); }
   .mobile-more-sheet > button > svg:last-child { justify-self: end; transform: rotate(180deg); color: var(--muted); }
+}
+
+@media (max-width: 560px) {
+  .knowledge-page .knowledge-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .knowledge-page .knowledge-stat-grid .stat { min-width: 0; padding: 14px 12px; }
+  .knowledge-page .knowledge-stat-grid .stat span { font-size: 11px; overflow-wrap: anywhere; }
+  .knowledge-page .knowledge-stat-grid .small-stat { font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
 }

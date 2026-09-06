@@ -221,6 +221,17 @@ test('chat header controls set a gentle tone and open the model reply window', a
   await expect(settings.getByText('Reply profile')).toBeVisible()
 })
 
+test('a wide chat header shows its title and status chips without clipping them', async ({ page }) => {
+  // The header hides its overflow, so a fixed height silently cut the bottom of
+  // the status chips once the title reached its 30px clamp above ~1500px.
+  await page.setViewportSize({ width: 1600, height: 900 })
+  await signIn(page)
+
+  const header = page.locator('.chat-header')
+  const overflow = await header.evaluate((node) => node.scrollHeight - node.clientHeight)
+  expect(overflow).toBeLessThanOrEqual(0)
+})
+
 test('feature workspace uses the V2 topbar without the chat conversation sidebar', async ({ page }) => {
   await page.setViewportSize({ width: 1366, height: 768 })
   await signIn(page)

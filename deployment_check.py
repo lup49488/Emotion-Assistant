@@ -425,7 +425,10 @@ def smoke_check_api(reporter: CheckReporter, timeout_seconds: int = 45) -> None:
         stderr=subprocess.STDOUT,
         text=True,
     )
-    endpoint = f"http://127.0.0.1:{port}/health"
+    # /health is deprecated and always answers 200. The readiness endpoint fails
+    # the check by returning 503 while a required dependency is unavailable,
+    # without failing over an optional model preload that never had to succeed.
+    endpoint = f"http://127.0.0.1:{port}/health/ready"
     deadline = time.monotonic() + timeout_seconds
     try:
         while time.monotonic() < deadline:
@@ -437,7 +440,9 @@ def smoke_check_api(reporter: CheckReporter, timeout_seconds: int = 45) -> None:
                 with urllib.request.urlopen(endpoint, timeout=2) as response:
                     if response.status == 200:
                         payload = json.loads(response.read().decode("utf-8"))
-                        if payload.get("status") == "ok" and "components" in payload and "metrics" in payload:
+                        # The 200 already means "ready"; the payload status may
+                        # still read degraded for an optional component.
+                        if "components" in payload and "metrics" in payload:
                             reporter.ok("API smoke check returned a healthy structured status report")
                             return
                         reporter.fail("API smoke check returned an invalid health payload.")

@@ -6,12 +6,16 @@ import threading
 import pytest
 
 import mood_image_store
+import session_store
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"payload"
 
 
 @pytest.fixture
 def store(monkeypatch, tmp_path):
+    # Image writes also use session_store's per-user lock. Point both storage
+    # paths at pytest's temporary directory so tests never touch users/alice.
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
     monkeypatch.setattr(mood_image_store, "user_dir", lambda user_id: tmp_path)
     monkeypatch.setattr(mood_image_store, "validate_user_id", lambda user_id: user_id)
     return mood_image_store
@@ -25,7 +29,10 @@ def test_parallel_uploads_cannot_exceed_the_per_checkin_cap(store):
     rejected = []
 
     def upload():
-        gate.wait(timeout=5)
+        # Generous timeouts: a machine busy with other test jobs can stall these
+        # threads, and a broken barrier or an unjoined worker would silently skew
+        # the counts below into a flaky failure instead of a clear one.
+        gate.wait(timeout=30)
         try:
             store.save_mood_image("alice", "2026-07-18", PNG)
         except ValueError:
@@ -35,8 +42,9 @@ def test_parallel_uploads_cannot_exceed_the_per_checkin_cap(store):
     for worker in workers:
         worker.start()
     for worker in workers:
-        worker.join(timeout=10)
+        worker.join(timeout=30)
 
+    assert not [worker for worker in workers if worker.is_alive()], "an upload thread never finished"
     assert len(store.list_mood_images("alice", "2026-07-18")) == store.MAX_IMAGES_PER_CHECKIN
     assert len(rejected) == attempts - store.MAX_IMAGES_PER_CHECKIN
 

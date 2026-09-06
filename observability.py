@@ -56,10 +56,23 @@ def chat_finished(
             _metrics["chat_rag_refused_total"] += 1
 
 
+def chat_streaming_first_token(duration_ms: int) -> None:
+    """Record time to the first token for this process.
+
+    Only the streaming endpoint has a first token to observe, so the exported
+    names say "streaming": averaging them against every chat request would
+    understate the value.
+    """
+    with _lock:
+        _metrics["chat_streaming_first_token_total"] += 1
+        _metrics["chat_streaming_first_token_ms_total"] += max(0, duration_ms)
+
+
 def runtime_metrics() -> dict[str, Any]:
     with _lock:
         request_count = _metrics["http_requests_total"]
         chat_count = _metrics["chat_requests_total"]
+        first_token_count = _metrics["chat_streaming_first_token_total"]
         return {
             "uptime_seconds": int(time.monotonic() - _started_at),
             "active_requests": _active_requests,
@@ -70,4 +83,6 @@ def runtime_metrics() -> dict[str, Any]:
             "chat_failures_total": _metrics["chat_failure_total"],
             "chat_rag_refused_total": _metrics["chat_rag_refused_total"],
             "chat_average_duration_ms": round(_metrics["chat_duration_ms_total"] / chat_count, 1) if chat_count else 0.0,
+            "chat_streaming_first_token_count": first_token_count,
+            "chat_streaming_average_first_token_ms": round(_metrics["chat_streaming_first_token_ms_total"] / first_token_count, 1) if first_token_count else 0.0,
         }

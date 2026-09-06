@@ -27,4 +27,9 @@ def test_json_observability_events_are_persisted_summarized_and_retained(tmp_pat
     assert summary["failures"] == 1
     assert summary["failure_rate"] == 33.3
     assert summary["top_paths"][0] == {"path": "/api/v1/chat", "requests": 2}
+    assert summary["traffic"]["model"] == {
+        "requests": 2, "failures": 1, "failure_rate": 50.0,
+        "average_duration_ms": 180.0, "p50_duration_ms": 120.0, "p95_duration_ms": 240.0,
+    }
+    assert summary["traffic"]["probe"]["requests"] == 1
     assert all(item["path"] != "/old" for item in observability_store._read_json_events())

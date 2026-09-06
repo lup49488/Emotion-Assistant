@@ -50,7 +50,7 @@
     "/health/ready": {
       "get": {
         "summary": "Health Ready",
-        "description": "Report whether this instance can safely receive proxied application traffic.",
+        "description": "Report whether this instance can safely receive proxied application traffic.\n\nAn optional component that failed to warm up leaves the overall status\ndegraded but keeps this instance serving, so Docker does not restart a\nusable chat service over a preload that never had to succeed.",
         "operationId": "health_ready_health_ready_get",
         "responses": {
           "200": {
@@ -4767,6 +4767,11 @@
               }
             ],
             "title": "Detail"
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -5340,6 +5345,23 @@
             },
             "type": "object",
             "title": "Statuses"
+          },
+          "traffic": {
+            "additionalProperties": {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "type": "integer"
+                  },
+                  {
+                    "type": "number"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            "type": "object",
+            "title": "Traffic"
           }
         },
         "additionalProperties": false,
@@ -5370,6 +5392,11 @@
             "additionalProperties": true,
             "type": "object",
             "title": "Http"
+          },
+          "runtime": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Runtime"
           },
           "provider_failures": {
             "items": {

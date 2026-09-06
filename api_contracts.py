@@ -35,6 +35,7 @@ class ContractInfoResponse(ContractModel):
 class HealthComponent(ContractModel):
     status: Literal["ok", "degraded", "pending", "disabled"]
     detail: str | None = None
+    required: bool = False
 
 
 class LivenessResponse(ContractModel):
@@ -75,12 +76,16 @@ class ObservabilitySummaryResponse(ContractModel):
     average_duration_ms: float
     top_paths: list[dict[str, Any]]
     statuses: dict[str, int]
+    traffic: dict[str, dict[str, int | float]] = Field(default_factory=dict)
 
 
 class OperationsDashboardResponse(ContractModel):
     window_days: int
     generated_at: str
     http: dict[str, Any]
+    # In-memory counters for the process serving this request, not the selected
+    # window: they reset on restart and are per-worker.
+    runtime: dict[str, Any] = Field(default_factory=dict)
     provider_failures: list[dict[str, Any]]
     jobs: dict[str, Any]
     alerts: list[dict[str, Any]]

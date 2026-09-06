@@ -9,6 +9,7 @@ from config import (
     OPS_ALERT_AVERAGE_LATENCY_MS, OPS_ALERT_HTTP_FAILURE_RATE,
     OPS_ALERT_JOB_FAILURES, OPS_ALERT_MIN_REQUESTS, OPS_ALERT_PROVIDER_FAILURES,
 )
+from observability import runtime_metrics
 from observability_store import observability_summary
 from sqlite_store import connection, sqlite_enabled
 
@@ -97,4 +98,10 @@ def operations_dashboard(*, days: int = 7) -> dict[str, Any]:
     provider_failures = _provider_failures(days)
     jobs = _job_summary(days)
     alerts = _persist_alerts(_rules(http, provider_failures, jobs))
-    return {"window_days": days, "generated_at": _now(), "http": http, "provider_failures": provider_failures, "jobs": jobs, "alerts": alerts}
+    return {
+        "window_days": days, "generated_at": _now(), "http": http,
+        # Process-local counters since this worker started, unlike every other
+        # block here, which is persisted and scoped to `days`.
+        "runtime": runtime_metrics(), "provider_failures": provider_failures,
+        "jobs": jobs, "alerts": alerts,
+    }

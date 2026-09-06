@@ -120,7 +120,7 @@ from memory_store import (
 )
 from memory_preference_store import get_memory_save_mode, set_memory_save_mode
 from model_warmup import start_api_background_warmup, warmup_status
-from observability import chat_finished, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
+from observability import chat_finished, chat_streaming_first_token, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
 from observability_store import observability_summary, record_http_event
 from operations_store import operations_dashboard
 from provider_registry import provider_catalog
@@ -486,12 +486,20 @@ def _health_payload() -> dict[str, Any]:
     preload = warmup_status()
     warmup_state = "degraded" if "degraded" in preload.values() else "disabled" if preload and set(preload.values()) == {"disabled"} else "pending" if any(value in {"pending", "running"} for value in preload.values()) else "ok"
     components = {
-        "storage": storage,
-        "warmup": {"status": warmup_state},
+        # User data is a required dependency: accepting traffic while it is
+        # unavailable could turn a transient storage problem into data loss.
+        "storage": {**storage, "required": True},
+        # These models are intentionally optional on small deployments. Their
+        # state remains observable without causing Docker to restart a usable
+        # chat service when a preload fails.
+        "warmup": {"status": warmup_state, "required": False},
         # Keep public liveness coarse; detailed corpus paths and document names
         # belong behind authenticated operator endpoints.
-        "rag": {"status": "ok"},
+        "rag": {"status": "ok", "required": False},
     }
+    # "status" stays an overall health signal so monitoring still sees a degraded
+    # optional component. Readiness is a separate question answered by
+    # _required_components_ok, which only weighs dependencies traffic needs.
     overall = "degraded" if any(component["status"] == "degraded" for component in components.values()) else "ok"
     return {
         "status": overall,
@@ -513,11 +521,24 @@ def health_live() -> dict[str, str]:
     return {"status": "ok"}
 
 
+def _required_components_ok(payload: dict[str, Any]) -> bool:
+    """Report whether every dependency that traffic actually needs is healthy."""
+    return all(
+        not component.get("required") or component.get("status") != "degraded"
+        for component in payload["components"].values()
+    )
+
+
 @app.get("/health/ready", response_model=HealthResponse)
 def health_ready() -> dict[str, Any] | JSONResponse:
-    """Report whether this instance can safely receive proxied application traffic."""
+    """Report whether this instance can safely receive proxied application traffic.
+
+    An optional component that failed to warm up leaves the overall status
+    degraded but keeps this instance serving, so Docker does not restart a
+    usable chat service over a preload that never had to succeed.
+    """
     payload = _health_payload()
-    if payload["status"] != "ok":
+    if not _required_components_ok(payload):
         return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
     return payload
 
@@ -903,7 +924,11 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             # 避免 use_knowledge=True 但检索为空时在 chatbot 内部重复检索。
             reply_basis: list[dict[str, str | bool]] = []
             generator = _chat_chunks(user_id, request, bundle["context"], quoted_message, reply_basis) if quoted_message else _chat_chunks(user_id, request, bundle["context"], reply_basis_sink=reply_basis)
+            first_token_recorded = False
             async for chunk in iterate_in_threadpool(generator):
+                if not first_token_recorded:
+                    chat_streaming_first_token(int((time.perf_counter() - started) * 1000))
+                    first_token_recorded = True
                 yield f"event: chunk\ndata: {json.dumps({'text': chunk}, ensure_ascii=False)}\n\n"
             archived = await run_in_threadpool(last_exchange_message_ids, user_id, request.conversation_id, request.message)
             if archived:

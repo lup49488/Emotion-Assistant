@@ -15,6 +15,7 @@ from sqlite_store import connection, sqlite_enabled
 _JSON_PATH = BASE_DIR / "data" / "observability_events.json"
 _LOCK = threading.RLock()
 _MAX_JSON_EVENTS = 10_000
+_HEALTH_PATHS = {"/health", "/health/live", "/health/ready", "/api/v1/status"}
 
 
 def _now() -> datetime:
@@ -80,12 +81,55 @@ def _events_since(days: int) -> list[dict[str, Any]]:
         return [item for item in _read_json_events() if _parse_time(item.get("created_at")) >= cutoff]
 
 
+def _traffic_kind(path: str) -> str:
+    if path in _HEALTH_PATHS:
+        return "probe"
+    if path in {"/api/v1/chat", "/api/v1/chat/stream"}:
+        return "model"
+    return "api" if path.startswith("/api/") else "other"
+
+
+def _percentile(values: list[int], percentile: int) -> float:
+    """Nearest-rank percentile: the smallest value at or above the given rank.
+
+    ``(n * p + 99) // 100`` is the ceiling of ``n * p / 100``, and the ``- 1``
+    turns that 1-based rank into a list index. No interpolation, so the result
+    is always an observed duration.
+    """
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    index = max(0, min(len(ordered) - 1, (len(ordered) * percentile + 99) // 100 - 1))
+    return float(ordered[index])
+
+
+def _traffic_summary(events: list[dict[str, Any]]) -> dict[str, dict[str, int | float]]:
+    grouped: dict[str, list[dict[str, Any]]] = {kind: [] for kind in ("probe", "api", "model", "other")}
+    for event in events:
+        grouped[_traffic_kind(str(event.get("path", "")))].append(event)
+    summary: dict[str, dict[str, int | float]] = {}
+    for kind, items in grouped.items():
+        durations = [max(0, int(item.get("duration_ms", 0))) for item in items]
+        failures = sum(int(item.get("status_code", 0)) >= 500 for item in items)
+        total = len(items)
+        summary[kind] = {
+            "requests": total,
+            "failures": failures,
+            "failure_rate": round(failures / total * 100, 1) if total else 0.0,
+            "average_duration_ms": round(sum(durations) / total, 1) if total else 0.0,
+            "p50_duration_ms": _percentile(durations, 50),
+            "p95_duration_ms": _percentile(durations, 95),
+        }
+    return summary
+
+
 def observability_summary(*, days: int = 7) -> dict[str, Any]:
     events = _events_since(days)
     total = len(events)
     failures = [item for item in events if int(item.get("status_code", 0)) >= 500]
     paths = Counter(str(item.get("path", "")) for item in events)
     statuses = Counter(str(item.get("status_code", "")) for item in events)
+    traffic = _traffic_summary(events)
     return {
         "days": max(1, int(days)), "retention_days": OBSERVABILITY_RETENTION_DAYS,
         "requests": total, "failures": len(failures),
@@ -93,4 +137,5 @@ def observability_summary(*, days: int = 7) -> dict[str, Any]:
         "average_duration_ms": round(sum(int(item.get("duration_ms", 0)) for item in events) / total, 1) if total else 0.0,
         "top_paths": [{"path": path, "requests": count} for path, count in paths.most_common(10)],
         "statuses": dict(statuses),
+        "traffic": traffic,
     }

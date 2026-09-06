@@ -20,6 +20,8 @@ import style_store
 from service_errors import ServiceError
 import model_warmup
 import memory_store
+import observability
+import operations_store
 import session_store
 from auth_store import change_access_key
 from conversation_store import append_exchange
@@ -90,9 +92,9 @@ def test_health_endpoints_separate_liveness_from_readiness(monkeypatch):
         "status": "degraded",
         "storage_backend": "sqlite",
         "components": {
-            "storage": {"status": "degraded", "detail": "OperationalError"},
-            "warmup": {"status": "ok", "detail": None},
-            "rag": {"status": "ok", "detail": None},
+            "storage": {"status": "degraded", "detail": "OperationalError", "required": True},
+            "warmup": {"status": "ok", "detail": None, "required": False},
+            "rag": {"status": "ok", "detail": None, "required": False},
         },
         "metrics": {},
     }
@@ -106,6 +108,93 @@ def test_health_endpoints_separate_liveness_from_readiness(monkeypatch):
     assert live.json() == {"status": "ok"}
     assert ready.status_code == 503
     assert ready.json() == degraded
+
+
+def test_readiness_fails_for_a_real_storage_failure_but_liveness_survives(monkeypatch):
+    def unavailable_connection():
+        raise OSError("database unavailable")
+
+    monkeypatch.setattr(api_server, "storage_backend", lambda: "sqlite")
+    monkeypatch.setattr(api_server, "connection", unavailable_connection)
+    monkeypatch.setattr(api_server, "warmup_status", lambda: {"embedding": "disabled"})
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        live = client.get("/health/live")
+        ready = client.get("/health/ready")
+
+    assert live.status_code == 200
+    assert ready.status_code == 503
+    assert ready.json()["components"]["storage"] == {
+        "status": "degraded", "detail": "OSError", "required": True,
+    }
+
+
+def test_optional_model_warmup_failure_does_not_make_service_unready(monkeypatch):
+    monkeypatch.setattr(api_server, "warmup_status", lambda: {"embedding": "degraded"})
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        response = client.get("/health/ready")
+
+    assert response.status_code == 200
+    assert response.json()["components"]["warmup"] == {
+        "status": "degraded", "detail": None, "required": False,
+    }
+    # Readiness and health are separate answers: this instance keeps serving,
+    # but monitoring must still see that something is degraded.
+    assert response.json()["status"] == "degraded"
+
+
+def test_real_fastapi_sqlite_mood_and_model_response_roundtrip(monkeypatch, tmp_path):
+    """Exercise the routed API, SQLite persistence, and model-output path together."""
+    monkeypatch.setenv("STORAGE_BACKEND", "sqlite")
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "data" / "integration.db"))
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda *_args, **_kwargs: iter(["Integration reply."]))
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path, user_id="integration", access_key="integration-secret")
+        mood = client.post("/api/v1/mood/checkins", headers=headers, json={
+            "mood": "steady", "intensity": 3, "note": "SQLite integration", "checkin_date": "2026-09-05",
+        })
+        reply = client.post("/api/v1/chat", headers=headers, json={"message": "Give a short reply."})
+        restored = client.get("/api/v1/mood/checkins")
+
+    assert mood.status_code == 200
+    assert reply.status_code == 200
+    assert reply.json()["reply"] == "Integration reply."
+    assert restored.json()["records"][0]["note"] == "SQLite integration"
+
+
+def test_operations_dashboard_serializes_the_real_store_payload(monkeypatch, tmp_path):
+    # The access-control test above stubs operations_dashboard, so nothing else
+    # checks that what the store actually returns fits the response model. A key
+    # the model does not declare is rejected by extra="forbid" as a 500.
+    monkeypatch.setattr(api_server, "API_OPERATIONS_USER_IDS", "api-alice")
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        _login(client, monkeypatch, tmp_path)
+        response = client.get("/api/v1/operations/dashboard?days=7")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert set(operations_store.operations_dashboard(days=7)) <= set(body)
+    assert "uptime_seconds" in body["runtime"]
+
+
+def test_streaming_chat_records_time_to_first_token(monkeypatch, tmp_path):
+    # Only the streaming endpoint has a first token, which is why the metric
+    # names say "streaming"; the synchronous endpoint must not move them.
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda *_args, **_kwargs: iter(["first ", "second"]))
+    before = observability.runtime_metrics()["chat_streaming_first_token_count"]
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "hi"}, headers=headers) as streamed:
+            "".join(streamed.iter_text())
+        after_stream = observability.runtime_metrics()["chat_streaming_first_token_count"]
+        client.post("/api/v1/chat", json={"message": "hi"}, headers=headers)
+
+    assert after_stream == before + 1
+    assert observability.runtime_metrics()["chat_streaming_first_token_count"] == after_stream
 
 
 def test_login_blocks_a_foreign_origin_but_allows_the_requests_own_origin(monkeypatch, tmp_path):
