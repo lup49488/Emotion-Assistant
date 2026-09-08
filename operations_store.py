@@ -50,10 +50,11 @@ def _job_summary(days: int) -> dict[str, Any]:
 
 def _rules(http: dict[str, Any], provider_failures: list[dict[str, Any]], jobs: dict[str, Any]) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
-    if http["requests"] >= OPS_ALERT_MIN_REQUESTS and http["failure_rate"] >= OPS_ALERT_HTTP_FAILURE_RATE:
-        candidates.append({"fingerprint": "http_failure_rate", "severity": "critical", "message": f"HTTP 5xx failure rate is {http['failure_rate']}%.", "metadata": {"failure_rate": http["failure_rate"], "requests": http["requests"]}})
-    if http["requests"] >= OPS_ALERT_MIN_REQUESTS and http["average_duration_ms"] >= OPS_ALERT_AVERAGE_LATENCY_MS:
-        candidates.append({"fingerprint": "http_latency", "severity": "warning", "message": f"Average HTTP latency is {http['average_duration_ms']} ms.", "metadata": {"average_duration_ms": http["average_duration_ms"]}})
+    business = http.get("traffic", {}).get("business", http)
+    if business["requests"] >= OPS_ALERT_MIN_REQUESTS and business["failure_rate"] >= OPS_ALERT_HTTP_FAILURE_RATE:
+        candidates.append({"fingerprint": "http_failure_rate", "severity": "critical", "message": f"Business HTTP 5xx failure rate is {business['failure_rate']}%.", "metadata": {"failure_rate": business["failure_rate"], "requests": business["requests"], "traffic_scope": "business"}})
+    if business["requests"] >= OPS_ALERT_MIN_REQUESTS and business["average_duration_ms"] >= OPS_ALERT_AVERAGE_LATENCY_MS:
+        candidates.append({"fingerprint": "http_latency", "severity": "warning", "message": f"Average business HTTP latency is {business['average_duration_ms']} ms.", "metadata": {"average_duration_ms": business["average_duration_ms"], "traffic_scope": "business"}})
     provider_total = sum(int(item["failures"]) for item in provider_failures)
     if provider_total >= OPS_ALERT_PROVIDER_FAILURES:
         candidates.append({"fingerprint": "provider_failures", "severity": "critical", "message": f"Provider failures reached {provider_total} in the selected window.", "metadata": {"failures": provider_total}})

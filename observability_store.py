@@ -108,11 +108,11 @@ def _traffic_summary(events: list[dict[str, Any]]) -> dict[str, dict[str, int | 
     for event in events:
         grouped[_traffic_kind(str(event.get("path", "")))].append(event)
     summary: dict[str, dict[str, int | float]] = {}
-    for kind, items in grouped.items():
+    def summarize(items: list[dict[str, Any]]) -> dict[str, int | float]:
         durations = [max(0, int(item.get("duration_ms", 0))) for item in items]
         failures = sum(int(item.get("status_code", 0)) >= 500 for item in items)
         total = len(items)
-        summary[kind] = {
+        return {
             "requests": total,
             "failures": failures,
             "failure_rate": round(failures / total * 100, 1) if total else 0.0,
@@ -120,6 +120,11 @@ def _traffic_summary(events: list[dict[str, Any]]) -> dict[str, dict[str, int | 
             "p50_duration_ms": _percentile(durations, 50),
             "p95_duration_ms": _percentile(durations, 95),
         }
+    for kind, items in grouped.items():
+        summary[kind] = summarize(items)
+    # Business traffic is the routed API and model work. Health probes remain
+    # visible separately, but must not dilute user-facing reliability signals.
+    summary["business"] = summarize(grouped["api"] + grouped["model"])
     return summary
 
 

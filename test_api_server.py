@@ -197,6 +197,77 @@ def test_streaming_chat_records_time_to_first_token(monkeypatch, tmp_path):
     assert observability.runtime_metrics()["chat_streaming_first_token_count"] == after_stream
 
 
+def test_streaming_disconnect_closes_the_chat_generator(monkeypatch):
+    """A disconnected SSE client must release chatbot's per-user session lock."""
+    closed = []
+
+    def chunks(*_args, **_kwargs):
+        try:
+            yield "first"
+            yield "unreachable"
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(api_server, "_chat_chunks", chunks)
+
+    async def disconnect_after_first_chunk():
+        response = await api_server.chat_stream(api_server.ChatRequest(message="hi"), "stream-user")
+        stream = response.body_iterator
+        assert "first" in await anext(stream)
+        await stream.aclose()
+
+    import asyncio
+    asyncio.run(disconnect_after_first_chunk())
+
+    assert closed == [True]
+
+
+@pytest.mark.parametrize("spec_version", ["2.3", "2.4"])
+def test_stream_disconnect_during_send_releases_lock(monkeypatch, spec_version):
+    import anyio
+    import threading
+    from starlette.requests import ClientDisconnect
+
+    lock = threading.Lock()
+    closed = []
+
+    def chunks(*args, **kwargs):
+        with lock:
+            try:
+                yield "first"
+                yield "second"
+            finally:
+                closed.append(True)
+
+    monkeypatch.setattr(api_server, "_chat_chunks", chunks)
+
+    async def run():
+        disconnected = anyio.Event()
+        response = await api_server.chat_stream(api_server.ChatRequest(message="hi"), "stream-user")
+
+        async def send(message):
+            if message["type"] == "http.response.body" and message.get("body"):
+                if spec_version == "2.4":
+                    raise OSError("client disconnected")
+                disconnected.set()
+                await anyio.sleep_forever()
+
+        async def receive():
+            await disconnected.wait()
+            return {"type": "http.disconnect"}
+
+        with anyio.fail_after(3):
+            try:
+                await response({"type": "http", "asgi": {"spec_version": spec_version}}, receive, send)
+            except ClientDisconnect:
+                assert spec_version == "2.4"
+        assert closed == [True]
+        assert lock.acquire(blocking=False)
+        lock.release()
+
+    anyio.run(run)
+
+
 def test_login_blocks_a_foreign_origin_but_allows_the_requests_own_origin(monkeypatch, tmp_path):
     # A same-origin deployment serves the frontend beside the API and never sets
     # API_CORS_ORIGINS, so its own Host must be accepted or every login fails.

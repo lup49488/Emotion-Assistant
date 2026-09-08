@@ -157,6 +157,8 @@ test('knowledge workspace presents searchable source material', async ({ page })
   await page.getByRole('button', { name: 'Knowledge & RAG' }).click()
   await expect(page.getByRole('heading', { name: 'Knowledge & RAG' })).toBeVisible()
   await expect(page.getByText('486', { exact: true })).toBeVisible()
+  await expect(page.getByText('Good', { exact: true })).toBeVisible()
+  await expect(page.getByText('Passed', { exact: true })).toBeVisible()
 
   await page.getByPlaceholder('Ask a question to test retrieval').fill('What can help with sleep?')
   await page.getByRole('button', { name: 'Retrieval check' }).click()
@@ -390,6 +392,21 @@ test.describe('mood check-in dates in a far-from-UTC timezone', () => {
     await expect(page.locator('.record-row').filter({ hasText: `${localDate} · 3/5` })).toContainText('relieved')
     await expect(page.locator('.record-row').filter({ hasText: `${utcDate} · 3/5` })).toHaveCount(0)
   })
+})
+
+test('mood trend windows include calendar boundaries and exclude future dates', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-09-07T12:00:00Z'))
+  await page.route('**/api/v1/mood/checkins', route => route.fulfill({ json: {
+    records: ['2026-08-08', '2026-08-09', '2026-08-31', '2026-09-01', '2026-09-07', '2026-09-08'].map(date => ({ date, mood: 'calm', intensity: 3, note: '', images: [] })),
+  } }))
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  const count = page.locator('.mood-summary-strip > div').nth(1).locator('strong')
+  await expect(count).toHaveText('4')
+  await page.locator('.mood-period-tabs button').nth(1).click()
+  await expect(count).toHaveText('2')
+  await page.locator('.mood-period-tabs button').nth(2).click()
+  await expect(count).toHaveText('6')
 })
 
 test('tablet Mood Check-in keeps form controls within their panel', async ({ page }) => {

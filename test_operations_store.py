@@ -10,8 +10,10 @@ def test_operations_dashboard_generates_threshold_alerts(monkeypatch):
     monkeypatch.setattr(operations_store, "OPS_ALERT_PROVIDER_FAILURES", 3)
     monkeypatch.setattr(operations_store, "OPS_ALERT_JOB_FAILURES", 1)
     monkeypatch.setattr(operations_store, "observability_summary", lambda *, days: {
-        "days": days, "requests": 20, "failures": 4, "failure_rate": 20.0,
-        "average_duration_ms": 1400.0, "top_paths": [], "statuses": {"500": 4}, "traffic": {},
+        "days": days, "requests": 200, "failures": 4, "failure_rate": 2.0,
+        "average_duration_ms": 50.0, "top_paths": [], "statuses": {"500": 4}, "traffic": {
+            "business": {"requests": 20, "failures": 4, "failure_rate": 20.0, "average_duration_ms": 1400.0},
+        },
     })
     monkeypatch.setattr(operations_store, "_provider_failures", lambda days: [{"provider": "deepseek", "error_kind": "network", "failures": 3}])
     monkeypatch.setattr(operations_store, "_job_summary", lambda days: {"counts": {"failed": 2}, "recent_failures": []})

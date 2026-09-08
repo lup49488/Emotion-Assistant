@@ -1,1 +1,7 @@
 [0904/173715.204:ERROR:net\base\network_change_notifier_win.cc:213] WSALookupServiceBegin failed with: 10108
+[0906/230158.883:ERROR:net\base\network_change_notifier_win.cc:213] WSALookupServiceBegin failed with: 10108
+[0906/230252.511:ERROR:net\base\network_change_notifier_win.cc:213] WSALookupServiceBegin failed with: 10108
+[0906/230306.691:ERROR:net\base\network_change_notifier_win.cc:213] WSALookupServiceBegin failed with: 10108
+[0906/230332.946:ERROR:net\base\network_change_notifier_win.cc:213] WSALookupServiceBegin failed with: 10108
+[0906/230421.308:ERROR:net\base\network_change_notifier_win.cc:213] WSALookupServiceBegin failed with: 10108
+[0907/152058.727:ERROR:net\base\network_change_notifier_win.cc:213] WSALookupServiceBegin failed with: 10108

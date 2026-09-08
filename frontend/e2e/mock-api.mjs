@@ -100,10 +100,10 @@ const server = http.createServer(async (request, response) => {
     ? send(response, 200, { user_id: 'e2e-user', authentication: 'signed_cookie', can_access_operations: false, can_manage_knowledge: false })
     : send(response, 401, { detail: 'Signed session cookie is required.' })
   if (request.method === 'GET' && url.pathname === '/api/v1/rag/status') return send(response, 200, {
-    status: 'ready', documents: [], release: { enabled: true, state: 'passing' },
+    status: 'ready', documents: [], release: { enabled: true, state: 'passed' },
   })
   if (request.method === 'GET' && url.pathname === '/api/v1/rag/quality') return send(response, 200, {
-    level: 'ready', documents: 12, chunks: 486, average_chunk_chars: 534, issues: [],
+    level: 'good', documents: 12, chunks: 486, average_chunk_chars: 534, issues: [],
   })
   if (request.method === 'POST' && url.pathname === '/api/v1/rag/search') return send(response, 200, {
     query: body.query, results: [{ source: 'sleep_hygiene_cn.md', chunk_index: 11, score: 0.71, text: '固定起床时间和固定入睡时间，能帮助形成更稳定的睡眠节律。' }],

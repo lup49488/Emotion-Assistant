@@ -152,6 +152,22 @@ function localCalendarDate(value = new Date()) {
   return local.toISOString().slice(0, 10)
 }
 
+function filterMoodTrendRecords(records, trendDays, now = new Date()) {
+  const ordered = [...records].sort((left, right) => left.date.localeCompare(right.date))
+  if (trendDays === 'all') return ordered
+  const cutoff = new Date(now)
+  cutoff.setHours(0, 0, 0, 0)
+  cutoff.setDate(cutoff.getDate() - (Number(trendDays) - 1))
+  const cutoffDate = localCalendarDate(cutoff)
+  const today = localCalendarDate(now)
+  return ordered.filter((record) => record.date >= cutoffDate && record.date <= today)
+}
+
+function localizedKnowledgeStatus(value, t) {
+  const keys = { not_ready: 'knowledgeNotReady', needs_attention: 'knowledgeNeedsAttention', good: 'knowledgeGood', not_configured: 'releaseNotConfigured', awaiting_evaluation: 'releaseAwaitingEvaluation', passed: 'releasePassed', rejected: 'releaseRejected' }
+  return keys[value] ? t(keys[value]) : value || t('unknown')
+}
+
 function MoodCheckinContent({ t, onReflect, locale }) {
   const [records, setRecords] = useState([])
   const [weekly, setWeekly] = useState(null)
@@ -224,8 +240,7 @@ function MoodCheckinContent({ t, onReflect, locale }) {
   const cancelEdit = () => { setSavedRecord(null); clearSelectedImages(); setForm(emptyForm) }
   const remove = async (date) => { if (!window.confirm(`Delete the Mood Check-in for ${date}?`)) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) cancelEdit(); await refresh() } catch (requestError) { setError(requestError.message) } }
   const removeImage = async (record, image) => { try { await apiFetch(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images/${encodeURIComponent(image.id)}`, { method: 'DELETE', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } }
-  const orderedRecords = [...records].sort((left, right) => left.date.localeCompare(right.date))
-  const chartPoints = trendDays === 'all' ? orderedRecords : orderedRecords.slice(-trendDays)
+  const chartPoints = filterMoodTrendRecords(records, trendDays)
   const averageIntensity = chartPoints.length ? (chartPoints.reduce((total, record) => total + Number(record.intensity || 0), 0) / chartPoints.length).toFixed(1) : '—'
   const moodCounts = chartPoints.reduce((counts, record) => ({ ...counts, [record.mood]: (counts[record.mood] || 0) + 1 }), {})
   const commonMood = Object.entries(moodCounts).sort((left, right) => right[1] - left[1])[0]?.[0] || '—'
@@ -266,7 +281,7 @@ export function KnowledgePage({ t, canManageKnowledge = false }) {
   const rebuild = async () => { await submitJob('/api/v1/rag/rebuild', { method: 'POST', headers: csrfHeaders() }) }
   const removeDocument = async (name) => { if (!window.confirm(`Delete ${name} and rebuild the knowledge index?`)) return; await submitJob(`/api/v1/rag/documents/${encodeURIComponent(name)}`, { method: 'DELETE', headers: csrfHeaders() }) }
   const hasActiveJob = jobs.some((job) => job.status === 'queued' || job.status === 'running')
-  const summary = [[t('indexStatus'), quality?.level || t('unknown')], [t('documents'), quality?.documents ?? 0], [t('chunks'), quality?.chunks ?? 0], [t('releaseGate'), status?.release?.enabled ? status.release.state : t('notEnabled')]]
+  const summary = [[t('indexStatus'), localizedKnowledgeStatus(quality?.level, t)], [t('documents'), quality?.documents ?? 0], [t('chunks'), quality?.chunks ?? 0], [t('releaseGate'), status?.release?.enabled ? localizedKnowledgeStatus(status.release.state, t) : t('notEnabled')]]
   const matches = results?.results || []
   return <section className="feature-page v2-feature-page knowledge-page"><header className="feature-header"><div><span className="knowledge-kicker">KNOWLEDGE &amp; RAG</span><h1>{t('knowledgeTitle')}</h1><p>{t('knowledgeWorkspaceDescription')}</p></div><button className="secondary-button" onClick={() => refresh()}><RefreshCw size={16} />{t('refresh')}</button></header><ErrorText error={error} />{message && <p className="success-text">{message}</p>}<Loading loading={loading} t={t} />
     <div className="stat-grid knowledge-stat-grid">{summary.map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong className="small-stat">{value}</strong></div>)}</div>
@@ -298,11 +313,12 @@ export function OperationsPage({ t }) {
     return () => window.clearInterval(timer)
   }, [refresh])
   const activeAlerts = dashboard?.alerts?.filter((alert) => alert.status === 'active') || []
+  const businessTraffic = dashboard?.http?.traffic?.business || dashboard?.http
   const stats = dashboard ? [
     [t('selectedWindow'), `${dashboard.window_days}d`],
-    [t('requests'), dashboard.http.requests || 0],
-    [t('failureRate'), `${Number(dashboard.http.failure_rate || 0).toFixed(1)}%`],
-    [t('averageLatency'), `${Math.round(dashboard.http.average_duration_ms || 0)} ms`],
+    [t('businessRequests'), businessTraffic?.requests || 0],
+    [t('businessFailureRate'), `${Number(businessTraffic?.failure_rate || 0).toFixed(1)}%`],
+    [t('businessAverageLatency'), `${Math.round(businessTraffic?.average_duration_ms || 0)} ms`],
     [t('activeAlerts'), activeAlerts.length],
   ] : []
   return <section className="feature-page"><PageHeader title={t('operationsTitle')} description={t('operationsDescription')} action={<div className="operations-actions"><select aria-label={t('selectedWindow')} value={days} onChange={(event) => setDays(Number(event.target.value))}><option value="1">1d</option><option value="7">7d</option><option value="30">30d</option><option value="90">90d</option></select><button className="secondary-button" onClick={() => refresh()}><RefreshCw size={16} />{t('refresh')}</button></div>} /><ErrorText error={error} /><Loading loading={loading} t={t} />

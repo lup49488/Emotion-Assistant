@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import base64
+import asyncio
 import hashlib
 import hmac
 import ipaddress
@@ -16,6 +17,7 @@ import time
 import uuid
 from collections.abc import Generator
 from contextlib import asynccontextmanager
+import anyio
 from datetime import datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -792,6 +794,24 @@ def _knowledge_bundle(request: ChatRequest) -> dict[str, Any]:
     return build_knowledge_bundle(request.message)
 
 
+def _close_stream_iterator(iterator: Any) -> None:
+    """Close a generator when available; simple iterators need no cleanup."""
+    close = getattr(iterator, "close", None)
+    if callable(close):
+        close()
+
+
+class _ChatStreamingResponse(StreamingResponse):
+    async def stream_response(self, send):
+        try:
+            await super().stream_response(send)
+        finally:
+            # Disconnect may occur while sending a chunk, outside the generator.
+            # Explicitly close it instead of waiting for garbage collection.
+            with anyio.CancelScope(shield=True):
+                await self.body_iterator.aclose()
+
+
 def _rag_status(bundle: dict[str, Any]) -> dict[str, Any]:
     return RagEvidenceStatus(**bundle.get("evidence", {"status": "sufficient"})).model_dump()
 
@@ -897,6 +917,7 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
     async def event_source():
         token = set_request_id(request_id)
         started = time.perf_counter()
+        generator: Any | None = None
         try:
             # The chat generator does blocking model inference; iterate it in a
             # worker thread so the async event loop stays responsive.
@@ -945,6 +966,11 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(True, duration_ms, streaming=True)
             logger.info("event=chat_completed request_id=%s provider=%s streaming=true duration_ms=%s", request_id, request.provider or DEFAULT_LLM_PROVIDER, duration_ms)
+        except asyncio.CancelledError:
+            duration_ms = int((time.perf_counter() - started) * 1000)
+            chat_finished(False, duration_ms, streaming=True)
+            logger.info("event=chat_cancelled request_id=%s streaming=true duration_ms=%s", request_id, duration_ms)
+            raise
         except ServiceError as exc:
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(False, duration_ms, streaming=True)
@@ -958,9 +984,19 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             error = ApiError(code="generation_failed", message="模型服务暂时不可用，请稍后重试。", retryable=True)
             yield f"event: error\ndata: {error.model_dump_json()}\n\n"
         finally:
-            reset_request_id(token)
+            # Closing propagates GeneratorExit through chatbot's session context,
+            # releasing its per-user lock when the SSE client disconnects.
+            try:
+                if generator is not None:
+                    with anyio.CancelScope(shield=True):
+                        await run_in_threadpool(_close_stream_iterator, generator)
+            finally:
+                try:
+                    reset_request_id(token)
+                except ValueError:
+                    logger.debug("event=request_context_already_closed request_id=%s", request_id)
 
-    return StreamingResponse(event_source(), media_type="text/event-stream")
+    return _ChatStreamingResponse(event_source(), media_type="text/event-stream")
 
 
 @app.get("/api/v1/memory/quality", response_model=MemoryQualityResponse)

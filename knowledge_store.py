@@ -1078,11 +1078,11 @@ def assess_knowledge_quality() -> dict[str, Any]:
         issues.append(f"有 {orphan_chunks} 个片段找不到来源文档")
 
     if not documents:
-        level = "未就绪"
+        level = "not_ready"
     elif issues:
-        level = "需关注"
+        level = "needs_attention"
     else:
-        level = "良好"
+        level = "good"
     return {
         "level": level,
         "documents": len(documents),

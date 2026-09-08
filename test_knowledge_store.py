@@ -412,7 +412,7 @@ def test_quality_report_detects_duplicate_short_and_stale_index():
             require_faiss.return_value.read_index.return_value = fake_index
             report = knowledge_store.assess_knowledge_quality()
 
-    assert report["level"] == "需关注"
+    assert report["level"] == "needs_attention"
     assert report["duplicate_chunks"] == 1
     assert report["short_chunks"] == 2
     assert not report["index_consistent"]
