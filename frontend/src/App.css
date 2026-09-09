@@ -326,8 +326,8 @@ body, #root { background:var(--canvas); color:var(--ink); }
 /* Fidelity pass: structure and density match the approved Serenova v2 workspace. */
 :root { --canvas: #11131d; --surface: #181a27; --surface-raised: #232538; --surface-soft: #2a2c42; --line: #35384d; --ink: #f1f2f8; --muted: #a6a8bc; --accent: #8d82df; --accent-deep: #c1baff; --shadow: 0 22px 56px rgba(0, 0, 0, .44);
   --accent-wash: #2b2746; --accent-wash-ink: #c1baff; --coral-wash: #3a2734; --coral-ink: #f9c2cd; --notice-ink: #f9c2cd; --login-error-ink: #f9c2cd; --surface-sunken: #151722; --warning: #d8ab48; --warning-wash: #38301f; --warning-ink: #f3dda0; --success: #6bc79f; --coral: #f38da0; --sidebar: #0e101a; --sidebar-ink: #f1f2f8; --sidebar-muted: #9698ad; --sidebar-border:#2a2d40; --sidebar-control: #1d2030; --sidebar-hover: #232538; }
-[data-theme='light'] { --canvas: #f5f5fb; --surface: #fff; --surface-raised: #f3f2fc; --surface-soft: #eae9f7; --line: #dad9e6; --ink: #262634; --muted: #76758a; --accent: #7163cc; --accent-deep: #594ab6;
-  --accent-wash: #eceafa; --accent-wash-ink: #594ab6; --coral-wash: #fdecef; --coral-ink: #97324a; --notice-ink: #97324a; --login-error-ink: #97324a; --surface-sunken: #f3f2fc; --warning: #a9761a; --warning-wash: #fdf5e4; --warning-ink: #735819; --success: #2f8a63; --coral: #c0455f; --sidebar: #edecf7; --sidebar-ink: #262634; --sidebar-muted: #76758a; --sidebar-border: #dad9e6; --sidebar-control: #ffffff; --sidebar-hover: #e2e0f3; }
+[data-theme='light'] { --canvas: #f5f5fb; --surface: #fff; --surface-raised: #f3f2fc; --surface-soft: #eae9f7; --line: #dad9e6; --ink: #262634; --muted: #6d6b83; --accent: #7163cc; --accent-deep: #594ab6;
+  --accent-wash: #eceafa; --accent-wash-ink: #594ab6; --coral-wash: #fdecef; --coral-ink: #97324a; --notice-ink: #97324a; --login-error-ink: #97324a; --surface-sunken: #f3f2fc; --warning: #a9761a; --warning-wash: #fdf5e4; --warning-ink: #735819; --success: #2f8a63; --coral: #c0455f; --sidebar: #edecf7; --sidebar-ink: #262634; --sidebar-muted: #6d6b83; --sidebar-border: #dad9e6; --sidebar-control: #ffffff; --sidebar-hover: #e2e0f3; }
 .app-shell, .app-shell.settings-open, .app-shell.settings-closed { grid-template-columns: 72px 272px minmax(0, 1fr); }
 .navigation-rail { padding: 12px 7px; background:var(--canvas); }
 .rail-brand { width: 28px; height: 28px; border-radius:7px; background:var(--surface-rail); border-color:var(--line-strong); box-shadow: none; }
@@ -904,6 +904,7 @@ body, #root { background:var(--canvas); color:var(--ink); }
 }
 .chat-workspace-content.reply-context-open .reply-context .context-title { padding-bottom: 13px; }
 .chat-workspace-content.reply-context-open .reply-context .context-title .icon-button { display: none; }
+.reply-context-backdrop { display: none; }
 
 /* Keep the workspace rail compact and make the optional reply context easy to read. */
 .navigation-rail { padding: 12px 7px; }
@@ -969,7 +970,9 @@ body, #root { background:var(--canvas); color:var(--ink); }
 @media (max-width: 1180px) {
   .app-shell, .app-shell.settings-open, .app-shell.settings-closed { grid-template-columns: 64px minmax(0, 1fr); }
   .chat-workspace-content, .chat-workspace-content.reply-context-open { grid-template-columns: 244px minmax(0, 1fr); }
-  .chat-workspace-content.reply-context-open .reply-context { position: fixed; grid-column: auto; grid-row: auto; width: min(390px, calc(100vw - 24px)); padding: 28px 24px; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+  .reply-context-backdrop { position: fixed; inset: 0; z-index: 68; display: block; border: 0; background: rgba(7, 8, 17, .42); }
+  .chat-workspace-content.reply-context-open .reply-context { position: fixed; z-index: 69; grid-column: auto; grid-row: auto; width: min(390px, calc(100vw - 24px)); padding: 28px 24px; border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); }
+  .chat-workspace-content.reply-context-open .reply-context .context-title .icon-button { display: grid; }
 }
 
 @media (max-width: 900px) {

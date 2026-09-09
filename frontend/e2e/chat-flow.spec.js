@@ -265,6 +265,20 @@ test('desktop reply context uses a dedicated right workspace column', async ({ p
   expect(sidebarTypeScale.copy).toBeGreaterThanOrEqual(15)
 })
 
+test('narrow desktop reply context is dismissible and keeps focus in its dialog', async ({ page }) => {
+  await page.setViewportSize({ width: 1080, height: 900 })
+  await signIn(page)
+  await page.getByRole('button', { name: 'Reply context' }).click()
+
+  const context = page.getByRole('dialog', { name: 'Reply context' })
+  await expect(context).toBeVisible()
+  await expect(context.getByTitle('Close reply context')).toBeVisible()
+  await expect(page.locator('.reply-context-backdrop')).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest('.reply-context') !== null)).toBe(true)
+  await page.keyboard.press('Escape')
+  await expect(context).toHaveCount(0)
+})
+
 test('reply context can be enabled and corrected without showing emotion scores', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Reply context' }).click()
@@ -450,9 +464,22 @@ test('mobile bottom navigation keeps chat primary and opens each workspace witho
   await expect(page.getByRole('heading', { name: 'What your assistant remembers about you' })).toBeVisible()
   await expect(page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'Personal data' })).toHaveClass(/selected/)
   await page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'More' }).click()
-  await expect(page.getByRole('complementary', { name: 'More workspace options' })).toBeVisible()
-  await page.getByRole('complementary', { name: 'More workspace options' }).getByRole('button', { name: 'Knowledge & RAG' }).click()
+  await expect(page.getByRole('dialog', { name: 'More workspace options' })).toBeVisible()
+  await page.getByRole('dialog', { name: 'More workspace options' }).getByRole('button', { name: 'Knowledge & RAG' }).click()
   await expect(page.getByRole('heading', { name: 'Knowledge & RAG' })).toBeVisible()
   const widths = await page.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }))
   expect(widths.scrollWidth).toBeLessThanOrEqual(widths.clientWidth + 1)
+})
+
+test('mobile More sheet traps focus and closes with Escape', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await signIn(page)
+  const more = page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'More' })
+  await more.click()
+  const sheet = page.getByRole('dialog', { name: 'More workspace options' })
+  await expect(sheet).toBeVisible()
+  await expect.poll(() => page.evaluate(() => document.activeElement?.closest('.mobile-more-sheet') !== null)).toBe(true)
+  await page.keyboard.press('Escape')
+  await expect(sheet).toHaveCount(0)
+  await expect(more).toBeFocused()
 })

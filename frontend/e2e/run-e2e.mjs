@@ -52,7 +52,10 @@ start(process.execPath, [
 try {
   await waitFor(`${mockUrl}/health`)
   await waitFor(baseUrl)
-  const playwright = start(npx, ['playwright', 'test'], { shell: isWindows, env: { ...process.env, E2E_BASE_URL: baseUrl, E2E_API_BASE_URL: mockUrl } })
+  // cmd.exe re-splits a shell command line, so an argument with spaces
+  // (`--grep=two words`) has to reach Playwright already quoted.
+  const forwarded = process.argv.slice(2).map((arg) => (isWindows && /\s/.test(arg) ? `"${arg}"` : arg))
+  const playwright = start(npx, ['playwright', 'test', ...forwarded], { shell: isWindows, env: { ...process.env, E2E_BASE_URL: baseUrl, E2E_API_BASE_URL: mockUrl } })
   const exitCode = await waitForExit(playwright)
   process.exitCode = exitCode
 } catch (error) {

@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # sklearn is imported lazily; keep it out of the import path.
+    from sklearn.feature_extraction.text import TfidfVectorizer
+    from sklearn.linear_model import LogisticRegression
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_DIR = BASE_DIR / "ChnSentiCorp"
 
-_vectorizer: TfidfVectorizer | None = None
-_clf: LogisticRegression | None = None
+_vectorizer: "TfidfVectorizer | None" = None
+_clf: "LogisticRegression | None" = None
 _target_names: list[str] = []
 
 

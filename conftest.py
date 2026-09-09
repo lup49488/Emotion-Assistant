@@ -56,6 +56,31 @@ def _isolate_storage_backend(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_user_file_roots(tmp_path, monkeypatch):
+    """Keep account deletion, exports, backups and file locks off real data.
+
+    Some stores import directory constants by value, so changing only
+    session_store.USERS_DIR does not isolate account deletion or backup files.
+    Tests may still override these defaults with their own fixture paths.
+    """
+    import config
+    import export_store
+    import memory_backup
+    import privacy_store
+    import session_store
+
+    users = tmp_path / "users"
+    exports = tmp_path / "exports"
+    backups = exports / "memory_backups"
+    monkeypatch.setattr(config, "USERS_DIR", users)
+    monkeypatch.setattr(session_store, "USERS_DIR", users)
+    monkeypatch.setattr(export_store, "EXPORTS_DIR", exports)
+    monkeypatch.setattr(memory_backup, "BACKUPS_DIR", backups)
+    monkeypatch.setattr(privacy_store, "EXPORTS_DIR", exports)
+    monkeypatch.setattr(privacy_store, "BACKUPS_DIR", backups)
+
+
+@pytest.fixture(autouse=True)
 def _isolate_data_dir_stores(tmp_path, monkeypatch):
     """把基于 data/ 目录的 JSON 存储重定向到临时路径。
 

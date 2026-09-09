@@ -483,6 +483,22 @@ def _stream_local_hf(
         raise RuntimeError(f"本地模型生成失败：{generation_errors[0]}") from generation_errors[0]
 
 
+def _close_quietly(resource: Any) -> None:
+    """Release an SDK stream or client without masking the in-flight error.
+
+    Both SDKs hold an HTTP connection open for the whole stream. A generator
+    that returns, raises or is closed by a client disconnect must hand that
+    connection back, and a cleanup failure must not replace the real error.
+    """
+    close = getattr(resource, "close", None)
+    if not callable(close):
+        return
+    try:
+        close()
+    except Exception:  # pragma: no cover - cleanup must never mask the outcome
+        logger.debug("event=provider_close_failed request_id=%s", get_request_id(), exc_info=True)
+
+
 def _stream_openai_compatible(
     full_messages: list[dict[str, str]], config: ModelRuntimeConfig
 ) -> Generator[str, None, None]:
@@ -514,49 +530,37 @@ def _stream_openai_compatible(
     provider = config.normalized_provider()
     model = config.resolved_model()
 
-    for attempt in range(API_MAX_RETRIES + 1):
-        emitted_content = False
-        finish_reason: str | None = None
-        try:
-            response = client.chat.completions.create(
-                model=model,
-                messages=full_messages,
-                temperature=config.temperature,
-                top_p=config.top_p,
-                max_tokens=config.max_new_tokens,
-                stream=True,
-            )
-            for event in response:
-                if not event.choices:
-                    continue
-                choice = event.choices[0]
-                if getattr(choice, "finish_reason", None):
-                    finish_reason = str(choice.finish_reason)
-                delta = choice.delta
-                content = getattr(delta, "content", None)
-                if content:
-                    emitted_content = True
-                    chunks.append(content)
-                    yield content
-            if finish_reason == "length":
-                logger.warning(
-                    "event=model_output_truncated request_id=%s provider=%s model=%s max_new_tokens=%s",
-                    get_request_id(), provider, model, config.max_new_tokens,
+    try:
+        for attempt in range(API_MAX_RETRIES + 1):
+            emitted_content = False
+            finish_reason: str | None = None
+            response = None
+            try:
+                response = client.chat.completions.create(
+                    model=model,
+                    messages=full_messages,
+                    temperature=config.temperature,
+                    top_p=config.top_p,
+                    max_tokens=config.max_new_tokens,
+                    stream=True,
                 )
-            record_usage(
-                config.user_id,
-                provider=provider,
-                model=model,
-                input_tokens=input_tokens,
-                output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
-                duration_ms=int((time.perf_counter() - started) * 1000),
-                success=True,
-            )
-            return
-        except Exception as exc:
-            retryable = _is_retryable_api_error(exc)
-            if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
-                error_kind = _api_error_kind(exc)
+                for event in response:
+                    if not event.choices:
+                        continue
+                    choice = event.choices[0]
+                    if getattr(choice, "finish_reason", None):
+                        finish_reason = str(choice.finish_reason)
+                    delta = choice.delta
+                    content = getattr(delta, "content", None)
+                    if content:
+                        emitted_content = True
+                        chunks.append(content)
+                        yield content
+                if finish_reason == "length":
+                    logger.warning(
+                        "event=model_output_truncated request_id=%s provider=%s model=%s max_new_tokens=%s",
+                        get_request_id(), provider, model, config.max_new_tokens,
+                    )
                 record_usage(
                     config.user_id,
                     provider=provider,
@@ -564,22 +568,44 @@ def _stream_openai_compatible(
                     input_tokens=input_tokens,
                     output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
                     duration_ms=int((time.perf_counter() - started) * 1000),
-                    success=False,
-                    error_kind=error_kind,
+                    success=True,
                 )
-                raise ProviderRequestError(
-                    f"API 请求失败（{error_kind}）：{exc}",
-                    kind=error_kind,
-                    retryable=retryable,
-                    emitted_content=emitted_content,
-                ) from exc
-            delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
-            logger.warning(
-                "event=provider_retry request_id=%s provider=%s model=%s attempt=%s/%s delay_seconds=%.1f error=%s",
-                get_request_id(), provider, model, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
-            )
-            if delay:
-                time.sleep(delay)
+                return
+            except Exception as exc:
+                retryable = _is_retryable_api_error(exc)
+                if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
+                    error_kind = _api_error_kind(exc)
+                    record_usage(
+                        config.user_id,
+                        provider=provider,
+                        model=model,
+                        input_tokens=input_tokens,
+                        output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
+                        duration_ms=int((time.perf_counter() - started) * 1000),
+                        success=False,
+                        error_kind=error_kind,
+                    )
+                    raise ProviderRequestError(
+                        f"API 请求失败（{error_kind}）：{exc}",
+                        kind=error_kind,
+                        retryable=retryable,
+                        emitted_content=emitted_content,
+                    ) from exc
+                delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
+                logger.warning(
+                    "event=provider_retry request_id=%s provider=%s model=%s attempt=%s/%s delay_seconds=%.1f error=%s",
+                    get_request_id(), provider, model, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
+                )
+                if delay:
+                    time.sleep(delay)
+            finally:
+                # Hand the upstream response back on every exit, including the
+                # GeneratorExit raised when a client disconnects mid-stream, so
+                # neither a retry nor a cancelled request leaks the connection.
+                _close_quietly(response)
+    finally:
+        _close_quietly(client)
+
 
 
 def split_anthropic_messages(
@@ -685,55 +711,61 @@ def _stream_anthropic(
     provider = config.normalized_provider()
     model = request["model"]
 
-    for attempt in range(API_MAX_RETRIES + 1):
-        emitted_content = False
-        chunks: list[str] = []
-        try:
-            with client.messages.stream(**request) as stream:
-                for text in stream.text_stream:
-                    if text:
-                        emitted_content = True
-                        chunks.append(text)
-                        yield text
-                final = stream.get_final_message()
-            _record_anthropic_usage(config, provider, model, final, input_tokens, chunks, started)
-            _raise_for_anthropic_stop_reason(final, emitted_content)
-            return
-        except ServiceError:
-            raise
-        except Exception as exc:
-            retryable = _is_retryable_api_error(exc)
-            if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
-                error_kind = _api_error_kind(exc)
-                record_usage(
-                    config.user_id,
-                    provider=provider,
-                    model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
-                    duration_ms=int((time.perf_counter() - started) * 1000),
-                    success=False,
-                    error_kind=error_kind,
-                )
-                # The client only ever sees a generic message per error kind, so the
-                # endpoint and the underlying exception type have to reach the log.
+    try:
+        for attempt in range(API_MAX_RETRIES + 1):
+            emitted_content = False
+            chunks: list[str] = []
+            try:
+                with client.messages.stream(**request) as stream:
+                    for text in stream.text_stream:
+                        if text:
+                            emitted_content = True
+                            chunks.append(text)
+                            yield text
+                    final = stream.get_final_message()
+                _record_anthropic_usage(config, provider, model, final, input_tokens, chunks, started)
+                _raise_for_anthropic_stop_reason(final, emitted_content)
+                return
+            except ServiceError:
+                raise
+            except Exception as exc:
+                retryable = _is_retryable_api_error(exc)
+                if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
+                    error_kind = _api_error_kind(exc)
+                    record_usage(
+                        config.user_id,
+                        provider=provider,
+                        model=model,
+                        input_tokens=input_tokens,
+                        output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
+                        duration_ms=int((time.perf_counter() - started) * 1000),
+                        success=False,
+                        error_kind=error_kind,
+                    )
+                    # The client only ever sees a generic message per error kind, so the
+                    # endpoint and the underlying exception type have to reach the log.
+                    logger.warning(
+                        "event=provider_failed request_id=%s provider=%s model=%s endpoint=%s error_kind=%s error_type=%s error=%s",
+                        get_request_id(), provider, model, endpoint, error_kind, type(exc).__name__, exc,
+                    )
+                    raise ProviderRequestError(
+                        f"API 请求失败（{error_kind}）：{exc}",
+                        kind=error_kind,
+                        retryable=retryable,
+                        emitted_content=emitted_content,
+                    ) from exc
+                delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
                 logger.warning(
-                    "event=provider_failed request_id=%s provider=%s model=%s endpoint=%s error_kind=%s error_type=%s error=%s",
-                    get_request_id(), provider, model, endpoint, error_kind, type(exc).__name__, exc,
+                    "event=provider_retry request_id=%s provider=%s model=%s endpoint=%s attempt=%s/%s delay_seconds=%.1f error=%s",
+                    get_request_id(), provider, model, endpoint, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
                 )
-                raise ProviderRequestError(
-                    f"API 请求失败（{error_kind}）：{exc}",
-                    kind=error_kind,
-                    retryable=retryable,
-                    emitted_content=emitted_content,
-                ) from exc
-            delay = API_RETRY_BACKOFF_SECONDS * (2 ** attempt)
-            logger.warning(
-                "event=provider_retry request_id=%s provider=%s model=%s endpoint=%s attempt=%s/%s delay_seconds=%.1f error=%s",
-                get_request_id(), provider, model, endpoint, attempt + 1, API_MAX_RETRIES + 1, delay, exc,
-            )
-            if delay:
-                time.sleep(delay)
+                if delay:
+                    time.sleep(delay)
+    finally:
+        # The stream's context manager releases the response; the client itself
+        # owns a connection pool that outlives it and must be closed too.
+        _close_quietly(client)
+
 
 
 def _record_anthropic_usage(

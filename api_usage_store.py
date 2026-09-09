@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -56,7 +56,19 @@ def _read_json_events(user_id: str) -> list[dict[str, Any]]:
 def _write_json_events(user_id: str, events: list[dict[str, Any]]) -> None:
     path = _json_path(user_id)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(events[-5000:], ensure_ascii=False, indent=2), encoding="utf-8")
+    cutoff = _budget_window_start(_now()).isoformat(timespec="seconds")
+    # Recent-event pagination is not a budget retention policy: never discard
+    # spend from the active month (or minute across a month boundary).
+    retained = [
+        item for index, item in enumerate(events)
+        if index >= len(events) - 5000 or str(item.get("created_at", "")) >= cutoff
+    ]
+    path.write_text(json.dumps(retained, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _budget_window_start(now: datetime) -> datetime:
+    month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    return min(month_start, now - timedelta(seconds=60))
 
 
 def estimate_tokens(text: str) -> int:
@@ -145,7 +157,19 @@ def usage_summary(user_id: str, *, now: datetime | None = None) -> dict[str, Any
     day = now.date().isoformat()
     month = now.strftime("%Y-%m")
     minute_start = now.timestamp() - 60
-    events = list_usage_events(user_id)
+    # Summaries enforce spending limits and must include the complete active
+    # budget window, even when the activity-list display is capped at 5000.
+    with _lock:
+        if sqlite_enabled():
+            with connection() as conn:
+                rows = conn.execute(
+                    """SELECT input_tokens, output_tokens, estimated_cost_usd, success, created_at
+                       FROM api_usage_events WHERE user_id = ? AND created_at >= ?""",
+                    (user_id, _budget_window_start(now).isoformat(timespec="seconds")),
+                ).fetchall()
+            events = [dict(row) for row in rows]
+        else:
+            events = _read_json_events(user_id)
 
     def totals(selected: list[dict[str, Any]]) -> dict[str, Any]:
         return {

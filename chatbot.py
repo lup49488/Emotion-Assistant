@@ -4,7 +4,7 @@ import logging
 import os
 import uuid
 from collections.abc import Callable
-from typing import Generator
+from typing import Any, Generator
 
 import goemotions_local as goemotions
 import memory_store as _memory_store
@@ -199,14 +199,23 @@ def chat(
     full_messages = [messages[0], *prior_history, messages[1]]
 
     collected_chunks: list[str] = []
+    model_stream = None
     try:
-        for chunk in stream_model_response(full_messages, config):
+        model_stream = stream_model_response(full_messages, config)
+        for chunk in model_stream:
             if chunk:
                 collected_chunks.append(chunk)
                 yield chunk
-    except Exception as exc:
+    except Exception:
         logger.exception("模型回复生成失败。provider=%s model=%s", config.provider, config.model)
         raise
+    finally:
+        # A plain for-loop does not forward GeneratorExit to its iterator.
+        # Close explicitly so disconnects release the provider's resources even
+        # if another reference keeps the provider iterator alive.
+        close = getattr(model_stream, "close", None)
+        if callable(close):
+            close()
 
     full_reply = "".join(collected_chunks).strip()
     if not full_reply:

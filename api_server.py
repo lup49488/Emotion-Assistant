@@ -966,7 +966,7 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(True, duration_ms, streaming=True)
             logger.info("event=chat_completed request_id=%s provider=%s streaming=true duration_ms=%s", request_id, request.provider or DEFAULT_LLM_PROVIDER, duration_ms)
-        except asyncio.CancelledError:
+        except (asyncio.CancelledError, GeneratorExit):
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(False, duration_ms, streaming=True)
             logger.info("event=chat_cancelled request_id=%s streaming=true duration_ms=%s", request_id, duration_ms)
@@ -977,7 +977,7 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             logger.warning("event=chat_failed request_id=%s code=%s detail=%s streaming=true", request_id, exc.code, exc, exc_info=exc)
             error = ApiError(code=exc.code, message="模型服务暂时不可用，请稍后重试。", retryable=exc.retryable)
             yield f"event: error\ndata: {error.model_dump_json()}\n\n"
-        except Exception as exc:
+        except Exception:
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(False, duration_ms, streaming=True)
             logger.exception("event=chat_failed request_id=%s provider=%s streaming=true", request_id, request.provider or DEFAULT_LLM_PROVIDER)

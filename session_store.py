@@ -102,9 +102,9 @@ def _acquire_lock_windows(f) -> None:
         try:
             msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
             return
-        except OSError:
+        except OSError as exc:
             if time.monotonic() >= deadline:
-                raise TimeoutError(f"等待用户文件锁超时（>{_LOCK_TIMEOUT}秒）。")
+                raise TimeoutError(f"等待用户文件锁超时（>{_LOCK_TIMEOUT}秒）。") from exc
             time.sleep(_LOCK_RETRY_INTERVAL)
 
 

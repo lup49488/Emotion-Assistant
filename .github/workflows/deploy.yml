@@ -102,6 +102,31 @@ jobs:
 
               cd /opt/Emotion-Assistant
 
+              rollback_started=false
+              rollback() {
+                deploy_status=$?
+                trap - ERR
+                if [ "$rollback_started" != true ]; then
+                  exit "$deploy_status"
+                fi
+                echo "Deployment failed; restoring $previous_sha..." >&2
+                git checkout --detach "$previous_sha"
+                docker compose up --build -d
+                app_host="$(grep -E '^API_TRUSTED_HOSTS=' .env | head -n 1 | cut -d= -f2- | cut -d, -f1 | tr -d '\r\n')"
+                test -n "$app_host"
+                python3 deployment_check.py \
+                  --skip-dependencies \
+                  --docker-runtime \
+                  --local-docker-http \
+                  --public-url "https://${app_host}/" \
+                  --cloudflared
+                mkdir -p /opt/Emotion-Assistant/.deployment
+                printf '%s\n' "$previous_sha" > /opt/Emotion-Assistant/.deployment/current_sha
+                echo "Rollback completed. restored=$previous_sha" >&2
+                exit "$deploy_status"
+              }
+              trap rollback ERR
+
               echo "Resolving CI-verified deployment revision..."
               previous_sha="$(git rev-parse HEAD)"
               git fetch origin main
@@ -112,6 +137,7 @@ jobs:
               git cat-file -e "${DEPLOY_SHA}^{commit}"
               git merge-base --is-ancestor "$DEPLOY_SHA" origin/main
               git checkout --detach "$DEPLOY_SHA"
+              rollback_started=true
               deployed_sha="$(git rev-parse HEAD)"
               test "$deployed_sha" = "$DEPLOY_SHA"
 
@@ -140,6 +166,7 @@ jobs:
               mkdir -p "$state_directory"
               printf '%s\n' "$previous_sha" > "$state_directory/previous_sha"
               printf '%s\n' "$deployed_sha" > "$state_directory/current_sha"
+              trap - ERR
               echo "Deployment completed. current=$deployed_sha previous=$previous_sha"
           EOF
 

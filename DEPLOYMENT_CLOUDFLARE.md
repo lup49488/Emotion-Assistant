@@ -141,7 +141,9 @@ CI verified, so `/opt/Emotion-Assistant` sits on a **detached HEAD**. A manual
 manually with `workflow_dispatch` and a full 40-character `commit_sha`, or leave
 that input empty to deploy the current `origin/main` tip.
 
-Each deployment records where it came from:
+Each deployment records where it came from. If a newly started Docker stack
+fails its deployment health check, the workflow automatically restores this
+previous revision, verifies it, and still marks the failed deployment red:
 
 ```bash
 cat /opt/Emotion-Assistant/.deployment/current_sha    # what is running now

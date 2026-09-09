@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any
@@ -32,12 +33,17 @@ def privacy_summary(user_id: str) -> dict[str, Any]:
     }
 
 
-def _delete_files_with_prefix(directory: Path, prefix: str) -> int:
+def _delete_user_exports(directory: Path, user_id: str, *, memory: bool = False) -> int:
+    # User IDs may contain underscores, so an "alice_" prefix also matches
+    # alice_bob's files. Match the complete generated suffix to establish owner.
+    suffix = r"_memory_(?:manual|pre_restore)" if memory else r"_export"
+    stamp = r"(?:_[0-9]{8}_[0-9]{6}(?:_[0-9]{6})?)?"
+    filename = re.compile(re.escape(user_id) + suffix + stamp + r"\.json")
     if not directory.exists():
         return 0
     removed = 0
     for path in directory.iterdir():
-        if path.is_file() and path.name.startswith(prefix):
+        if path.is_file() and filename.fullmatch(path.name):
             path.unlink()
             removed += 1
     return removed
@@ -80,8 +86,8 @@ def delete_all_user_data(user_id: str) -> dict[str, int | str]:
                     shutil.rmtree(path)
                 else:
                     path.unlink()
-        exports_removed = _delete_files_with_prefix(EXPORTS_DIR, f"{user_id}_")
-        backups_removed = _delete_files_with_prefix(BACKUPS_DIR, f"{user_id}_")
+        exports_removed = _delete_user_exports(EXPORTS_DIR, user_id)
+        backups_removed = _delete_user_exports(BACKUPS_DIR, user_id, memory=True)
     if user_directory.exists():
         shutil.rmtree(user_directory)
     _clear_cached_session(user_id)

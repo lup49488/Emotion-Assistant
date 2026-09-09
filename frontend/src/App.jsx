@@ -49,6 +49,8 @@ const NAVIGATION = [
 ]
 
 const ASSISTANT_NAME = 'Serenova'
+const CONTEXT_OVERLAY_MEDIA = '(max-width: 73.75rem)'
+const MOBILE_OVERLAY_MEDIA = '(max-width: 56.25rem)'
 const MODEL_PROFILES = {
   fast: { temperature: 0.4, maxNewTokens: 800 },
   balanced: { temperature: 0.7, maxNewTokens: 1600 },
@@ -64,12 +66,50 @@ const FALLBACK_PROVIDER_CATALOG = [
   { id: 'custom', label: 'Custom endpoint', models: ['deepseek-chat'], default_model: 'deepseek-chat', default_base_url: '' },
 ]
 
+function useOverlayFocus(open, onClose, mediaQuery) {
+  const panelRef = useRef(null)
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
+
+  useEffect(() => {
+    if (!open || !window.matchMedia(mediaQuery).matches) return undefined
+    const previousFocus = document.activeElement
+    const focusable = () => Array.from(panelRef.current?.querySelectorAll('button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])') || [])
+    const animationFrame = window.requestAnimationFrame(() => focusable()[0]?.focus())
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') { event.preventDefault(); onCloseRef.current(); return }
+      if (event.key !== 'Tab') return
+      const items = focusable()
+      if (!items.length) { event.preventDefault(); return }
+      const currentIndex = items.indexOf(document.activeElement)
+      if (event.shiftKey && currentIndex <= 0) { event.preventDefault(); items.at(-1).focus() }
+      if (!event.shiftKey && (currentIndex === -1 || currentIndex === items.length - 1)) { event.preventDefault(); items[0].focus() }
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.cancelAnimationFrame(animationFrame)
+      document.removeEventListener('keydown', handleKeyDown)
+      if (previousFocus instanceof HTMLElement) previousFocus.focus()
+    }
+  }, [open, mediaQuery])
+
+  return panelRef
+}
+
+function isComposingEnter(event) {
+  // An IME confirms its candidate with Enter. That keystroke must edit the
+  // draft, not send it; some IMEs only report it as the legacy keyCode 229.
+  const native = event.nativeEvent || event
+  return Boolean(native.isComposing) || native.keyCode === 229
+}
+
 function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('mindful-theme') || 'system')
   const [locale, setLocale] = useState(() => localStorage.getItem('mindful-locale') || 'en')
   const [session, setSession] = useState(null)
   const [activeView, setActiveView] = useState('chat')
   const [conversations, setConversations] = useState([])
+  const conversationRequestRef = useRef(0)
   const [activeConversation, setActiveConversation] = useState(null)
   const [editingConversationId, setEditingConversationId] = useState(null)
   const [conversationTitleDraft, setConversationTitleDraft] = useState('')
@@ -211,19 +251,23 @@ function App() {
   }
 
   async function selectConversation(conversation) {
+    // Threads load out of order, so only the newest selection may paint.
+    const requestId = ++conversationRequestRef.current
     setNotice('')
     try {
       const response = await apiFetch(`/api/v1/conversations/${conversation.id}`)
       const data = await response.json()
+      if (requestId !== conversationRequestRef.current) return
       setActiveConversation(data.conversation)
       setMessages(data.conversation.messages || [])
       setQuotedMessage(null)
     } catch (error) {
-      setNotice(error.message)
+      if (requestId === conversationRequestRef.current) setNotice(error.message)
     }
   }
 
   async function createConversation() {
+    conversationRequestRef.current += 1
     setNotice('')
     try {
       const response = await apiFetch('/api/v1/conversations', {
@@ -266,6 +310,7 @@ function App() {
   async function removeConversation(event, conversation) {
     event.stopPropagation()
     if (isSending || !window.confirm(t('deleteConversationConfirm'))) return
+    conversationRequestRef.current += 1
     setNotice('')
     try {
       await apiFetch(`/api/v1/conversations/${conversation.id}`, { method: 'DELETE', headers: csrfHeaders() })
@@ -614,6 +659,7 @@ function App() {
         <Composer draft={draft} setDraft={setDraft} sendMessage={sendMessage} isSending={isSending} cancelGeneration={cancelGeneration} quotedMessage={quotedMessage} clearQuote={() => setQuotedMessage(null)} t={t} />
       </section>
 
+      {whyOpen && <button className="reply-context-backdrop" aria-label={t('closeContext')} onClick={() => setWhyOpen(false)} />}
       {whyOpen && <ReplyContextPanel latestMessage={latestAssistantMessage} onClose={() => setWhyOpen(false)} options={options} tone={activeToneLabel} preference={replyBasisPreference} onSavePreference={saveReplyBasisPreference} onCorrectTurn={correctReplyBasisTurn} t={t} />}
       {settingsOpen && <ModelSettingsPanel activeModelLabel={activeModelLabel} changeProvider={changeProvider} editableModelField={editableModelField} modelChoices={modelChoices} onClose={() => setSettingsOpen(false)} options={options} providerCatalog={providerCatalog} saveStylePrefix={saveStylePrefix} setEditableModelField={setEditableModelField} setOptions={setOptions} styleName={styleName} stylePrefixes={visibleStylePrefixes} t={t} />}</> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} locale={locale} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} locale={locale} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
         </div>
@@ -655,13 +701,14 @@ function MobileBottomNavigation({ activeView, moreOpen, navigateWorkspace, setMo
   const primaryIds = ['chat', 'memory', 'mood']
   const primaryItems = primaryIds.map((id) => visibleNavigation.find((item) => item.id === id)).filter(Boolean)
   const moreItems = visibleNavigation.filter((item) => !primaryIds.includes(item.id))
+  const sheetRef = useOverlayFocus(moreOpen, () => setMoreOpen(false), MOBILE_OVERLAY_MEDIA)
   return <>
     {moreOpen && <button className="mobile-more-backdrop" aria-label={t('closeSidebar')} onClick={() => setMoreOpen(false)} />}
     <nav className="mobile-bottom-navigation" aria-label={t('workspaceNavigation')}>
       {primaryItems.map(({ id, label, icon: Icon }) => <button key={id} className={activeView === id ? 'selected' : ''} aria-current={activeView === id ? 'page' : undefined} onClick={() => navigateWorkspace(id)}><Icon size={25} /><span>{t(label)}</span></button>)}
       <button className={moreOpen ? 'selected' : ''} aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}><Ellipsis size={26} /><span>{t('more')}</span></button>
     </nav>
-    {moreOpen && <aside className="mobile-more-sheet" aria-label={t('moreNavigation')}><div className="mobile-more-sheet-title"><span>{t('more')}</span><button className="icon-button" title={t('closeSidebar')} onClick={() => setMoreOpen(false)}><X size={18} /></button></div>{moreItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => navigateWorkspace(id)}><Icon size={20} /><span>{t(label)}</span><ChevronLeft size={17} /></button>)}</aside>}
+    {moreOpen && <aside className="mobile-more-sheet" aria-label={t('moreNavigation')} aria-modal="true" ref={sheetRef} role="dialog"><div className="mobile-more-sheet-title"><span>{t('more')}</span><button className="icon-button" title={t('closeSidebar')} onClick={() => setMoreOpen(false)}><X size={18} /></button></div>{moreItems.map(({ id, label, icon: Icon }) => <button key={id} onClick={() => navigateWorkspace(id)}><Icon size={20} /><span>{t(label)}</span><ChevronLeft size={17} /></button>)}</aside>}
   </>
 }
 
@@ -691,7 +738,9 @@ function ModelSettingsPanel({ activeModelLabel, changeProvider, editableModelFie
 function ReplyContextPanel({ latestMessage, onClose, options, tone, preference, onSavePreference, onCorrectTurn, t }) {
   const citations = latestMessage?.citations || []
   const responseBasis = latestMessage?.responseBasis
-  return <aside className="reply-context open" aria-label={t('replyContext')}>
+  const panelRef = useOverlayFocus(true, onClose, CONTEXT_OVERLAY_MEDIA)
+  const isDialog = typeof window !== 'undefined' && window.matchMedia(CONTEXT_OVERLAY_MEDIA).matches
+  return <aside className="reply-context open" aria-label={t('replyContext')} aria-modal={isDialog || undefined} ref={panelRef} role={isDialog ? 'dialog' : undefined}>
     <div className="context-title"><div><Info size={18} /><h2>{t('replyContext')}</h2></div><button className="icon-button" title={t('closeContext')} onClick={onClose}><X size={18} /></button></div>
     <p className="context-copy">{t('replyContextDescription')}</p>
     <section className="context-section gentle-context"><h3>{t('responseApproach')}</h3><p>{t('responseApproachCopy').replace('{tone}', tone)}</p><p>{t('contextPrivacyNote')}</p></section>
@@ -735,7 +784,7 @@ function WorkspaceSidebar({
           <button key={id} className={`workspace-link ${activeView === id ? 'selected' : ''}`} onClick={() => navigateWorkspace(id)}><Icon size={16} /><span>{t(label)}</span></button>
         ))}
       </nav>
-      <button className="new-chat" onClick={startConversation}><CirclePlus size={18} />{t('newChat')}</button>
+      <button className="new-chat" onClick={startConversation} disabled={isSending}><CirclePlus size={18} />{t('newChat')}</button>
       <div className="conversation-list">
         <p className="section-label">{t('conversations')}</p>
         {conversations.length === 0 && <p className="empty-list">{t('noChats')}</p>}
@@ -743,7 +792,7 @@ function WorkspaceSidebar({
           <form className="conversation-edit" key={conversation.id} onSubmit={(event) => renameConversation(event, conversation)}><input value={conversationTitleDraft} onChange={(event) => setConversationTitleDraft(event.target.value)} aria-label={t('conversationTitle')} autoFocus /><button className="conversation-action" title={t('saveTitle')}><Check size={15} /></button><button className="conversation-action" type="button" title={t('cancel')} onClick={() => setEditingConversationId(null)}><X size={15} /></button></form>
         ) : (
           <div className={`conversation-row ${conversation.id === activeConversation?.id ? 'selected' : ''}`} key={conversation.id}>
-            <button className="conversation" onClick={() => openConversation(conversation)}><MessageSquare size={15} /><span>{conversation.title}</span></button>
+            <button className="conversation" onClick={() => openConversation(conversation)} disabled={isSending}><MessageSquare size={15} /><span>{conversation.title}</span></button>
             <div className="conversation-actions"><button className="conversation-action" title={t('renameConversation')} onClick={(event) => beginConversationRename(event, conversation)}><Pencil size={15} /></button><button className="conversation-action delete-conversation" title={t('deleteConversation')} onClick={(event) => removeConversation(event, conversation)} disabled={isSending}><Trash2 size={15} /></button></div>
           </div>
         ))}
@@ -804,7 +853,7 @@ function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote
   </article>
 }
 
-function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, quotedMessage, clearQuote, t }) { return <div className="composer-wrap">{quotedMessage && <div className="composer-quote"><Reply size={14} /><div><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div><button type="button" className="icon-button" title={t('removeQuote')} onClick={clearQuote}><X size={15} /></button></div>}<div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendMessage() } }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div></div> }
+function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, quotedMessage, clearQuote, t }) { return <div className="composer-wrap">{quotedMessage && <div className="composer-quote"><Reply size={14} /><div><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div><button type="button" className="icon-button" title={t('removeQuote')} onClick={clearQuote}><X size={15} /></button></div>}<div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key !== 'Enter' || event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); sendMessage() }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div></div> }
 
 function PreferencesControls({ theme, setTheme, locale, setLocale, t }) { return <div className="preferences-controls"><label><SunMoon size={15} /><span>{t('theme')}</span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select></label><label><Languages size={15} /><span>{t('language')}</span><select value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">{t('english')}</option><option value="zh">{t('chinese')}</option></select></label></div> }
 

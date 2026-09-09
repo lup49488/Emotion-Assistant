@@ -14,6 +14,10 @@ from file_security import restrict_directory, restrict_file
 
 
 DEFAULT_DATABASE_PATH = BASE_DIR / "data" / "chatbot.db"
+# Bumped whenever ensure_schema() gains a statement. Stamped into the database
+# as PRAGMA user_version so an already-migrated file can skip the whole upgrade
+# pass instead of re-running it on every single connection.
+SCHEMA_VERSION = 6
 SQLITE_BACKEND = "sqlite"
 JSON_BACKEND = "json"
 
@@ -49,7 +53,7 @@ def connection() -> Iterator[sqlite3.Connection]:
         # SQLite may create these sidecar files after the connection opens.
         restrict_file(path.with_name(path.name + "-wal"))
         restrict_file(path.with_name(path.name + "-shm"))
-        ensure_schema(conn)
+        _ensure_schema_once(conn)
         yield conn
         conn.commit()
     except Exception:
@@ -57,6 +61,22 @@ def connection() -> Iterator[sqlite3.Connection]:
         raise
     finally:
         conn.close()
+
+
+def _ensure_schema_once(conn: sqlite3.Connection) -> None:
+    """Run the schema upgrade only on a database that has not had it yet.
+
+    ensure_schema() rewrites 30+ DDL statements and scans conversation_messages
+    for rows to backfill; paying that on every connection makes each storage
+    operation grow with the archive (~1.6 ms at 240 messages, ~9.7 ms at 50k).
+    user_version lives in the file itself, so a database created or upgraded by
+    another process — or a fresh file at a path this process used before — is
+    still recognised correctly.
+    """
+    if conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION:
+        return
+    ensure_schema(conn)
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -287,7 +307,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     _ensure_pending_memory_section(conn)
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
-        (6, _now()),
+        (SCHEMA_VERSION, _now()),
     )
 
 

@@ -14,6 +14,11 @@ def restrict_directory(path: Path) -> None:
 
 def restrict_file(path: Path) -> None:
     """Tighten an existing sensitive file to owner read/write on POSIX."""
-    if os.name != "nt" and path.exists():
-        path.chmod(0o600)
-
+    if os.name == "nt":
+        return
+    try:
+        # SQLite may remove WAL/SHM sidecars while a second request is using
+        # them, so this must not rely on a separate exists() check.
+        os.chmod(path, 0o600)
+    except FileNotFoundError:
+        pass

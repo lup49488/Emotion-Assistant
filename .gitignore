@@ -20,6 +20,8 @@ data/job_uploads/
 data/model_offload/
 data/hf_cache/
 logs/
+# Runtime logs, including the Chromium noise Playwright drops in the repo root.
+*.log
 # Indexes and source documents are local; the regression set is versioned.
 knowledge_base/*
 !knowledge_base/rag_evaluation_cases.json
@@ -46,3 +48,7 @@ evaluation/EXPERIMENT_DESIGN.md
 # Editor backup files.
 *.bak
 .freebuff/project-id
+
+# agent-handoff working state (per-run, regenerated)
+.agent-handoff/
+HANDOFF.md

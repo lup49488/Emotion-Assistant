@@ -215,7 +215,7 @@ function MoodCheckinContent({ t, onReflect, locale }) {
   useEffect(() => { imagePreviewsRef.current = imagePreviews }, [imagePreviews])
   useEffect(() => () => { imagePreviewsRef.current.forEach((item) => URL.revokeObjectURL(item.url)) }, [])
   const uploadImages = async (record) => {
-    if (imageFiles.length === 0) return record
+    if (imageFiles.length === 0) return { record, error: '' }
     const results = await Promise.allSettled(imageFiles.map(async (file) => {
       const payload = new FormData(); payload.append('file', file)
       return readJson(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images`, { method: 'POST', headers: csrfHeaders(), body: payload })
@@ -224,16 +224,26 @@ function MoodCheckinContent({ t, onReflect, locale }) {
     const failed = imageFiles.filter((_, index) => results[index].status === 'rejected')
     // Keep only what still needs sending, so a retry cannot duplicate an upload.
     imageFiles.filter((file) => !failed.includes(file)).forEach(removeSelectedImage)
-    if (failed.length) setError(results.find((item) => item.status === 'rejected').reason?.message || t('moodImageLimit'))
-    return { ...record, images: [...(record.images || []), ...images] }
+    const error = failed.length ? results.find((item) => item.status === 'rejected').reason?.message || t('moodImageLimit') : ''
+    return { record: { ...record, images: [...(record.images || []), ...images] }, error }
   }
   const submit = async (event) => {
     event.preventDefault(); setError('')
     try {
       const payload = { mood: form.mood, intensity: form.intensity, note: form.note, checkin_date: form.date || localCalendarDate() }
       const result = await readJson('/api/v1/mood/checkins', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify(payload) })
-      const record = await uploadImages(result.record)
-      setSavedRecord(record); setForm(emptyForm); await refresh()
+      const { record, error: uploadError } = await uploadImages(result.record)
+      // A saved check-in and its photos are separate requests. Keep the saved
+      // date and failed files together so retrying cannot write into today.
+      if (uploadError) {
+        setSavedRecord(null)
+        setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' })
+      } else {
+        setSavedRecord(record)
+        setForm(emptyForm)
+      }
+      await refresh()
+      if (uploadError) setError(uploadError)
     } catch (requestError) { setError(requestError.message) }
   }
   const startEdit = (record) => { setError(''); setSavedRecord(null); clearSelectedImages(); setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
@@ -277,7 +287,18 @@ export function KnowledgePage({ t, canManageKnowledge = false }) {
   const search = async (event) => { event.preventDefault(); if (!query.trim()) return; setError(''); try { setResults(await readJson('/api/v1/rag/search', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ query, top_k: 4, threshold: 0.35, candidate_multiplier: 4 }) })) } catch (requestError) { setError(requestError.message) } }
   const submitJob = async (path, options) => { setError(''); setMessage(''); try { const response = await readJson(path, options); setJobs((current) => [response.job, ...current.filter((job) => job.id !== response.job.id)]); setMessage(t('jobQueued')) } catch (requestError) { setError(requestError.message) } }
   const runEvaluation = async () => { await submitJob('/api/v1/rag/evaluations/run', { method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ top_k: 4, threshold: 0.35, candidate_multiplier: 4, compare_modes: compareModes }) }) }
-  const upload = async (event) => { event.preventDefault(); const file = event.currentTarget.file.files[0]; if (!file) return; const form = new FormData(); form.append('file', file); await submitJob('/api/v1/rag/documents', { method: 'POST', headers: csrfHeaders(), body: form }); event.currentTarget.reset() }
+  const upload = async (event) => {
+    event.preventDefault()
+    const uploadForm = event.currentTarget
+    const file = uploadForm.file.files[0]
+    if (!file) return
+    const form = new FormData()
+    form.append('file', file)
+    await submitJob('/api/v1/rag/documents', { method: 'POST', headers: csrfHeaders(), body: form })
+    // React clears currentTarget after the synchronous event handler returns.
+    // Do not clear a newer selection if another upload began while this waited.
+    if (uploadForm.file.files[0] === file) uploadForm.reset()
+  }
   const rebuild = async () => { await submitJob('/api/v1/rag/rebuild', { method: 'POST', headers: csrfHeaders() }) }
   const removeDocument = async (name) => { if (!window.confirm(`Delete ${name} and rebuild the knowledge index?`)) return; await submitJob(`/api/v1/rag/documents/${encodeURIComponent(name)}`, { method: 'DELETE', headers: csrfHeaders() }) }
   const hasActiveJob = jobs.some((job) => job.status === 'queued' || job.status === 'running')
@@ -296,21 +317,24 @@ export function OperationsPage({ t }) {
   const [dashboard, setDashboard] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(true)
+  const refreshRequestRef = useRef(0)
   const refresh = useCallback(async (showLoading = true) => {
+    const requestId = ++refreshRequestRef.current
     if (showLoading) setLoading(true)
     setError('')
     try {
-      setDashboard(await readJson(`/api/v1/operations/dashboard?days=${days}`))
+      const nextDashboard = await readJson(`/api/v1/operations/dashboard?days=${days}`)
+      if (requestId === refreshRequestRef.current) setDashboard(nextDashboard)
     } catch (requestError) {
-      setError(requestError.status === 403 ? t('accessDenied') : requestError.message)
+      if (requestId === refreshRequestRef.current) setError(requestError.status === 403 ? t('accessDenied') : requestError.message)
     } finally {
-      if (showLoading) setLoading(false)
+      if (requestId === refreshRequestRef.current) setLoading(false)
     }
   }, [days, t])
   useEffect(() => {
     refresh()
     const timer = window.setInterval(() => refresh(false), 30_000)
-    return () => window.clearInterval(timer)
+    return () => { window.clearInterval(timer); refreshRequestRef.current += 1 }
   }, [refresh])
   const activeAlerts = dashboard?.alerts?.filter((alert) => alert.status === 'active') || []
   const businessTraffic = dashboard?.http?.traffic?.business || dashboard?.http
@@ -333,6 +357,7 @@ export function PrivacyPage({ onDeleted, t }) {
   const [importMode, setImportMode] = useState('merge')
   const [externalFile, setExternalFile] = useState(null)
   const [externalPreview, setExternalPreview] = useState(null)
+  const externalPreviewRequestRef = useRef(0)
   const [profileFields, setProfileFields] = useState([])
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
@@ -340,7 +365,19 @@ export function PrivacyPage({ onDeleted, t }) {
   useEffect(() => { refresh() }, [])
   const exportData = async () => { setError(''); try { const response = await apiFetch('/api/v1/export'); const payload = await response.json(); const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })); const link = document.createElement('a'); link.href = url; link.download = `serenova-export-${payload.user_id}.json`; link.click(); URL.revokeObjectURL(url); setMessage('Your export has been downloaded.') } catch (requestError) { setError(requestError.message) } }
   const importData = async (event) => { event.preventDefault(); if (!importFile) { setError(t('importFileRequired')); return } if (importMode === 'replace' && !window.confirm(t('importReplaceConfirm'))) return; setError(''); try { const form = new FormData(); form.append('file', importFile); const result = await readJson(`/api/v1/import?mode=${importMode}`, { method: 'POST', headers: csrfHeaders(), body: form }); setMessage(t('importComplete').replace('{conversations}', result.conversations).replace('{memories}', result.memories).replace('{mood_checkins}', result.mood_checkins)); setImportFile(null); await refresh() } catch (requestError) { setError(requestError.message) } }
-  const previewExternal = async (file) => { if (!file) return; setError(''); setExternalPreview(null); try { const form = new FormData(); form.append('file', file); const preview = await readJson('/api/v1/import/external/preview', { method: 'POST', headers: csrfHeaders(), body: form }); setExternalPreview(preview); setProfileFields([]) } catch (requestError) { setError(requestError.message) } }
+  useEffect(() => () => { externalPreviewRequestRef.current += 1 }, [])
+  const previewExternal = async (file) => {
+    const requestId = ++externalPreviewRequestRef.current
+    setError(''); setExternalPreview(null); setProfileFields([])
+    if (!file) return
+    try {
+      const form = new FormData(); form.append('file', file)
+      const preview = await readJson('/api/v1/import/external/preview', { method: 'POST', headers: csrfHeaders(), body: form })
+      if (requestId === externalPreviewRequestRef.current) setExternalPreview(preview)
+    } catch (requestError) {
+      if (requestId === externalPreviewRequestRef.current) setError(requestError.message)
+    }
+  }
   const importExternal = async () => { if (!externalFile || !externalPreview) return; if (importMode === 'replace' && !window.confirm(t('importReplaceConfirm'))) return; setError(''); try { const form = new FormData(); form.append('file', externalFile); form.append('profile_fields', JSON.stringify(profileFields)); const result = await readJson(`/api/v1/import/external?mode=${importMode}`, { method: 'POST', headers: csrfHeaders(), body: form }); setMessage(t('externalImportComplete').replace('{source}', result.source).replace('{conversations}', result.conversations).replace('{memories}', result.memories)); setExternalFile(null); setExternalPreview(null); setProfileFields([]); await refresh() } catch (requestError) { setError(requestError.message) } }
   const deleteData = async () => { if (confirmation !== 'DELETE') { setError('Type DELETE to confirm.'); return } if (!window.confirm('This permanently removes all of your user data. Continue?')) return; try { await readJson('/api/v1/privacy/data', { method: 'DELETE', headers: csrfHeaders(), body: JSON.stringify({ confirmation }) }); onDeleted() } catch (requestError) { setError(requestError.message) } }
   const stats = summary ? [[t('conversations'), summary.conversation_count || 0], [t('memories'), summary.memory_count || 0], [t('mood'), summary.mood_count || 0]] : []
