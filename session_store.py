@@ -36,6 +36,8 @@ logger = logging.getLogger(__name__)
 _IS_WINDOWS = sys.platform.startswith("win")
 _LOCK_RETRY_INTERVAL = 0.05
 _LOCK_TIMEOUT = 30.0
+_LOCAL_FILE_LOCKS: dict[Path, threading.RLock] = {}
+_LOCAL_FILE_LOCKS_GUARD = threading.Lock()
 SESSION_SECTIONS = (
     "history",
     "emotion_memory",
@@ -114,19 +116,32 @@ def _release_lock_windows(f) -> None:
     msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
 
 
+def _local_file_lock(lock_path: Path) -> threading.RLock:
+    """Return a process-local guard before taking the cross-process file lock.
+
+    ``msvcrt.locking`` requires a non-empty byte range. Serializing local
+    callers prevents one thread from initializing that byte while another
+    thread has already locked it, which otherwise surfaces as PermissionError
+    on Windows under parallel uploads.
+    """
+    with _LOCAL_FILE_LOCKS_GUARD:
+        return _LOCAL_FILE_LOCKS.setdefault(lock_path.resolve(), threading.RLock())
+
+
 @contextmanager
 def user_file_lock(user_id: str):
     lock_path = user_paths(user_id)["lock"]
-    lock_path.touch(exist_ok=True)
-    mode = "r+b" if _IS_WINDOWS else "w"
-    with open(lock_path, mode) as f:
-        acquire = _acquire_lock_windows if _IS_WINDOWS else _acquire_lock_unix
-        release = _release_lock_windows if _IS_WINDOWS else _release_lock_unix
-        acquire(f)
-        try:
-            yield
-        finally:
-            release(f)
+    with _local_file_lock(lock_path):
+        lock_path.touch(exist_ok=True)
+        mode = "r+b" if _IS_WINDOWS else "w"
+        with open(lock_path, mode) as f:
+            acquire = _acquire_lock_windows if _IS_WINDOWS else _acquire_lock_unix
+            release = _release_lock_windows if _IS_WINDOWS else _release_lock_unix
+            acquire(f)
+            try:
+                yield
+            finally:
+                release(f)
 
 
 @dataclass

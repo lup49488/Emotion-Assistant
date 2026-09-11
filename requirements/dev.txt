@@ -1,0 +1,3 @@
+# Local development and CI test environment.
+-r runtime.txt
+pytest==9.1.1

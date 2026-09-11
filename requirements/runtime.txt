@@ -1,0 +1,23 @@
+# Production runtime for the FastAPI service, local Gradio UI, RAG, and
+# knowledge-base document ingestion. Every direct dependency is pinned so a
+# fresh Docker or CI installation does not silently select a newer release.
+#
+# For GPU PyTorch, install the wheel matching the host CUDA version first; the
+# plain torch pin below intentionally resolves to the CPU wheel by default.
+torch==2.5.1
+transformers==5.9.0
+sentence-transformers==5.5.1
+faiss-cpu==1.14.2
+numpy==2.4.4
+langdetect==1.0.9
+gradio==6.19.0
+fastapi==0.139.0
+uvicorn==0.49.0
+python-multipart==0.0.32
+openai==2.44.0
+anthropic==0.116.0
+sentencepiece==0.2.1
+accelerate==1.14.0
+sacremoses==0.1.1
+pypdf==6.18.0
+python-docx==1.2.0

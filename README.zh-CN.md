@@ -79,7 +79,14 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-如果需要 GPU 版 PyTorch，请先根据本机 CUDA 版本安装对应 wheel，再安装其余依赖。当前 `requirements.txt` 中的 `torch==2.5.1` 默认会安装 CPU wheel。
+`requirements.txt` 是线上运行时的兼容入口。运行测试前安装 `requirements/dev.txt`；仅在运行语料预处理或离线情绪分析脚本时安装 `requirements/offline.txt`：
+
+```powershell
+python -m pip install -r requirements/dev.txt
+# 或：python -m pip install -r requirements/offline.txt
+```
+
+如果需要 GPU 版 PyTorch，请先根据本机 CUDA 版本安装对应 wheel，再安装其余依赖。当前运行时依赖中的 `torch==2.5.1` 默认会安装 CPU wheel。
 
 安装前端依赖：
 

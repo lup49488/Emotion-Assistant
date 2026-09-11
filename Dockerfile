@@ -12,8 +12,8 @@ RUN apt-get update \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-COPY requirements.txt ./
-RUN pip install --upgrade pip && pip install -r requirements.txt
+COPY requirements/ ./requirements/
+RUN pip install --upgrade pip && pip install -r requirements/runtime.txt
 
 
 FROM python:3.12-slim-bookworm

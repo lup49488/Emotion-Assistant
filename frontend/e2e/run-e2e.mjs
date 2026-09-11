@@ -46,7 +46,7 @@ async function stop(child) {
 
 start(process.execPath, ['e2e/mock-api.mjs'], { env: { ...process.env, E2E_MOCK_PORT: String(mockPort), E2E_FRONTEND_ORIGIN: baseUrl } })
 start(process.execPath, [
-  './node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', String(vitePort),
+  './node_modules/vite/bin/vite.js', '--configLoader', 'runner', '--host', '127.0.0.1', '--port', String(vitePort),
 ], { env: { ...process.env, VITE_API_BASE_URL: mockUrl } })
 
 try {

@@ -1,0 +1,6 @@
+# Optional corpus-analysis and preprocessing tools. These are not installed in
+# production Docker images or standard CI jobs.
+-r runtime.txt
+jieba==0.42.1
+spacy==3.8.14
+scikit-learn==1.8.0

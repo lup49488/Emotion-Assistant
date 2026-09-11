@@ -33,11 +33,15 @@ import {
   X,
 } from 'lucide-react'
 import { ApiRequestError, apiFetch, csrfHeaders, readJson } from './api'
-import { KnowledgePage, MemoryPage, MoodPage, OperationsPage, PrivacyPage } from './FeaturePages'
 import { translate } from './i18n'
 import './App.css'
 
 const AssistantMarkdown = lazy(() => import('./AssistantMarkdown'))
+const MemoryPage = lazy(() => import('./FeaturePages').then(({ MemoryPage: Page }) => ({ default: Page })))
+const MoodPage = lazy(() => import('./FeaturePages').then(({ MoodPage: Page }) => ({ default: Page })))
+const KnowledgePage = lazy(() => import('./FeaturePages').then(({ KnowledgePage: Page }) => ({ default: Page })))
+const OperationsPage = lazy(() => import('./FeaturePages').then(({ OperationsPage: Page }) => ({ default: Page })))
+const PrivacyPage = lazy(() => import('./FeaturePages').then(({ PrivacyPage: Page }) => ({ default: Page })))
 
 const NAVIGATION = [
   { id: 'chat', label: 'chat', icon: MessageSquare },
@@ -207,19 +211,19 @@ function App() {
       const response = await apiFetch('/api/v1/auth/session')
       const data = await response.json()
       setSession(data)
-      try {
-        const preference = await readJson('/api/v1/style/preference')
+      const [stylePreference, replyBasisPreference] = await Promise.allSettled([
+        readJson('/api/v1/style/preference'),
+        readJson('/api/v1/reply-basis/preference'),
+        refreshConversations(),
+      ])
+      if (stylePreference.status === 'fulfilled') {
+        const preference = stylePreference.value
         setStylePrefixes(preference.available || [])
         setOptions((current) => ({ ...current, stylePrefix: preference.style_prefix || '' }))
-      } catch {
-        // A missing style preference must not block sign-in.
       }
-      try {
-        setReplyBasisPreference(await readJson('/api/v1/reply-basis/preference'))
-      } catch {
-        // A missing optional reply-basis preference must not block sign-in.
+      if (replyBasisPreference.status === 'fulfilled') {
+        setReplyBasisPreference(replyBasisPreference.value)
       }
-      await refreshConversations()
     } catch {
       setSession(null)
     }
@@ -661,12 +665,16 @@ function App() {
 
       {whyOpen && <button className="reply-context-backdrop" aria-label={t('closeContext')} onClick={() => setWhyOpen(false)} />}
       {whyOpen && <ReplyContextPanel latestMessage={latestAssistantMessage} onClose={() => setWhyOpen(false)} options={options} tone={activeToneLabel} preference={replyBasisPreference} onSavePreference={saveReplyBasisPreference} onCorrectTurn={correctReplyBasisTurn} t={t} />}
-      {settingsOpen && <ModelSettingsPanel activeModelLabel={activeModelLabel} changeProvider={changeProvider} editableModelField={editableModelField} modelChoices={modelChoices} onClose={() => setSettingsOpen(false)} options={options} providerCatalog={providerCatalog} saveStylePrefix={saveStylePrefix} setEditableModelField={setEditableModelField} setOptions={setOptions} styleName={styleName} stylePrefixes={visibleStylePrefixes} t={t} />}</> : <section className="feature-main">{activeView === 'memory' && <MemoryPage t={t} locale={locale} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} locale={locale} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</section>}
+      {settingsOpen && <ModelSettingsPanel activeModelLabel={activeModelLabel} changeProvider={changeProvider} editableModelField={editableModelField} modelChoices={modelChoices} onClose={() => setSettingsOpen(false)} options={options} providerCatalog={providerCatalog} saveStylePrefix={saveStylePrefix} setEditableModelField={setEditableModelField} setOptions={setOptions} styleName={styleName} stylePrefixes={visibleStylePrefixes} t={t} />}</> : <section className="feature-main"><Suspense fallback={<FeaturePageLoading label={t('loading')} />}>{activeView === 'memory' && <MemoryPage t={t} locale={locale} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} locale={locale} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</Suspense></section>}
         </div>
       </section>
       <MobileBottomNavigation activeView={activeView} moreOpen={mobileMoreOpen} navigateWorkspace={navigateWorkspace} setMoreOpen={setMobileMoreOpen} t={t} visibleNavigation={visibleNavigation} />
     </main>
   )
+}
+
+function FeaturePageLoading({ label }) {
+  return <div className="feature-page-loading" role="status"><LoaderCircle size={18} className="spin" />{label}</div>
 }
 
 function WorkspaceTopbar({ locale, setLocale, setTheme, t, theme }) {

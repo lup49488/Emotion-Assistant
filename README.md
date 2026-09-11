@@ -79,7 +79,14 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-For GPU PyTorch, install the matching CUDA wheel before installing the rest of the requirements. The checked-in `requirements.txt` uses the plain `torch==2.5.1` spec, which installs the CPU wheel by default.
+`requirements.txt` remains the compatibility entry point for the production runtime. Install `requirements/dev.txt` before running tests, or `requirements/offline.txt` only when using corpus-preprocessing or offline sentiment-analysis scripts:
+
+```powershell
+python -m pip install -r requirements/dev.txt
+# Or: python -m pip install -r requirements/offline.txt
+```
+
+For GPU PyTorch, install the matching CUDA wheel before installing the rest of the requirements. The runtime dependency set uses the plain `torch==2.5.1` spec, which installs the CPU wheel by default.
 
 Install frontend dependencies:
 

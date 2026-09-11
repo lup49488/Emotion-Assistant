@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "vite --configLoader runner",
+    "build": "vite build --configLoader runner",
     "lint": "oxlint && node scripts/check-design-tokens.mjs && node scripts/check-theme-blind-css.mjs",
     "test:e2e": "node e2e/run-e2e.mjs",
     "preview": "vite preview",

@@ -27,7 +27,7 @@ from fastapi import Cookie, Depends, FastAPI, File, Form, Header, HTTPException,
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
@@ -37,38 +37,16 @@ from api_contracts import (
     BackgroundJobResponse,
     ChatRequest,
     ChatResponse,
-    ContractInfoResponse,
-    ConversationCreateRequest,
-    ConversationListResponse,
-    ConversationRenameRequest,
-    ConversationResponse,
     DataImportResponse,
     ExportResponse,
-    HealthResponse,
     InterestMemoryUpdateRequest,
-    LivenessResponse,
-    LoginRequest,
-    LoginResponse,
     LongTermMemoryUpdateRequest,
     PendingMemoryUpdateRequest,
-    MemorySavePreferenceRequest,
-    MemorySavePreferenceResponse,
-    ReplyBasisPreferenceRequest,
-    ReplyBasisPreferenceResponse,
-    ReplyBasisTurnCorrectionRequest,
-    ReplyBasisTurnCorrectionResponse,
     MemoryQualityResponse,
     MemorySnapshotResponse,
-    MoodCheckinListResponse,
-    MoodCheckinRequest,
-    MoodCheckinResponse,
-    MoodImage,
-    ObservabilitySummaryResponse,
-    OperationsDashboardResponse,
     PrivacyDeletionResponse,
     PrivacyDeleteRequest,
     PrivacyResponse,
-    ProviderCatalogResponse,
     RagEvaluationRequest,
     RagEvaluationResponse,
     RagEvidenceStatus,
@@ -79,23 +57,21 @@ from api_contracts import (
     RagSearchRequest,
     RagSearchResponse,
     RagStatusResponse,
-    SessionResponse,
-    StylePreferenceRequest,
-    StylePreferenceResponse,
-    StatusResponse,
     UsageEventsResponse,
     UsageSummaryResponse,
-    WeeklyMoodResponse,
 )
+from api_routes.auth import create_auth_router
+from api_routes.conversations import create_conversations_router
+from api_routes.mood import create_mood_router
+from api_routes.preferences import create_preferences_router
+from api_routes.system import create_system_router
 from chatbot import crisis_precheck, handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from emotion import detect_lang
 from auth_store import access_key_version
 from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_RAG_ADMIN_USER_IDS, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER, RAG_REQUIRE_EVIDENCE
-from auth_rate_limit import clear_login_failures, login_allowed, record_login_failure
 from api_usage_store import list_usage_events, usage_summary
-from conversation_store import append_exchange, create_conversation, delete_conversation, get_conversation, get_conversation_message, last_exchange_message_ids, list_conversations, remove_last_exchange, rename_conversation
+from conversation_store import append_exchange, get_conversation_message, last_exchange_message_ids, remove_last_exchange
 from export_store import build_user_export_payload
-from gui_auth import authorize
 from knowledge_store import (
     SUPPORTED_EXTENSIONS,
     assess_knowledge_quality,
@@ -109,8 +85,7 @@ from knowledge_store import (
     release_gate_status,
 )
 from job_store import get_job, job_manager, list_jobs, mark_interrupted_jobs
-from mood_image_store import MAX_IMAGE_BYTES, delete_mood_checkin_images, delete_mood_image, get_mood_image_path, list_mood_images, save_mood_image
-from mood_store import add_mood_checkin, delete_mood_checkin, format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
+from mood_store import format_mood_fluctuation_analysis, format_weekly_mood_summary, get_weekly_mood_points, load_mood_checkins
 from memory_store import (
     confirm_pending_memory,
     correct_turn_emotion_memory,
@@ -120,7 +95,6 @@ from memory_store import (
     update_pending_memory_text,
     undo_memory_event,
 )
-from memory_preference_store import get_memory_save_mode, set_memory_save_mode
 from model_warmup import start_api_background_warmup, warmup_status
 from observability import chat_finished, chat_streaming_first_token, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
 from observability_store import observability_summary, record_http_event
@@ -129,9 +103,7 @@ from provider_registry import provider_catalog
 from privacy_store import delete_all_user_data, privacy_summary
 from rag_evaluation_store import latest_evaluation_report, run_evaluation
 from rag_feedback_store import create_citation_trace, feedback_summary, submit_feedback
-from style_preference_store import get_style_prefix, set_style_prefix
-from reply_basis_store import get_reply_basis_preference, set_reply_basis_preference
-from style_store import style_prefixes
+from style_preference_store import get_style_prefix
 from user_data_import import import_external_export, import_user_export, preview_external_import
 from service_errors import ServiceError
 from sqlite_store import connection, storage_backend
@@ -511,18 +483,6 @@ def _health_payload() -> dict[str, Any]:
     }
 
 
-@app.get("/health", response_model=HealthResponse, deprecated=True)
-def health() -> dict[str, Any]:
-    """Deprecated compatibility report that always returns 200; use /health/live or /health/ready."""
-    return _health_payload()
-
-
-@app.get("/health/live", response_model=LivenessResponse)
-def health_live() -> dict[str, str]:
-    """Report process liveness without treating optional startup work as failure."""
-    return {"status": "ok"}
-
-
 def _required_components_ok(payload: dict[str, Any]) -> bool:
     """Report whether every dependency that traffic actually needs is healthy."""
     return all(
@@ -531,52 +491,18 @@ def _required_components_ok(payload: dict[str, Any]) -> bool:
     )
 
 
-@app.get("/health/ready", response_model=HealthResponse)
-def health_ready() -> dict[str, Any] | JSONResponse:
-    """Report whether this instance can safely receive proxied application traffic.
-
-    An optional component that failed to warm up leaves the overall status
-    degraded but keeps this instance serving, so Docker does not restart a
-    usable chat service over a preload that never had to succeed.
-    """
-    payload = _health_payload()
-    if not _required_components_ok(payload):
-        return JSONResponse(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, content=payload)
-    return payload
-
-
-@app.get("/api/v1/status", response_model=StatusResponse)
-def api_status() -> dict[str, Any]:
-    """Versioned operational status for reverse proxies and monitoring."""
-    return {**_health_payload(), "api_version": "v1"}
-
-
-@app.get("/api/v1/model/providers", response_model=ProviderCatalogResponse)
-def model_providers(_: CurrentUser) -> dict[str, object]:
-    """Provider and model choices for the signed-in settings panel.
-
-    No credentials are returned, but default_base_url comes from the deployment's
-    own configuration and can name an internal gateway — so this stays behind the
-    session like every other configuration view.
-    """
-    return provider_catalog()
-
-
-@app.get("/api/v1/observability/summary", response_model=ObservabilitySummaryResponse)
-def observability_summary_endpoint(user_id: CurrentUser, days: int = Query(default=7, ge=1, le=90)) -> dict[str, Any]:
-    _require_operations_user(user_id)
-    return observability_summary(days=days)
-
-
-@app.get("/api/v1/operations/dashboard", response_model=OperationsDashboardResponse)
-def operations_dashboard_endpoint(user_id: CurrentUser, days: int = Query(default=7, ge=1, le=90)) -> dict[str, Any]:
-    _require_operations_user(user_id)
-    return operations_dashboard(days=days)
-
-
-@app.get("/api/v1/contract", response_model=ContractInfoResponse)
-def contract_info() -> dict[str, str]:
-    return {"api_version": "v1", "contract_version": API_CONTRACT_VERSION, "openapi_path": "/openapi.json"}
+app.include_router(
+    create_system_router(
+        health_payload=lambda: _health_payload(),
+        required_components_ok=_required_components_ok,
+        current_user=_current_user,
+        require_operations_user=_require_operations_user,
+        provider_catalog_loader=lambda: provider_catalog(),
+        observability_summary_loader=lambda days: observability_summary(days=days),
+        operations_dashboard_loader=lambda days: operations_dashboard(days=days),
+        contract_version=API_CONTRACT_VERSION,
+    )
+)
 
 
 def _login_origin_allowed(origin: str, raw_request: Request) -> bool:
@@ -593,33 +519,30 @@ def _login_origin_allowed(origin: str, raw_request: Request) -> bool:
     return bool(host) and urlsplit(origin).netloc == host
 
 
-@app.post("/api/v1/auth/login", response_model=LoginResponse)
-def login(request: LoginRequest, response: Response, raw_request: Request) -> dict[str, Any]:
-    origin = raw_request.headers.get("origin", "").strip()
-    if origin and not _login_origin_allowed(origin, raw_request):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Cross-site login is not permitted.")
-    client_ip = _client_ip(raw_request)
-    allowed, retry_after = login_allowed(client_ip, request.user_id)
-    if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many failed login attempts. Try again in {retry_after} seconds.",
-            headers={"Retry-After": str(retry_after)},
-        )
-    user_id, auth_error = authorize(request.user_id, request.access_key)
-    if auth_error:
-        record_login_failure(client_ip, request.user_id)
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=auth_error)
-    clear_login_failures(client_ip, request.user_id)
-    expires_in = _set_session_cookies(response, user_id)
-    return {"token_type": "cookie", "expires_in": expires_in, "user_id": user_id}
-
-
-@app.post("/api/v1/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
-def logout(response: Response, _: CsrfCurrentUser) -> None:
-    cookie_settings = {"path": "/", "secure": API_COOKIE_SECURE, "samesite": API_COOKIE_SAMESITE}
-    response.delete_cookie(API_SESSION_COOKIE_NAME, httponly=True, **cookie_settings)
-    response.delete_cookie(API_CSRF_COOKIE_NAME, **cookie_settings)
+app.include_router(
+    create_auth_router(
+        current_user=_current_user,
+        csrf_protected_user=_csrf_protected_user,
+        login_origin_allowed=_login_origin_allowed,
+        client_ip=lambda request: _client_ip(request),
+        set_session_cookies=lambda response, user_id: _set_session_cookies(response, user_id),
+        cookie_settings=lambda: {
+            "session_name": API_SESSION_COOKIE_NAME,
+            "csrf_name": API_CSRF_COOKIE_NAME,
+            "cookie_options": {"path": "/", "secure": API_COOKIE_SECURE, "samesite": API_COOKIE_SAMESITE},
+        },
+        operations_users=lambda: {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()},
+        can_manage_knowledge=lambda user_id: _can_manage_knowledge(user_id),
+    )
+)
+app.include_router(
+    create_preferences_router(
+        current_user=_current_user,
+        csrf_protected_user=_csrf_protected_user,
+        update_session_memory_save_mode=lambda user_id, mode: _update_session_memory_save_mode(user_id, mode),
+        correct_turn_memory=lambda user_id, turn_id, action: _correct_turn_memory(user_id, turn_id, action),
+    )
+)
 
 
 def _resolved_style_prefix(user_id: str, request: ChatRequest) -> str:
@@ -629,64 +552,14 @@ def _resolved_style_prefix(user_id: str, request: ChatRequest) -> str:
     return get_style_prefix(user_id)
 
 
-@app.get("/api/v1/style/preference", response_model=StylePreferenceResponse)
-def read_style_preference(user_id: CurrentUser) -> dict[str, Any]:
-    return {"style_prefix": get_style_prefix(user_id), "available": style_prefixes()}
-
-
-@app.put("/api/v1/style/preference", response_model=StylePreferenceResponse)
-def update_style_preference(request: StylePreferenceRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
-    return {"style_prefix": set_style_prefix(user_id, request.style_prefix), "available": style_prefixes()}
-
-
-@app.get("/api/v1/memory/preference", response_model=MemorySavePreferenceResponse)
-def read_memory_save_preference(user_id: CurrentUser) -> dict[str, str]:
-    return {"mode": get_memory_save_mode(user_id)}
-
-
-@app.put("/api/v1/memory/preference", response_model=MemorySavePreferenceResponse)
-def update_memory_save_preference(
-    request: MemorySavePreferenceRequest, user_id: CsrfCurrentUser,
-) -> dict[str, str]:
-    mode = set_memory_save_mode(user_id, request.mode)
+def _update_session_memory_save_mode(user_id: str, mode: str) -> None:
     with session_store.session(user_id) as state:
         state.memory_save_mode = mode
-    return {"mode": mode}
 
 
-@app.get("/api/v1/reply-basis/preference", response_model=ReplyBasisPreferenceResponse)
-def read_reply_basis_preference(user_id: CurrentUser) -> dict[str, bool | str | None]:
-    return get_reply_basis_preference(user_id)
-
-
-@app.put("/api/v1/reply-basis/preference", response_model=ReplyBasisPreferenceResponse)
-def update_reply_basis_preference(
-    request: ReplyBasisPreferenceRequest, user_id: CsrfCurrentUser,
-) -> dict[str, bool | str | None]:
-    return set_reply_basis_preference(user_id, request.enabled, request.correction)
-
-
-@app.post("/api/v1/reply-basis/corrections", response_model=ReplyBasisTurnCorrectionResponse)
-def correct_reply_basis_turn(
-    request: ReplyBasisTurnCorrectionRequest, user_id: CsrfCurrentUser,
-) -> dict[str, Any]:
+def _correct_turn_memory(user_id: str, turn_id: str, action: str) -> str:
     with session_store.session(user_id) as state:
-        memory_action = correct_turn_emotion_memory(state, request.turn_id, request.action)
-    preference = get_reply_basis_preference(user_id)
-    if request.action in {"frustrated", "not_this"}:
-        preference = set_reply_basis_preference(user_id, True, "steady")
-    return {"memory_action": memory_action, "preference": preference}
-
-
-@app.get("/api/v1/auth/session", response_model=SessionResponse)
-def session_info(user_id: CurrentUser) -> dict[str, Any]:
-    allowed = {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()}
-    return {
-        "user_id": user_id,
-        "authentication": "signed_cookie",
-        "can_access_operations": user_id in allowed,
-        "can_manage_knowledge": _can_manage_knowledge(user_id),
-    }
+        return correct_turn_emotion_memory(state, turn_id, action)
 
 
 def _rollback_short_term_exchange(user_id: str, user_text: str) -> None:
@@ -730,10 +603,6 @@ def _mood_reflection_context(user_id: str, selected: dict[str, Any]) -> dict[str
         ),
         "fluctuation_analysis": format_mood_fluctuation_analysis(points),
     }
-
-
-def _mood_record_with_images(user_id: str, record: dict[str, Any]) -> dict[str, Any]:
-    return {**record, "images": list_mood_images(user_id, str(record["date"]))}
 
 
 def _quoted_message_context(user_id: str, request: ChatRequest) -> dict[str, str] | None:
@@ -1016,120 +885,21 @@ def rag_feedback(request: RagFeedbackRequest, user_id: CsrfCurrentUser) -> dict[
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
-@app.post("/api/v1/mood/checkins", response_model=MoodCheckinResponse)
-def create_mood_checkin(request: MoodCheckinRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
-    try:
-        record = add_mood_checkin(
-            user_id=user_id,
-            mood=request.mood,
-            intensity=request.intensity,
-            note=request.note,
-            checkin_date=request.checkin_date,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return {"record": _mood_record_with_images(user_id, record)}
+app.include_router(
+    create_mood_router(
+        current_user=_current_user,
+        csrf_protected_user=_csrf_protected_user,
+        read_upload_limited=_read_upload_limited,
+    )
+)
 
 
-@app.get("/api/v1/mood/checkins", response_model=MoodCheckinListResponse)
-def list_mood_records(user_id: CurrentUser) -> dict[str, Any]:
-    return {"records": [_mood_record_with_images(user_id, record) for record in load_mood_checkins(user_id)]}
-
-
-@app.post("/api/v1/mood/checkins/{checkin_date}/images", response_model=MoodImage, status_code=status.HTTP_201_CREATED)
-async def upload_mood_image(
-    checkin_date: str,
-    file: Annotated[UploadFile, File(...)],
-    user_id: CsrfCurrentUser,
-) -> dict[str, Any]:
-    try:
-        if not any(record["date"] == checkin_date for record in load_mood_checkins(user_id)):
-            raise HTTPException(status_code=404, detail="Mood Check-in was not found.")
-        return save_mood_image(user_id, checkin_date, await _read_upload_limited(file, MAX_IMAGE_BYTES))
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    finally:
-        await file.close()
-
-
-@app.get("/api/v1/mood/checkins/{checkin_date}/images/{image_id}")
-def get_mood_image(checkin_date: str, image_id: str, user_id: CurrentUser) -> FileResponse:
-    path = get_mood_image_path(user_id, checkin_date, image_id)
-    if path is None:
-        raise HTTPException(status_code=404, detail="Mood Check-in image was not found.")
-    image = next((item for item in list_mood_images(user_id, checkin_date) if item["id"] == image_id), None)
-    if image is None:
-        raise HTTPException(status_code=404, detail="Mood Check-in image was not found.")
-    return FileResponse(path, media_type=image["content_type"], headers={"Cache-Control": "private, no-store"})
-
-
-@app.delete("/api/v1/mood/checkins/{checkin_date}/images/{image_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_mood_image(checkin_date: str, image_id: str, user_id: CsrfCurrentUser) -> None:
-    if not delete_mood_image(user_id, checkin_date, image_id):
-        raise HTTPException(status_code=404, detail="Mood Check-in image was not found.")
-
-
-@app.delete("/api/v1/mood/checkins/{checkin_date}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_mood_checkin(checkin_date: str, user_id: CsrfCurrentUser) -> None:
-    try:
-        deleted = delete_mood_checkin(user_id, checkin_date)
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Mood check-in was not found.")
-    delete_mood_checkin_images(user_id, checkin_date)
-
-
-@app.get("/api/v1/mood/weekly", response_model=WeeklyMoodResponse)
-def weekly_mood(
-    user_id: CurrentUser,
-    end_date: str | None = None,
-    days: int = Query(default=7, ge=1, le=31),
-    locale: str = Query(default="zh"),
-) -> dict[str, Any]:
-    try:
-        points = get_weekly_mood_points(user_id, end_date=end_date, days=days)
-        return {
-            "points": points,
-            "summary": format_weekly_mood_summary(user_id, end_date=end_date, days=days, locale=locale),
-            "analysis": format_mood_fluctuation_analysis(points, locale=locale),
-        }
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-
-@app.get("/api/v1/conversations", response_model=ConversationListResponse)
-def conversations(user_id: CurrentUser) -> dict[str, Any]:
-    return {"conversations": list_conversations(user_id)}
-
-
-@app.post("/api/v1/conversations", response_model=ConversationResponse)
-def new_conversation(request: ConversationCreateRequest, user_id: CsrfCurrentUser) -> dict[str, Any]:
-    return {"conversation": create_conversation(user_id, request.title)}
-
-
-@app.get("/api/v1/conversations/{conversation_id}", response_model=ConversationResponse)
-def conversation(conversation_id: str, user_id: CurrentUser) -> dict[str, Any]:
-    result = get_conversation(user_id, conversation_id)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Conversation was not found.")
-    return {"conversation": result}
-
-
-@app.put("/api/v1/conversations/{conversation_id}", response_model=ConversationResponse)
-def rename_saved_conversation(
-    conversation_id: str, request: ConversationRenameRequest, user_id: CsrfCurrentUser,
-) -> dict[str, Any]:
-    result = rename_conversation(user_id, conversation_id, request.title)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Conversation was not found.")
-    return {"conversation": result}
-
-
-@app.delete("/api/v1/conversations/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_conversation(conversation_id: str, user_id: CsrfCurrentUser) -> None:
-    if not delete_conversation(user_id, conversation_id):
-        raise HTTPException(status_code=404, detail="Conversation was not found.")
+app.include_router(
+    create_conversations_router(
+        current_user=_current_user,
+        csrf_protected_user=_csrf_protected_user,
+    )
+)
 
 
 @app.get("/api/v1/memory", response_model=MemorySnapshotResponse)
