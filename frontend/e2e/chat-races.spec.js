@@ -78,3 +78,31 @@ test('a late conversation response cannot overwrite the latest selection', async
   await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
   await expect(page.locator('.message.assistant')).toContainText('Content of second-thread')
 })
+
+test('a late new conversation response cannot overwrite a later selection', async ({ page }) => {
+  await page.getByRole('button', { name: 'New chat', exact: true }).first().click()
+  const existing = page.locator('.desktop-sidebar .conversation').first()
+  await expect(existing).toBeVisible()
+
+  const existingTitle = 'Chosen conversation'
+  await page.route('**/api/v1/conversations/*', (route) => route.fulfill({
+    json: { conversation: { id: 'chosen-conversation', title: existingTitle, messages: [] } },
+  }))
+  let releaseCreate
+  const createGate = new Promise((resolve) => { releaseCreate = resolve })
+  await page.route('**/api/v1/conversations', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    await createGate
+    await route.fallback()
+  })
+
+  const createRequest = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/api/v1/conversations'))
+  await page.getByRole('button', { name: 'New chat', exact: true }).first().click()
+  await createRequest
+  await existing.click()
+  await expect(page.locator('.chat-header h1')).toHaveText(existingTitle)
+
+  releaseCreate()
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  await expect(page.locator('.chat-header h1')).toHaveText(existingTitle)
+})

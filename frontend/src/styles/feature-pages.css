@@ -1,0 +1,213 @@
+/* Personal data, mood, knowledge, privacy, and operations pages. */
+/* V2 feature pages: open, information-led layouts that match the workspace. */
+.v2-feature-page { width: min(1320px, calc(100% - 96px)); max-width: 1320px; margin-left: clamp(64px, 6vw, 112px); margin-right: 0; padding-top: 6px; }
+.v2-feature-page .feature-header { align-items: flex-start; padding-bottom: 30px; }
+.v2-feature-page .feature-header h1 { font-size: 31px; font-weight: 600; }
+.v2-feature-page .feature-header p { max-width: 620px; font-size: 15px; line-height: 1.72; }
+.v2-feature-page .stat-grid {
+  gap: 30px;
+  margin: 24px 0 38px;
+  padding: 0 0 28px;
+  border-bottom: 1px solid var(--line);
+}
+.v2-feature-page .stat {
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.v2-feature-page .stat span {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+}
+.v2-feature-page .stat strong { font-size: 30px; font-weight: 550; line-height: 1.1; }
+.v2-feature-page .data-panel {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+.v2-feature-page .data-panel h2 { margin-bottom: 10px; font-size: 20px; font-weight: 550; }
+.v2-feature-page .data-panel > p { font-size: 14px; }
+.memory-page .two-column { gap: 46px; margin: 30px 0; }
+.memory-page .two-column .data-panel { padding-bottom: 26px; border-bottom: 1px solid var(--line); }
+.memory-page > .data-panel { padding: 28px 0; border-bottom: 1px solid var(--line); }
+.memory-page > .data-panel:last-child { border-bottom: 0; }
+.memory-page .memory-mode-field { display: grid; gap: 9px; color: var(--muted); font-size: 12px; }
+.memory-page .memory-mode-field select {
+  width: 100%; min-height: 42px; padding: 0 12px; border: 1px solid var(--line);
+  border-radius: 7px; background: var(--surface); color: var(--ink); font-size: 14px;
+}
+.memory-page .memory-list { gap: 10px; }
+.memory-page .memory-row {
+  padding: 16px 0;
+  border-top-color: var(--line);
+}
+.memory-page .memory-row:first-child { border-top: 0; }
+.memory-page .memory-row p { color: var(--ink); font-size: 15px; line-height: 1.65; }
+.memory-page .memory-row span { color: var(--muted); font-size: 12px; }
+.memory-page .pending-memory-actions .primary-button { background: transparent; border: 1px solid var(--accent); color: var(--accent-bright, var(--accent)); }
+.memory-page .pending-memory-actions .primary-button:hover { background: var(--accent-wash); }
+.memory-page .memory-audit-row { position: relative; padding-left: 20px; }
+.memory-page .memory-audit-row::before { content: ''; position: absolute; left: 0; top: 23px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.memory-page .memory-v2-grid { display: grid; grid-template-columns: minmax(0, 1.42fr) minmax(390px, .98fr); gap: 52px; align-items: start; }
+.memory-page .memory-v2-primary > .data-panel { padding: 0 0 34px; margin: 0 0 34px; border-bottom: 1px solid var(--line); }
+.memory-page .memory-v2-primary > .data-panel:last-child { margin-bottom: 0; border-bottom: 0; }
+.memory-page .memory-v2-sidebar { display: grid; gap: 32px; padding-left: 0; }
+.memory-page .memory-v2-sidebar .data-panel { margin: 0; }
+.memory-page .memory-policy-options { display: grid; gap: 8px; }
+.memory-page .memory-policy-options label { display: flex; align-items: flex-start; gap: 10px; padding: 13px; border: 1px solid var(--line); border-radius: 8px; cursor: pointer; }
+.memory-page .memory-policy-options label.selected { border-color: var(--accent); background: var(--accent-wash); }
+.memory-page .memory-policy-options input { width: 15px; height: 15px; margin: 2px 0 0; accent-color: var(--accent); }
+.memory-page .memory-policy-options b { display: block; font-size: 14px; font-weight: 600; }
+.memory-page .memory-policy-options small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.memory-page .memory-quality-note { margin-top: 13px; color: var(--muted); font-size: 12px; }
+.memory-page .memory-v2-sidebar .memory-row { padding: 12px 0 12px 18px; }
+.memory-page .memory-v2-sidebar .memory-row p { font-size: 13px; }
+.memory-page .memory-event-details { margin-top: 8px; }
+.memory-page .memory-event-details summary { color: var(--accent-bright, var(--accent)); cursor: pointer; font-size: 13px; list-style: none; }
+.memory-page .memory-event-details summary::-webkit-details-marker { display: none; }
+.memory-page .memory-event-details summary::after { content: '⌄'; margin-left: 7px; }
+.memory-page .memory-event-scroll { max-height: 380px; margin-top: 12px; overflow-y: auto; border-top: 1px solid var(--line); }
+.memory-page .memory-event-scroll .memory-row { margin-right: 10px; }
+.memory-page .pending-memory-row { padding: 20px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.memory-page .pending-memory-row:first-child { border-left: 2px solid var(--accent); }
+.memory-page .pending-memory-row + .pending-memory-row { margin-top: 2px; }
+.memory-page .pending-memory-row textarea { min-width: 0; flex: 1; border: 1px solid var(--accent); border-radius: 7px; padding: 10px; background: var(--surface-raised); color: var(--ink); font: inherit; line-height: 1.6; }
+.mood-page .mood-page-actions { position: absolute; margin-top: -72px; right: 0; }
+.mood-page { position: relative; }
+.mood-page .mood-kicker { display: block; margin-bottom: 8px; color: var(--accent-deep); font-size: 11px; font-weight: 700; letter-spacing: .16em; text-transform: uppercase; }
+.mood-page .mood-top { grid-template-columns: minmax(0, .9fr) minmax(0, 1.25fr); gap: 56px; margin: 34px 0 38px; }
+.mood-page .checkin-form { gap: 24px; }
+.mood-page .checkin-form h2, .mood-page .trend-panel h2 { margin-bottom: 0; }
+.mood-page .checkin-form label { gap: 9px; color: var(--muted); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; }
+.mood-page .checkin-form input:not([type='range']), .mood-page .checkin-form textarea {
+  padding: 12px 13px; border-radius: 7px; font-size: 15px; text-transform: none;
+}
+.mood-page .checkin-form textarea { min-height: 112px; line-height: 1.7; }
+.mood-page .mood-chip-row, .mood-page .mood-intensity-row, .mood-page .mood-period-tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: -14px; }
+.mood-page .mood-chip-row button, .mood-page .mood-period-tabs button { min-height: 30px; padding: 0 11px; border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--muted); font: inherit; font-size: 13px; letter-spacing: 0; text-transform: none; }
+.mood-page .mood-chip-row button.selected, .mood-page .mood-period-tabs button.selected { border-color: transparent; background: var(--accent-wash); color: var(--accent-deep); }
+.mood-page .mood-intensity-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); margin: 0; }
+.mood-page .mood-intensity-row button { height: 40px; border: 0; border-radius: 5px; background: var(--surface-sunken); color: var(--muted); font: inherit; }
+.mood-page .mood-intensity-row button.selected { background: var(--accent); color: white; }
+.mood-page .mood-photo-field { display: grid; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.mood-page .mood-image-picker { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.mood-page .mood-image-picker figure,
+.mood-page .mood-photo-add { width: 88px; height: 88px; margin: 0; border-radius: 8px; }
+.mood-page .mood-image-picker figure { position: relative; overflow: hidden; border: 1px solid var(--line); background: var(--surface-sunken); }
+.mood-page .mood-image-picker figure img { width: 100%; height: 100%; display: block; object-fit: cover; }
+.mood-page .mood-image-picker figure button { position: absolute; top: 4px; right: 4px; display: grid; width: 25px; height: 25px; place-items: center; border: 0; border-radius: 50%; background: rgba(18, 19, 33, .78); color: white; }
+.mood-page .mood-photo-add { position: relative; display: grid; place-items: center; border: 1px dashed var(--muted); color: var(--accent-deep); background: var(--surface-raised); cursor: pointer; }
+.mood-page .mood-photo-add:hover { border-color: var(--accent); background: var(--accent-wash); }
+.mood-page .mood-photo-add input[type='file'] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
+.mood-page .trend-panel { padding-left: 36px; border-left: 1px solid var(--line); }
+.mood-page .mood-trend-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.mood-page .mood-trend-title .mood-period-tabs { margin: 0; justify-content: flex-end; }
+.mood-page .mood-period-tabs button { border: 0; padding: 0 8px; }
+.mood-page .trend-panel .mood-chart { margin: 22px 0; }
+.mood-page .mood-summary-strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; padding: 22px 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.mood-page .mood-summary-strip div { display: grid; gap: 7px; }
+.mood-page .mood-summary-strip span { color: var(--muted); font-size: 12px; }
+.mood-page .mood-summary-strip strong { font-size: 24px; overflow-wrap: anywhere; }
+.mood-page .mood-observation { padding-top: 28px; }
+.mood-page .mood-observation h3 { margin: 0 0 10px; font-size: 17px; }
+.mood-page .mood-observation p { margin: 0 0 16px; color: var(--muted); font-size: 14px; line-height: 1.75; }
+.mood-page > .data-panel { padding: 30px 0 0; border-top: 1px solid var(--line); }
+.mood-page .record-row { padding: 18px 0; }
+.mood-page .record-row strong { font-size: 16px; font-weight: 550; }
+.mood-page .record-row.editing { background: transparent; box-shadow: inset 2px 0 var(--accent); margin: 0; padding-left: 14px; padding-right: 0; border-radius: 0; }
+.knowledge-page .knowledge-kicker { display: block; margin-bottom: 8px; color: var(--accent-deep); font-size: 11px; font-weight: 700; letter-spacing: .16em; }
+.knowledge-page .knowledge-stat-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 1080px; }
+.knowledge-page .knowledge-search-section { max-width: 940px; margin: 0 0 38px; }
+.knowledge-page .knowledge-search-section h2, .knowledge-page .knowledge-documents h2 { margin: 0 0 14px; font-size: 21px; font-weight: 550; }
+.knowledge-page .knowledge-search-form { display: flex; gap: 10px; }
+.knowledge-page .knowledge-search-form input { min-width: 0; flex: 1; height: 48px; padding: 0 15px; border: 1px solid var(--line); border-radius: 8px; font: inherit; font-size: 15px; }
+.knowledge-page .knowledge-search-form .secondary-button { min-width: 122px; height: 48px; border-color: var(--accent); color: var(--accent-bright, var(--accent)); background: transparent; }
+.knowledge-page .knowledge-results { display: grid; gap: 10px; margin-top: 18px; }
+.knowledge-page .knowledge-result-card { display: flex; justify-content: space-between; gap: 20px; padding: 15px 18px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); }
+.knowledge-page .knowledge-result-card strong { font-size: 14px; font-weight: 600; }
+.knowledge-page .knowledge-result-card p { margin: 7px 0 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+.knowledge-page .knowledge-result-card > b { flex: 0 0 auto; color: var(--accent-bright, var(--accent)); font-size: 14px; font-weight: 600; }
+.knowledge-page .knowledge-documents { max-width: 1080px; padding-top: 30px; border-top: 1px solid var(--line); }
+.knowledge-page .knowledge-documents .panel-title-row { align-items: center; margin-bottom: 16px; }
+.knowledge-page .knowledge-upload-form { display: inline-flex; }
+.knowledge-page .knowledge-upload-form label { cursor: pointer; }
+.knowledge-page .knowledge-upload-form input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.knowledge-page .knowledge-document-table { border-top: 1px solid var(--line); }
+.knowledge-page .knowledge-document-head, .knowledge-page .knowledge-document-row { display: grid; grid-template-columns: minmax(0, 1fr) 100px 150px 36px; gap: 16px; align-items: center; }
+.knowledge-page .knowledge-document-head { min-height: 40px; color: var(--muted); font-size: 12px; }
+.knowledge-page .knowledge-document-row { min-height: 52px; border-top: 1px solid var(--line); font-size: 14px; }
+.knowledge-page .knowledge-document-row strong { min-width: 0; overflow-wrap: anywhere; font-weight: 550; }
+.knowledge-page .knowledge-document-row span { color: var(--muted); font-size: 13px; }
+.knowledge-page .knowledge-document-row .danger-icon { justify-self: end; }
+.knowledge-page .knowledge-access-note { margin: 0; color: var(--muted); font-size: 13px; }
+.knowledge-page .knowledge-details { max-width: 1080px; margin-top: 32px; border-top: 1px solid var(--line); }
+.knowledge-page .knowledge-details summary { padding: 18px 0; color: var(--accent-bright, var(--accent)); cursor: pointer; font-size: 14px; list-style: none; }
+.knowledge-page .knowledge-details summary::-webkit-details-marker { display: none; }
+.knowledge-page .knowledge-details summary::after { content: '⌄'; margin-left: 8px; }
+.knowledge-page .knowledge-details[open] summary::after { content: '⌃'; }
+.knowledge-page .knowledge-details-content { display: grid; gap: 26px; padding: 4px 0 30px; }
+.knowledge-page .knowledge-details-content section { padding-bottom: 24px; border-bottom: 1px solid var(--line); }
+.knowledge-page .knowledge-details-content section:last-child { border-bottom: 0; }
+.knowledge-page .knowledge-details-content h3 { margin: 0 0 11px; font-size: 16px; font-weight: 550; }
+.privacy-page { max-width: 760px; }
+.privacy-page .privacy-kicker { display: block; margin-bottom: 8px; color: var(--accent-deep); font-size: 11px; font-weight: 700; letter-spacing: .16em; }
+.privacy-page .privacy-stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); max-width: 760px; }
+.privacy-page .privacy-section { padding: 27px 0; border-top: 1px solid var(--line); }
+.privacy-page .privacy-section h2 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 20px; font-weight: 550; }
+.privacy-page .privacy-section > p { margin: 0 0 16px; }
+.privacy-page .privacy-import-form { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.privacy-page .privacy-file-button { position: relative; overflow: hidden; cursor: pointer; }
+.privacy-page .privacy-file-button input { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
+.privacy-page .privacy-import-form > span, .privacy-page .privacy-file-name { max-width: 220px; overflow: hidden; color: var(--muted); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.privacy-page .privacy-import-form select { min-height: 38px; padding: 0 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--ink); }
+.privacy-page .external-import-section { background: linear-gradient(90deg, rgba(145, 125, 233, .08), transparent 68%); }
+.privacy-page .external-import-preview { display: grid; gap: 12px; margin-top: 16px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+.privacy-page .external-import-preview p { margin: 0; }
+.privacy-page .external-import-preview ul { display: grid; gap: 5px; margin: 0; padding-left: 19px; color: var(--muted); font-size: 13px; }
+.privacy-page .external-profile-fields { display: grid; gap: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.privacy-page .external-profile-fields > b { font-size: 13px; }
+.privacy-page .external-profile-fields label { display: flex; align-items: start; gap: 8px; color: var(--muted); font-size: 13px; }
+.privacy-page .external-profile-fields input { width: 15px; height: 15px; margin-top: 1px; accent-color: var(--accent); }
+.privacy-page .privacy-delete-row { display: flex; gap: 10px; align-items: center; }
+.privacy-page .two-column { grid-template-columns: 1fr; gap: 0; margin: 0; }
+.privacy-page .two-column .data-panel { padding: 30px 0; border-bottom: 1px solid var(--line); }
+.privacy-page .data-panel > p { max-width: 660px; margin: 0 0 17px; }
+.privacy-page .import-form { display: grid; grid-template-columns: minmax(0, 1fr) 180px; gap: 12px; max-width: 620px; }
+.privacy-page .import-form input { grid-column: 1 / -1; }
+.privacy-page .danger-panel { padding: 32px 0 0; border: 0; }
+.privacy-page .danger-panel h2 { color: var(--warn-text, var(--danger)); }
+.privacy-page .danger-panel input { min-height: 40px; max-width: 300px; margin-right: 10px; padding: 0 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: var(--ink); }
+.privacy-page .danger-button { background: transparent; border: 1px solid color-mix(in srgb, var(--danger) 60%, transparent); color: var(--danger); }
+.privacy-page .danger-button:hover { background: var(--coral-wash); }
+
+@media (max-width: 900px) {
+  .v2-feature-page { width: min(100% - 32px, 680px); margin: 0 auto; padding-top: 28px; }
+  .v2-feature-page .feature-header h1 { font-size: 26px; }
+  .v2-feature-page .stat-grid { gap: 20px; }
+  .mood-page .mood-page-actions { position: static; justify-content: flex-start; margin: 18px 0 0; }
+  .mood-page .mood-top { grid-template-columns: 1fr; gap: 30px; }
+  .mood-page .trend-panel { padding: 28px 0 0; border-top: 1px solid var(--line); border-left: 0; }
+  .mood-page .mood-trend-title { align-items: flex-start; flex-direction: column; }
+  .mood-page .mood-summary-strip { gap: 12px; }
+  .knowledge-page .knowledge-search-form { display: grid; }
+  .knowledge-page .knowledge-search-form .secondary-button { width: max-content; }
+  .knowledge-page .knowledge-document-head { display: none; }
+  .knowledge-page .knowledge-document-row { grid-template-columns: minmax(0, 1fr) auto; gap: 8px 16px; padding: 13px 0; }
+  .knowledge-page .knowledge-document-row strong { grid-column: 1 / 2; }
+  .knowledge-page .knowledge-document-row span { grid-row: 2; }
+  .knowledge-page .knowledge-document-row span:nth-of-type(2) { grid-column: 2; }
+  .knowledge-page .knowledge-document-row .danger-icon { grid-column: 2; grid-row: 1; }
+  .knowledge-page .knowledge-documents .panel-title-row { align-items: flex-start; }
+  .privacy-page .import-form { grid-template-columns: 1fr; }
+  .privacy-page .import-form input { grid-column: auto; }
+  .privacy-page .privacy-import-form, .privacy-page .privacy-delete-row { align-items: stretch; flex-direction: column; }
+  .privacy-page .privacy-import-form > span { max-width: none; }
+  .privacy-page .danger-panel input { display: block; width: 100%; max-width: none; margin: 0 0 12px; box-sizing: border-box; }
+  .memory-page .memory-v2-grid { grid-template-columns: 1fr; gap: 28px; }
+  .memory-page .memory-v2-sidebar { gap: 28px; }
+}

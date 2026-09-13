@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
+
+import pytest
 import session_store
 import knowledge_store
 import style_store
@@ -8,7 +11,7 @@ from export_store import build_user_export_payload
 from mood_store import add_mood_checkin, delete_mood_checkin, load_mood_checkins
 from onboarding_store import mark_onboarding_completed, onboarding_completed
 from session_store import SessionState, load_state, persist_state
-from sqlite_store import database_path
+from sqlite_store import SCHEMA_VERSION, connection, database_path
 from unittest.mock import patch
 
 
@@ -27,6 +30,22 @@ def test_sqlite_registers_auth_without_creating_legacy_json(tmp_path, monkeypatc
     assert has_access_key("alice") is True
     assert database_path().exists()
     assert not (session_store.user_dir("alice") / "access_key.json").exists()
+
+
+def test_sqlite_rejects_a_database_newer_than_supported(tmp_path, monkeypatch):
+    _enable_sqlite(tmp_path, monkeypatch)
+    path = database_path()
+    path.parent.mkdir(parents=True)
+    with sqlite3.connect(path) as raw_connection:
+        raw_connection.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+
+    with pytest.raises(RuntimeError, match="newer than supported"):
+        with connection():
+            pass
+
+    with sqlite3.connect(path) as raw_connection:
+        version = raw_connection.execute("PRAGMA user_version").fetchone()[0]
+    assert version == SCHEMA_VERSION + 1
 
 
 def test_sqlite_persists_onboarding_completion(tmp_path, monkeypatch):

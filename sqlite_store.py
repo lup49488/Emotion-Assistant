@@ -73,7 +73,13 @@ def _ensure_schema_once(conn: sqlite3.Connection) -> None:
     another process — or a fresh file at a path this process used before — is
     still recognised correctly.
     """
-    if conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION:
+    current_version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if current_version > SCHEMA_VERSION:
+        raise RuntimeError(
+            f"Database schema version {current_version} is newer than supported version "
+            f"{SCHEMA_VERSION}. Use a matching newer application version or restore a compatible backup."
+        )
+    if current_version == SCHEMA_VERSION:
         return
     ensure_schema(conn)
     conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")

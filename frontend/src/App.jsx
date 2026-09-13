@@ -199,9 +199,12 @@ function App() {
     if (activeView === 'operations' && !session?.can_access_operations) setActiveView('chat')
   }, [activeView, session])
 
-  async function refreshConversations() {
+  async function refreshConversations(expectedRequestId = null) {
     const response = await apiFetch('/api/v1/conversations')
     const data = await response.json()
+    if (expectedRequestId !== null && expectedRequestId !== conversationRequestRef.current) {
+      return data.conversations
+    }
     setConversations(data.conversations)
     return data.conversations
   }
@@ -271,20 +274,21 @@ function App() {
   }
 
   async function createConversation() {
-    conversationRequestRef.current += 1
+    const requestId = ++conversationRequestRef.current
     setNotice('')
     try {
       const response = await apiFetch('/api/v1/conversations', {
         method: 'POST', headers: csrfHeaders(), body: JSON.stringify({ title: t('newConversation') }),
       })
       const data = await response.json()
+      if (requestId !== conversationRequestRef.current) return
       const conversation = { ...data.conversation, messages: [] }
       setActiveConversation(conversation)
       setMessages([])
       setQuotedMessage(null)
-      await refreshConversations()
+      await refreshConversations(requestId)
     } catch (error) {
-      setNotice(error.message)
+      if (requestId === conversationRequestRef.current) setNotice(error.message)
     }
   }
 

@@ -1,0 +1,176 @@
+/* Chat header, messages, composer, reply context, and settings panel. */
+/* Chat V2 fidelity: a quieter, more readable conversation workspace. */
+.chat-header {
+  /* height: auto cancels the 76px fixed height from the base .chat-header rule,
+     which otherwise caps this box and, above ~1500px where the title reaches its
+     30px clamp, clips 4px off the bottom of the status chips. The title and chips
+     ellipsize, so the header still cannot grow past one row. */
+  height: auto;
+  min-height: 114px;
+  padding: 24px 42px 18px;
+  align-items: flex-start;
+  overflow: hidden;
+}
+.chat-title-block { min-width: 0; flex: 1; }
+.chat-header h1 {
+  font-size: clamp(24px, 2vw, 30px);
+  line-height: 1.2;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-summary-row {
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+  flex-wrap: nowrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.conversation-summary {
+  display: inline-flex;
+  min-height: 29px;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 999px;
+  background: var(--surface-sunken);
+  color: var(--muted-soft, var(--muted));
+  font-size: 13px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.tone-summary, .model-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.conversation-summary:hover,
+.conversation-summary.active {
+  border-color: var(--accent);
+  color: var(--text);
+  background: var(--accent-wash);
+}
+.tone-control { position: relative; }
+.tone-menu {
+  position: absolute;
+  z-index: 60;
+  top: calc(100% + 8px);
+  left: 0;
+  width: 232px;
+  padding: 10px;
+  border: 1px solid var(--line-strong, var(--line));
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, .28);
+}
+.tone-menu p {
+  margin: 2px 4px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.tone-menu button {
+  display: block;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  text-align: left;
+}
+.tone-menu button:hover,
+.tone-menu button.selected { border-color: var(--accent); background: var(--accent-wash); }
+.model-settings-panel {
+  top: 138px;
+  left: clamp(410px, calc(50% + 24px), calc(100vw - 486px));
+  right: auto;
+  width: min(462px, calc(100vw - 96px));
+  max-height: calc(100dvh - 158px);
+  padding: 20px;
+  overflow-y: auto;
+}
+.settings-title { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
+.settings-title > div { display: flex; align-items: center; gap: 9px; }
+.settings-title h2 { margin: 0; font-size: 19px; line-height: 1.25; }
+.settings-close {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+}
+.settings-close:hover { background: var(--surface-sunken); color: var(--text); }
+.model-settings-panel .settings-copy { margin: 5px 0 16px; font-size: 12px; line-height: 1.5; }
+.model-settings-panel .settings-group { margin: 16px 0 0; }
+.model-settings-panel .settings-group h3 {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.provider-choice-list,
+.model-choice-list { display: grid; gap: 5px; }
+.provider-choice-list button,
+.model-choice-list button {
+  display: flex;
+  min-height: 37px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 0 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 14px;
+  text-align: left;
+}
+.provider-choice-list button:hover,
+.model-choice-list button:hover { background: var(--surface-sunken); }
+.provider-choice-list button.selected,
+.model-choice-list button.selected { border-color: var(--accent); background: var(--accent-wash); }
+.provider-choice-list small { color: var(--muted); font-size: 12px; white-space: nowrap; }
+.model-choice-list p { margin: 0; color: var(--muted); font-size: 13px; }
+.model-settings-panel .profile-choice-list { display: flex; flex-wrap: wrap; gap: 7px; }
+.model-settings-panel .profile-choice-list button {
+  min-height: 31px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+}
+.model-settings-panel .profile-choice-list button.selected { border-color: var(--accent); background: var(--accent-wash); color: var(--text); }
+.model-settings-panel .toggle-row { margin-top: 16px; font-size: 14px; }
+.advanced-model-settings { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 14px; }
+.advanced-model-settings summary { color: var(--muted); cursor: pointer; font-size: 13px; }
+.advanced-model-settings .field { margin-top: 12px; }
+.message-body { font-size: 15px; line-height: 1.72; }
+.composer textarea { font-size: 15px; line-height: 1.55; }
+.conversation-sidebar .conversation-title { font-size: 14px; }
+.conversation-sidebar .conversation-meta { font-size: 12px; }
+.reply-context { width: 352px; padding: 25px 20px; }
+.reply-context h2 { font-size: 18px; }
+.reply-context > p,
+.reply-context .context-note { font-size: 13px; line-height: 1.55; }
+.reply-context .context-section h3 { font-size: 13px; }
+.reply-context .context-source { font-size: 14px; }
+
+@media (max-width: 1180px) {
+  .model-settings-panel { left: auto; right: 22px; }
+  .reply-context { width: 328px; }
+}
+
+@media (max-width: 900px) {
+  .chat-header { min-height: auto; padding: 16px 18px 14px; }
+  .chat-header h1 { font-size: 24px; }
+  .conversation-summary { font-size: 12px; }
+  .model-settings-panel { top: 72px; right: 12px; left: 12px; width: auto; max-height: calc(100dvh - 84px); }
+  .reply-context { width: min(100vw - 24px, 352px); }
+}
