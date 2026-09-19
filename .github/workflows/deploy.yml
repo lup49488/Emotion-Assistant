@@ -133,8 +133,17 @@ jobs:
               echo "Resolving CI-verified deployment revision..."
               previous_sha="$(git rev-parse HEAD)"
               git fetch origin main
+              main_tip="$(git rev-parse origin/main)"
+              # A queued workflow_run can finish after a newer commit has already
+              # reached main. Do not roll production back to that older revision:
+              # migrations are intentionally forward-only and may make that image
+              # unable to open the live database.
+              if [ "${{ github.event_name }}" = "workflow_run" ] && [ "$DEPLOY_SHA" != "$main_tip" ]; then
+                echo "Skipping stale CI deployment: verified=$DEPLOY_SHA main=$main_tip"
+                exit 0
+              fi
               if [ -z "$DEPLOY_SHA" ]; then
-                DEPLOY_SHA="$(git rev-parse origin/main)"
+                DEPLOY_SHA="$main_tip"
                 echo "No commit SHA supplied; deploying the origin/main tip $DEPLOY_SHA."
               fi
               git cat-file -e "${DEPLOY_SHA}^{commit}"
