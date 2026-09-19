@@ -266,6 +266,214 @@
         }
       }
     },
+    "/api/v1/auth/config": {
+      "get": {
+        "summary": "Auth Config",
+        "operationId": "auth_config_api_v1_auth_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailAuthConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/email/start": {
+      "post": {
+        "summary": "Start Email Challenge",
+        "operationId": "start_email_challenge_api_v1_auth_email_start_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailChallengeStartRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailChallengeStartResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/email/verify": {
+      "post": {
+        "summary": "Verify Email Challenge",
+        "operationId": "verify_email_challenge_api_v1_auth_email_verify_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailChallengeVerifyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EmailChallengeVerifyResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/register": {
+      "post": {
+        "summary": "Register",
+        "operationId": "register_api_v1_auth_register_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailPasswordRegisterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/migrate-legacy": {
+      "post": {
+        "summary": "Migrate Legacy",
+        "operationId": "migrate_legacy_api_v1_auth_migrate_legacy_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LegacyMigrationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/password/login": {
+      "post": {
+        "summary": "Password Login",
+        "operationId": "password_login_api_v1_auth_password_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EmailPasswordLoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/auth/login": {
       "post": {
         "summary": "Login",
@@ -361,6 +569,52 @@
         "responses": {
           "204": {
             "description": "Successful Response"
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/auth/session": {
+      "get": {
+        "summary": "Session Info",
+        "operationId": "session_info_api_v1_auth_session_get",
+        "parameters": [
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionResponse"
+                }
+              }
+            }
           },
           "422": {
             "description": "Validation Error",
@@ -842,52 +1096,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ReplyBasisTurnCorrectionResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/auth/session": {
-      "get": {
-        "summary": "Session Info",
-        "operationId": "session_info_api_v1_auth_session_get",
-        "parameters": [
-          {
-            "name": "chatbot_session",
-            "in": "cookie",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Chatbot Session"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionResponse"
                 }
               }
             }
@@ -4619,6 +4827,183 @@
         ],
         "title": "DataImportResponse"
       },
+      "EmailAuthConfigResponse": {
+        "properties": {
+          "email_auth_enabled": {
+            "type": "boolean",
+            "title": "Email Auth Enabled"
+          },
+          "legacy_login_enabled": {
+            "type": "boolean",
+            "title": "Legacy Login Enabled"
+          },
+          "turnstile_required": {
+            "type": "boolean",
+            "title": "Turnstile Required"
+          },
+          "turnstile_site_key": {
+            "type": "string",
+            "title": "Turnstile Site Key",
+            "default": ""
+          },
+          "turnstile_action": {
+            "type": "string",
+            "title": "Turnstile Action",
+            "default": "email-auth"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email_auth_enabled",
+          "legacy_login_enabled",
+          "turnstile_required"
+        ],
+        "title": "EmailAuthConfigResponse"
+      },
+      "EmailChallengeStartRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "registration",
+              "legacy_migration"
+            ],
+            "title": "Purpose"
+          },
+          "turnstile_token": {
+            "type": "string",
+            "maxLength": 2048,
+            "title": "Turnstile Token",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email",
+          "purpose"
+        ],
+        "title": "EmailChallengeStartRequest"
+      },
+      "EmailChallengeStartResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "const": "verification_started",
+            "title": "Status",
+            "default": "verification_started"
+          },
+          "challenge_id": {
+            "type": "string",
+            "title": "Challenge Id"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "challenge_id"
+        ],
+        "title": "EmailChallengeStartResponse"
+      },
+      "EmailChallengeVerifyRequest": {
+        "properties": {
+          "challenge_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 16,
+            "title": "Challenge Id"
+          },
+          "code": {
+            "type": "string",
+            "maxLength": 16,
+            "minLength": 6,
+            "title": "Code"
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "registration",
+              "legacy_migration"
+            ],
+            "title": "Purpose"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "challenge_id",
+          "code",
+          "purpose"
+        ],
+        "title": "EmailChallengeVerifyRequest"
+      },
+      "EmailChallengeVerifyResponse": {
+        "properties": {
+          "verified_intent": {
+            "type": "string",
+            "title": "Verified Intent"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "verified_intent"
+        ],
+        "title": "EmailChallengeVerifyResponse"
+      },
+      "EmailPasswordLoginRequest": {
+        "properties": {
+          "email": {
+            "type": "string",
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "email",
+          "password"
+        ],
+        "title": "EmailPasswordLoginRequest"
+      },
+      "EmailPasswordRegisterRequest": {
+        "properties": {
+          "verified_intent": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 32,
+            "title": "Verified Intent"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 12,
+            "title": "Password"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "verified_intent",
+          "password"
+        ],
+        "title": "EmailPasswordRegisterRequest"
+      },
       "ExportResponse": {
         "properties": {
           "schema_version": {
@@ -4904,6 +5289,43 @@
           "name"
         ],
         "title": "KnowledgeDocument"
+      },
+      "LegacyMigrationRequest": {
+        "properties": {
+          "verified_intent": {
+            "type": "string",
+            "maxLength": 2048,
+            "minLength": 32,
+            "title": "Verified Intent"
+          },
+          "password": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 12,
+            "title": "Password"
+          },
+          "legacy_user_id": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Legacy User Id"
+          },
+          "legacy_access_key": {
+            "type": "string",
+            "maxLength": 512,
+            "minLength": 1,
+            "title": "Legacy Access Key"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "verified_intent",
+          "password",
+          "legacy_user_id",
+          "legacy_access_key"
+        ],
+        "title": "LegacyMigrationRequest"
       },
       "LivenessResponse": {
         "properties": {

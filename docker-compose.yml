@@ -23,6 +23,8 @@ services:
       HF_TOKEN_FILE: /run/secrets/hf_token
       CHATBOT_ADMIN_RECOVERY_KEY_FILE: /run/secrets/chatbot_admin_recovery_key
       DIALOGUE_REGRESSION_ACCESS_KEY_FILE: /run/secrets/dialogue_regression_access_key
+      EMAIL_AUTH_RESEND_API_KEY_FILE: /run/secrets/email_auth_resend_api_key
+      TURNSTILE_SECRET_KEY_FILE: /run/secrets/turnstile_secret_key
       API_PUBLIC_MODE: ${API_PUBLIC_MODE:-false}
       API_COOKIE_SECURE: ${API_COOKIE_SECURE:-false}
       API_TRUSTED_HOSTS: ${API_TRUSTED_HOSTS:-localhost,127.0.0.1,[::1]}
@@ -67,6 +69,8 @@ services:
       - hf_token
       - chatbot_admin_recovery_key
       - dialogue_regression_access_key
+      - email_auth_resend_api_key
+      - turnstile_secret_key
 
   web:
     build:
@@ -101,3 +105,7 @@ secrets:
     file: ./secrets/chatbot_admin_recovery_key.txt
   dialogue_regression_access_key:
     file: ./secrets/dialogue_regression_access_key.txt
+  email_auth_resend_api_key:
+    file: ./secrets/email_auth_resend_api_key.txt
+  turnstile_secret_key:
+    file: ./secrets/turnstile_secret_key.txt

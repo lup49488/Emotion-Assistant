@@ -102,6 +102,50 @@ class LoginResponse(ContractModel):
     user_id: str
 
 
+class EmailAuthConfigResponse(ContractModel):
+    email_auth_enabled: bool
+    legacy_login_enabled: bool
+    turnstile_required: bool
+    turnstile_site_key: str = ""
+    turnstile_action: str = "email-auth"
+
+
+class EmailChallengeStartRequest(ContractModel):
+    email: str = Field(min_length=3, max_length=254)
+    purpose: Literal["registration", "legacy_migration"]
+    turnstile_token: str = Field(default="", max_length=2048)
+
+
+class EmailChallengeVerifyRequest(ContractModel):
+    challenge_id: str = Field(min_length=16, max_length=128)
+    code: str = Field(min_length=6, max_length=16)
+    purpose: Literal["registration", "legacy_migration"]
+
+
+class EmailChallengeStartResponse(ContractModel):
+    status: Literal["verification_started"] = "verification_started"
+    challenge_id: str
+
+
+class EmailChallengeVerifyResponse(ContractModel):
+    verified_intent: str
+
+
+class EmailPasswordRegisterRequest(ContractModel):
+    verified_intent: str = Field(min_length=32, max_length=2048)
+    password: str = Field(min_length=12, max_length=512)
+
+
+class LegacyMigrationRequest(EmailPasswordRegisterRequest):
+    legacy_user_id: str = Field(min_length=1, max_length=128)
+    legacy_access_key: str = Field(min_length=1, max_length=512)
+
+
+class EmailPasswordLoginRequest(ContractModel):
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=1, max_length=512)
+
+
 class SessionResponse(ContractModel):
     user_id: str
     authentication: Literal["signed_cookie"]

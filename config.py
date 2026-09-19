@@ -199,6 +199,24 @@ API_AUTH_MAX_ATTEMPTS = max(1, _env_int("API_AUTH_MAX_ATTEMPTS", 8))
 API_AUTH_WINDOW_SECONDS = max(60, _env_int("API_AUTH_WINDOW_SECONDS", 900))
 API_TRUST_PROXY_HEADERS = os.getenv("API_TRUST_PROXY_HEADERS", "false").lower() == "true"
 
+# Email/password authentication remains opt-in until an operator has configured
+# a sender and completed the migration rollout. Public deployments may require
+# Turnstile, but local and test environments can exercise the flow without it.
+EMAIL_AUTH_ENABLED = os.getenv("EMAIL_AUTH_ENABLED", "false").lower() == "true"
+EMAIL_AUTH_LEGACY_LOGIN_ENABLED = os.getenv("EMAIL_AUTH_LEGACY_LOGIN_ENABLED", "true").lower() == "true"
+EMAIL_AUTH_PROVIDER = os.getenv("EMAIL_AUTH_PROVIDER", "resend").strip().lower()
+EMAIL_AUTH_FROM = os.getenv("EMAIL_AUTH_FROM", "").strip()
+EMAIL_AUTH_RESEND_API_KEY = os.getenv("EMAIL_AUTH_RESEND_API_KEY", "").strip()
+EMAIL_AUTH_CODE_TTL_SECONDS = max(300, min(600, _env_int("EMAIL_AUTH_CODE_TTL_SECONDS", 600)))
+EMAIL_AUTH_MAX_CODE_ATTEMPTS = max(1, _env_int("EMAIL_AUTH_MAX_CODE_ATTEMPTS", 6))
+EMAIL_AUTH_MAX_SENDS_PER_WINDOW = max(1, _env_int("EMAIL_AUTH_MAX_SENDS_PER_WINDOW", 3))
+EMAIL_AUTH_SEND_WINDOW_SECONDS = max(60, _env_int("EMAIL_AUTH_SEND_WINDOW_SECONDS", 900))
+EMAIL_AUTH_TURNSTILE_REQUIRED = os.getenv("EMAIL_AUTH_TURNSTILE_REQUIRED", str(API_PUBLIC_MODE)).lower() == "true"
+TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "").strip()
+TURNSTILE_SECRET_KEY = os.getenv("TURNSTILE_SECRET_KEY", "").strip()
+TURNSTILE_EXPECTED_HOSTNAME = os.getenv("TURNSTILE_EXPECTED_HOSTNAME", "").strip().lower()
+TURNSTILE_EMAIL_AUTH_ACTION = os.getenv("TURNSTILE_EMAIL_AUTH_ACTION", "email-auth").strip()
+
 # Administrator-only operations dashboard and alert thresholds.
 API_OPERATIONS_USER_IDS = os.getenv("API_OPERATIONS_USER_IDS", "")
 # Comma-separated user IDs allowed to publish and manage the shared RAG corpus.

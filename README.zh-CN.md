@@ -226,6 +226,27 @@ docker compose build --build-arg APP_UID=$(id -u) --build-arg APP_GID=$(id -g) a
 
 应用使用每个用户独立的 access key。Gradio 中输入 User ID 和 access key 后可保存/验证；FastAPI 前端通过 `/api/v1/auth/login` 登录，然后使用 API 颁发的签名 session cookie 和 CSRF token。
 
+### 可选的邮箱/密码登录
+
+只有在已迁移到 SQLite 存储、并配置好 Resend 发件人后，才将
+`EMAIL_AUTH_ENABLED` 设为 `true`。新用户先验证邮箱，服务端再生成内部
+`user_id`；旧用户可以在迁移页面完成邮箱验证，并使用原有 `user_id` 和访问
+密码证明控制权。对话、记忆、图片和心情记录仍归属于原来的内部 `user_id`，不
+会复制或搬迁。
+
+Docker 部署时，将 Resend API Key 和 Turnstile 私钥分别写入下列已忽略文件：
+
+```text
+secrets/email_auth_resend_api_key.txt
+secrets/turnstile_secret_key.txt
+```
+
+在 `.env` 中设置 `EMAIL_AUTH_FROM`、`TURNSTILE_SITE_KEY`，以及公网部署需要的
+`TURNSTILE_EXPECTED_HOSTNAME`。公网邮箱认证会在服务端调用 Turnstile Siteverify；
+浏览器只会收到公开 sitekey。请在公布的迁移期内保留旧登录入口。管理员路由或
+独立管理域名仍应使用 Cloudflare Access 与 MFA，不应把普通用户邮箱登录当作
+管理员授权。
+
 用户数据存储位置：
 
 - `STORAGE_BACKEND=json`：本地 JSON 文件，位于 `users/`
