@@ -9,8 +9,13 @@ import urllib.request
 import config
 
 
-def verify_email_auth_token(token: str, client_ip: str) -> bool:
-    """Return true only for a fresh Siteverify result for this app and hostname."""
+def verify_email_auth_token(token: str, _client_ip: str) -> bool:
+    """Return true only for a fresh Siteverify result for this app and hostname.
+
+    ``remoteip`` is intentionally not sent to Siteverify. Cloudflare Tunnel and
+    Nginx may otherwise surface an internal proxy address instead of the
+    visitor's address, causing an otherwise valid token to be rejected.
+    """
     if not config.EMAIL_AUTH_TURNSTILE_REQUIRED:
         return True
     if not token or not config.TURNSTILE_SECRET_KEY:
@@ -19,7 +24,6 @@ def verify_email_auth_token(token: str, client_ip: str) -> bool:
         {
             "secret": config.TURNSTILE_SECRET_KEY,
             "response": token,
-            "remoteip": client_ip,
         }
     ).encode("ascii")
     request = urllib.request.Request(
