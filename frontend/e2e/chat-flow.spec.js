@@ -290,6 +290,9 @@ test('narrow desktop reply context is dismissible and keeps focus in its dialog'
 })
 
 test('reply context can be enabled and corrected without showing emotion scores', async ({ page }) => {
+  // This flow verifies the persistent desktop sidecar. Narrow viewports use a
+  // modal drawer instead, which deliberately blocks the composer until closed.
+  await page.setViewportSize({ width: 1600, height: 900 })
   await signIn(page)
   await page.getByRole('button', { name: 'Reply context' }).click()
   await page.getByLabel('Use gentle context').check()
@@ -302,6 +305,7 @@ test('reply context can be enabled and corrected without showing emotion scores'
 })
 
 test('reply-context correction changes the matched turn and future reply approach', async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 })
   await signIn(page)
   await page.getByRole('button', { name: 'Reply context' }).click()
   await page.getByLabel('Use gentle context').check()
