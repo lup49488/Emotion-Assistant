@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Download, Pencil, Plus, RefreshCw, Search, ShieldAlert, Sparkles, Trash2, Undo2, Upload, X } from 'lucide-react'
 import { API_BASE_URL, apiFetch, csrfHeaders, readJson } from './api'
+import { translate } from './i18n'
 
 const json = (value) => JSON.stringify(value, null, 2)
 
@@ -143,8 +144,8 @@ function MemoryAuditList({ events, limit, onUndo, t, locale }) {
   return <div className="memory-list">{visibleEvents.map((event) => <article className="memory-row memory-audit-row" key={event.id}><div><p><strong>{sections[event.section] || event.section} · {actions[event.action] || event.action}</strong></p><p>{event.text || t('memoryTitle')}</p><span>{event.time} · {localizedMemoryReason(event.reason, locale)}</span>{event.source_text && <span>{t('memorySource')}: {event.source_text}</span>}{event.undone_at && <span>{t('memoryEventReverted')}</span>}</div>{event.undoable && <button className="secondary-button" title={t('undoMemory')} onClick={() => onUndo(event.id)}><Undo2 size={15} />{t('undoMemory')}</button>}</article>)}</div>
 }
 
-export function MoodPage({ t, onReflect, locale }) {
-  return <section className="feature-page mood-page v2-feature-page"><header className="feature-header mood-feature-header"><div><span className="mood-kicker">{t('moodTitle')}</span><h1>{t('moodWorkspaceTitle')}</h1><p>{t('moodWorkspaceDescription')}</p></div></header><MoodCheckinContent t={t} onReflect={onReflect} locale={locale} /></section>
+export function MoodPage({ t, onReflect, locale, userId }) {
+  return <section className="feature-page mood-page v2-feature-page"><header className="feature-header mood-feature-header"><div><span className="mood-kicker">{t('moodTitle')}</span><h1>{t('moodWorkspaceTitle')}</h1><p>{t('moodWorkspaceDescription')}</p></div></header><MoodCheckinContent t={t} onReflect={onReflect} locale={locale} userId={userId} /></section>
 }
 
 function localCalendarDate(value = new Date()) {
@@ -168,7 +169,7 @@ function localizedKnowledgeStatus(value, t) {
   return keys[value] ? t(keys[value]) : value || t('unknown')
 }
 
-function MoodCheckinContent({ t, onReflect, locale }) {
+function MoodCheckinContent({ t, onReflect, locale, userId }) {
   const [records, setRecords] = useState([])
   const [weekly, setWeekly] = useState(null)
   const emptyForm = { date: null, mood: '', intensity: 3, note: '' }
@@ -180,12 +181,35 @@ function MoodCheckinContent({ t, onReflect, locale }) {
   const [loading, setLoading] = useState(true)
   const [savedRecord, setSavedRecord] = useState(null)
   const [trendDays, setTrendDays] = useState(30)
+  const [moodDraftHydrated, setMoodDraftHydrated] = useState(false)
+  const moodDraftKey = userId ? `serenova-mood-draft:${userId}` : null
   const isEditing = Boolean(form.date)
   const refresh = useCallback(async () => {
     setLoading(true); setError('')
     try { const [all, trend] = await Promise.all([readJson('/api/v1/mood/checkins'), readJson(`/api/v1/mood/weekly?locale=${encodeURIComponent(locale)}`)]); setRecords(all.records); setWeekly(trend) } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
   }, [locale])
   useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    if (loading || moodDraftHydrated) return
+    const savedDraft = moodDraftKey ? sessionStorage.getItem(moodDraftKey) : null
+    if (savedDraft) {
+      try {
+        const parsed = JSON.parse(savedDraft)
+        if (parsed && typeof parsed === 'object') setForm((current) => ({ ...current, ...parsed }))
+      } catch {
+        sessionStorage.removeItem(moodDraftKey)
+      }
+    } else {
+      const todayRecord = records.find((record) => record.date === localCalendarDate())
+      if (todayRecord) setForm({ date: todayRecord.date, mood: todayRecord.mood, intensity: todayRecord.intensity, note: todayRecord.note || '' })
+    }
+    setMoodDraftHydrated(true)
+  }, [loading, moodDraftHydrated, moodDraftKey, records])
+  useEffect(() => {
+    if (!moodDraftKey || !moodDraftHydrated) return
+    if (form.date || form.mood || form.note) sessionStorage.setItem(moodDraftKey, JSON.stringify(form))
+    else sessionStorage.removeItem(moodDraftKey)
+  }, [form, moodDraftHydrated, moodDraftKey])
   // Editing a check-in that already has photos: the cap covers stored ones too.
   const existingImageCount = (records.find((record) => record.date === form.date)?.images || []).length
   const chooseImages = (event) => {
@@ -241,14 +265,15 @@ function MoodCheckinContent({ t, onReflect, locale }) {
       } else {
         setSavedRecord(record)
         setForm(emptyForm)
+        if (moodDraftKey) sessionStorage.removeItem(moodDraftKey)
       }
       await refresh()
       if (uploadError) setError(uploadError)
     } catch (requestError) { setError(requestError.message) }
   }
   const startEdit = (record) => { setError(''); setSavedRecord(null); clearSelectedImages(); setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
-  const cancelEdit = () => { setSavedRecord(null); clearSelectedImages(); setForm(emptyForm) }
-  const remove = async (date) => { if (!window.confirm(`Delete the Mood Check-in for ${date}?`)) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) cancelEdit(); await refresh() } catch (requestError) { setError(requestError.message) } }
+  const cancelEdit = () => { setSavedRecord(null); clearSelectedImages(); setForm(emptyForm); if (moodDraftKey) sessionStorage.removeItem(moodDraftKey) }
+  const remove = async (date) => { if (!window.confirm(t('deleteMoodCheckinConfirm').replace('{date}', date))) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) cancelEdit(); await refresh() } catch (requestError) { setError(requestError.message) } }
   const removeImage = async (record, image) => { try { await apiFetch(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images/${encodeURIComponent(image.id)}`, { method: 'DELETE', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } }
   const chartPoints = filterMoodTrendRecords(records, trendDays)
   const averageIntensity = chartPoints.length ? (chartPoints.reduce((total, record) => total + Number(record.intensity || 0), 0) / chartPoints.length).toFixed(1) : '—'
@@ -300,7 +325,7 @@ export function KnowledgePage({ t, canManageKnowledge = false }) {
     if (uploadForm.file.files[0] === file) uploadForm.reset()
   }
   const rebuild = async () => { await submitJob('/api/v1/rag/rebuild', { method: 'POST', headers: csrfHeaders() }) }
-  const removeDocument = async (name) => { if (!window.confirm(`Delete ${name} and rebuild the knowledge index?`)) return; await submitJob(`/api/v1/rag/documents/${encodeURIComponent(name)}`, { method: 'DELETE', headers: csrfHeaders() }) }
+  const removeDocument = async (name) => { if (!window.confirm(t('deleteKnowledgeDocumentConfirm').replace('{name}', name))) return; await submitJob(`/api/v1/rag/documents/${encodeURIComponent(name)}`, { method: 'DELETE', headers: csrfHeaders() }) }
   const hasActiveJob = jobs.some((job) => job.status === 'queued' || job.status === 'running')
   const summary = [[t('indexStatus'), localizedKnowledgeStatus(quality?.level, t)], [t('documents'), quality?.documents ?? 0], [t('chunks'), quality?.chunks ?? 0], [t('releaseGate'), status?.release?.enabled ? localizedKnowledgeStatus(status.release.state, t) : t('notEnabled')]]
   const matches = results?.results || []
@@ -363,7 +388,7 @@ export function PrivacyPage({ onDeleted, t }) {
   const [message, setMessage] = useState('')
   const refresh = async () => { setError(''); try { setSummary(await readJson('/api/v1/privacy')) } catch (requestError) { setError(requestError.message) } }
   useEffect(() => { refresh() }, [])
-  const exportData = async () => { setError(''); try { const response = await apiFetch('/api/v1/export'); const payload = await response.json(); const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })); const link = document.createElement('a'); link.href = url; link.download = `serenova-export-${payload.user_id}.json`; link.click(); URL.revokeObjectURL(url); setMessage('Your export has been downloaded.') } catch (requestError) { setError(requestError.message) } }
+  const exportData = async () => { setError(''); try { const response = await apiFetch('/api/v1/export'); const payload = await response.json(); const url = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })); const link = document.createElement('a'); link.href = url; link.download = `serenova-export-${payload.user_id}.json`; link.click(); URL.revokeObjectURL(url); setMessage(t('exportDownloaded')) } catch (requestError) { setError(requestError.message) } }
   const importData = async (event) => { event.preventDefault(); if (!importFile) { setError(t('importFileRequired')); return } if (importMode === 'replace' && !window.confirm(t('importReplaceConfirm'))) return; setError(''); try { const form = new FormData(); form.append('file', importFile); const result = await readJson(`/api/v1/import?mode=${importMode}`, { method: 'POST', headers: csrfHeaders(), body: form }); setMessage(t('importComplete').replace('{conversations}', result.conversations).replace('{memories}', result.memories).replace('{mood_checkins}', result.mood_checkins)); setImportFile(null); await refresh() } catch (requestError) { setError(requestError.message) } }
   useEffect(() => () => { externalPreviewRequestRef.current += 1 }, [])
   const previewExternal = async (file) => {
@@ -379,7 +404,7 @@ export function PrivacyPage({ onDeleted, t }) {
     }
   }
   const importExternal = async () => { if (!externalFile || !externalPreview) return; if (importMode === 'replace' && !window.confirm(t('importReplaceConfirm'))) return; setError(''); try { const form = new FormData(); form.append('file', externalFile); form.append('profile_fields', JSON.stringify(profileFields)); const result = await readJson(`/api/v1/import/external?mode=${importMode}`, { method: 'POST', headers: csrfHeaders(), body: form }); setMessage(t('externalImportComplete').replace('{source}', result.source).replace('{conversations}', result.conversations).replace('{memories}', result.memories)); setExternalFile(null); setExternalPreview(null); setProfileFields([]); await refresh() } catch (requestError) { setError(requestError.message) } }
-  const deleteData = async () => { if (confirmation !== 'DELETE') { setError('Type DELETE to confirm.'); return } if (!window.confirm('This permanently removes all of your user data. Continue?')) return; try { await readJson('/api/v1/privacy/data', { method: 'DELETE', headers: csrfHeaders(), body: JSON.stringify({ confirmation }) }); onDeleted() } catch (requestError) { setError(requestError.message) } }
+  const deleteData = async () => { if (confirmation !== 'DELETE') { setError(t('deleteConfirmationRequired')); return } if (!window.confirm(t('deleteAllDataConfirm'))) return; try { await readJson('/api/v1/privacy/data', { method: 'DELETE', headers: csrfHeaders(), body: JSON.stringify({ confirmation }) }); onDeleted() } catch (requestError) { setError(requestError.message) } }
   const stats = summary ? [[t('conversations'), summary.conversation_count || 0], [t('memories'), summary.memory_count || 0], [t('mood'), summary.mood_count || 0]] : []
   return <section className="feature-page privacy-page v2-feature-page"><header className="feature-header"><div><span className="privacy-kicker">PRIVACY &amp; EXPORT</span><h1>{t('privacyWorkspaceTitle')}</h1><p>{t('privacyWorkspaceDescription')}</p></div><button className="secondary-button" onClick={refresh}><RefreshCw size={16} />{t('refresh')}</button></header><ErrorText error={error} />{message && <p className="success-text">{message}</p>}
     <div className="stat-grid privacy-stat-grid">{stats.map(([label, value]) => <div className="stat" key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
@@ -390,7 +415,7 @@ export function PrivacyPage({ onDeleted, t }) {
   </section>
 }
 
-function MoodChart({ points, showPoints = true }) {
+function MoodChart({ points, showPoints = true, t = (key) => translate(document.documentElement.lang === 'zh-CN' ? 'zh' : 'en', key) }) {
   const maximumVisiblePoints = 10
   const step = Math.max(1, Math.ceil((points.length - 1) / Math.max(maximumVisiblePoints - 1, 1)))
   const visiblePoints = points.filter((_, index) => index === 0 || index === points.length - 1 || index % step === 0)
@@ -399,7 +424,8 @@ function MoodChart({ points, showPoints = true }) {
   const y = (value) => 18 + (5 - Number(value)) * 36
   const path = valid.map((point, index) => `${index ? 'L' : 'M'} ${x(point.index)} ${y(point.intensity)}`).join(' ')
   const labelIndexes = new Set([0, Math.floor((visiblePoints.length - 1) / 2), visiblePoints.length - 1])
-  return <div className="mood-chart"><svg viewBox="0 0 320 210" role="img" aria-label="Weekly Mood trend"><g className="chart-grid">{[1, 2, 3, 4, 5].map((value) => <g key={value}><line x1="32" x2="292" y1={y(value)} y2={y(value)} /><text x="12" y={y(value) + 4}>{value}</text></g>)}</g>{path && <path className="trend-line" d={path} />}{showPoints && valid.map((point) => <g key={point.date}><circle className="trend-dot" cx={x(point.index)} cy={y(point.intensity)} r="3.5" /><title>{`${point.date}: ${point.mood || ''} ${point.intensity}/5`}</title></g>)}{visiblePoints.map((point, index) => labelIndexes.has(index) && <text className="chart-label" key={point.date || index} x={x(index)} y="198" textAnchor={index === 0 ? 'start' : index === visiblePoints.length - 1 ? 'end' : 'middle'}>{point.label || point.date?.slice(5)?.replace('-', '/')}</text>)}</svg></div>
+  if (points.length === 0) return <div className="mood-chart mood-chart-empty"><p className="empty-state">{t('noMoodTrend')}</p></div>
+  return <div className="mood-chart"><svg viewBox="0 0 320 210" role="img" aria-label={t('recentTrend')}><g className="chart-grid">{[1, 2, 3, 4, 5].map((value) => <g key={value}><line x1="32" x2="292" y1={y(value)} y2={y(value)} /><text x="12" y={y(value) + 4}>{value}</text></g>)}</g>{path && <path className="trend-line" d={path} />}{showPoints && valid.map((point) => <g key={point.date}><circle className="trend-dot" cx={x(point.index)} cy={y(point.intensity)} r="3.5" /><title>{`${point.date}: ${point.mood || ''} ${point.intensity}/5`}</title></g>)}{visiblePoints.map((point, index) => labelIndexes.has(index) && <text className="chart-label" key={point.date || index} x={x(index)} y="198" textAnchor={index === 0 ? 'start' : index === visiblePoints.length - 1 ? 'end' : 'middle'}>{point.label || point.date?.slice(5)?.replace('-', '/')}</text>)}</svg></div>
 }
 
 function JsonPreview({ value, empty }) { return value && (Array.isArray(value) ? value.length : Object.keys(value).length) ? <pre className="json-preview">{json(value)}</pre> : <p className="empty-state">{empty}</p> }

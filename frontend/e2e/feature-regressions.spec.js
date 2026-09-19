@@ -26,6 +26,19 @@ test.beforeEach(async ({ request }) => {
   await request.post(`${apiUrl}/__test/reset`)
 })
 
+test('the current day loads as an edit and a text draft survives workspace navigation', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-07-29T12:00:00Z'))
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await expect(page.getByRole('heading', { name: 'Editing the check-in for 2026-07-29' })).toBeVisible()
+  const note = page.getByLabel('Note')
+  await note.fill('Keep this unsaved reflection')
+  await page.getByRole('button', { name: 'Personal data' }).click()
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await expect(note).toHaveValue('Keep this unsaved reflection')
+  await expect(page.getByRole('button', { name: 'Update check-in' })).toBeVisible()
+})
+
 test('knowledge uploads reset the file chooser after the asynchronous response', async ({ page }) => {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))

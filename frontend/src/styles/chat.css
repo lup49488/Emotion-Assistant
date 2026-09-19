@@ -1,15 +1,15 @@
 /* Chat header, messages, composer, reply context, and settings panel. */
 /* Chat V2 fidelity: a quieter, more readable conversation workspace. */
 .chat-header {
-  /* height: auto cancels the 76px fixed height from the base .chat-header rule,
-     which otherwise caps this box and, above ~1500px where the title reaches its
-     30px clamp, clips 4px off the bottom of the status chips. The title and chips
-     ellipsize, so the header still cannot grow past one row. */
+  /* The title and chips ellipsize individually. The header must remain open so
+     the tone picker can extend below it instead of being visually clipped. */
   height: auto;
   min-height: 114px;
   padding: 24px 42px 18px;
   align-items: flex-start;
-  overflow: hidden;
+  position: relative;
+  z-index: 20;
+  overflow: visible;
 }
 .chat-title-block { min-width: 0; flex: 1; }
 .chat-header h1 {

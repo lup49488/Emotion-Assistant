@@ -120,6 +120,7 @@ function App() {
   const [messages, setMessages] = useState([])
   const [quotedMessage, setQuotedMessage] = useState(null)
   const [draft, setDraft] = useState('')
+  const [draftStorageReadyKey, setDraftStorageReadyKey] = useState(null)
   const [isSending, setIsSending] = useState(false)
   const [isSlow, setIsSlow] = useState(false)
   const [notice, setNotice] = useState('')
@@ -162,6 +163,15 @@ function App() {
   const modelChoices = selectedProvider?.models || []
   const activeModelLabel = options.model || selectedProvider?.default_model || t('serverDefault')
   const activeToneLabel = options.stylePrefix ? styleName(options.stylePrefix) : t('toneDefault')
+  const draftStorageKey = session?.user_id
+    ? `serenova-chat-draft:${session.user_id}:${activeConversation?.id || 'new'}`
+    : null
+
+  const clearStoredDrafts = (userId) => {
+    if (!userId) return
+    const prefix = `serenova-chat-draft:${userId}:`
+    Object.keys(sessionStorage).filter((key) => key.startsWith(prefix)).forEach((key) => sessionStorage.removeItem(key))
+  }
 
   function isLikelyBaseUrl(value) {
     const candidate = value.trim()
@@ -198,6 +208,22 @@ function App() {
   useEffect(() => {
     if (activeView === 'operations' && !session?.can_access_operations) setActiveView('chat')
   }, [activeView, session])
+
+  useEffect(() => {
+    if (!draftStorageKey) {
+      setDraft('')
+      setDraftStorageReadyKey(null)
+      return
+    }
+    setDraft(sessionStorage.getItem(draftStorageKey) || '')
+    setDraftStorageReadyKey(draftStorageKey)
+  }, [draftStorageKey])
+
+  useEffect(() => {
+    if (!draftStorageKey || draftStorageReadyKey !== draftStorageKey) return
+    if (draft) sessionStorage.setItem(draftStorageKey, draft)
+    else sessionStorage.removeItem(draftStorageKey)
+  }, [draft, draftStorageKey, draftStorageReadyKey])
 
   async function refreshConversations(expectedRequestId = null) {
     const response = await apiFetch('/api/v1/conversations')
@@ -285,6 +311,7 @@ function App() {
       const conversation = { ...data.conversation, messages: [] }
       setActiveConversation(conversation)
       setMessages([])
+      setDraft('')
       setQuotedMessage(null)
       await refreshConversations(requestId)
     } catch (error) {
@@ -335,19 +362,26 @@ function App() {
 
   async function sendMessage(retryIndex = null, directMessage = null, moodCheckin = null, forceNewConversation = false) {
     const retryMessageIndex = Number.isInteger(retryIndex) ? retryIndex : null
+    const retryUserMessage = retryMessageIndex === null ? null : messages[retryMessageIndex - 1]
     const moodCheckinContext = retryMessageIndex === null
       ? moodCheckin
-      : messages[retryMessageIndex - 1]?.moodCheckin || null
+      : retryUserMessage?.moodCheckin || null
     const text = retryMessageIndex === null
       ? String(directMessage ?? draft).trim()
-      : String(messages[retryMessageIndex - 1]?.content || '').trim()
-    const quoteForRequest = retryMessageIndex === null ? quotedMessage : null
+      : String(retryUserMessage?.content || '').trim()
+    const quoteForRequest = retryMessageIndex === null
+      ? quotedMessage
+      : retryUserMessage?.quotedMessage
+        || (retryUserMessage?.reply_to_message_id ? messagesById.get(retryUserMessage.reply_to_message_id) || { id: retryUserMessage.reply_to_message_id } : null)
     if (!text || isSending) return
     if (!isLikelyBaseUrl(options.baseUrl)) {
       setOptions((current) => ({ ...current, baseUrl: '', apiKey: '' }))
       setNotice(t('invalidModelCredentials'))
       return
     }
+    const restoreDraftOnSetupFailure = retryMessageIndex === null && directMessage === null
+    const originalDraft = draft
+    let userMessageAdded = false
     if (retryMessageIndex === null) {
       setDraft('')
       setQuotedMessage(null)
@@ -369,6 +403,7 @@ function App() {
       }
 
       if (retryMessageIndex === null) {
+        userMessageAdded = true
         setMessages((current) => [...current,
           {
             role: 'user', content: text, moodCheckin: moodCheckinContext,
@@ -472,6 +507,10 @@ function App() {
           ? { ...item, content: item.content || (cancelled ? '' : errorText(errorCode)), pending: false, failed: !cancelled, retryable: !cancelled && retryable, errorCode }
           : item).filter((item, index) => !(cancelled && index === responseIndex && item.role === 'assistant' && !item.content))
       })
+      if (restoreDraftOnSetupFailure && !userMessageAdded) {
+        setDraft((current) => current || originalDraft)
+        setQuotedMessage((current) => current || quoteForRequest)
+      }
     } finally {
       setIsSending(false)
       activeRequestRef.current = null
@@ -553,6 +592,9 @@ function App() {
     setConversations([])
     setActiveConversation(null)
     setMessages([])
+    clearStoredDrafts(session?.user_id)
+    setDraft('')
+    setQuotedMessage(null)
   }
 
   if (!session) return <LoginScreen onSuccess={restoreSession} t={t} />
@@ -669,7 +711,7 @@ function App() {
 
       {whyOpen && <button className="reply-context-backdrop" aria-label={t('closeContext')} onClick={() => setWhyOpen(false)} />}
       {whyOpen && <ReplyContextPanel latestMessage={latestAssistantMessage} onClose={() => setWhyOpen(false)} options={options} tone={activeToneLabel} preference={replyBasisPreference} onSavePreference={saveReplyBasisPreference} onCorrectTurn={correctReplyBasisTurn} t={t} />}
-      {settingsOpen && <ModelSettingsPanel activeModelLabel={activeModelLabel} changeProvider={changeProvider} editableModelField={editableModelField} modelChoices={modelChoices} onClose={() => setSettingsOpen(false)} options={options} providerCatalog={providerCatalog} saveStylePrefix={saveStylePrefix} setEditableModelField={setEditableModelField} setOptions={setOptions} styleName={styleName} stylePrefixes={visibleStylePrefixes} t={t} />}</> : <section className="feature-main"><Suspense fallback={<FeaturePageLoading label={t('loading')} />}>{activeView === 'memory' && <MemoryPage t={t} locale={locale} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} locale={locale} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</Suspense></section>}
+      {settingsOpen && <ModelSettingsPanel activeModelLabel={activeModelLabel} changeProvider={changeProvider} editableModelField={editableModelField} modelChoices={modelChoices} onClose={() => setSettingsOpen(false)} options={options} providerCatalog={providerCatalog} saveStylePrefix={saveStylePrefix} setEditableModelField={setEditableModelField} setOptions={setOptions} styleName={styleName} stylePrefixes={visibleStylePrefixes} t={t} />}</> : <section className="feature-main"><Suspense fallback={<FeaturePageLoading label={t('loading')} />}>{activeView === 'memory' && <MemoryPage t={t} locale={locale} />}{activeView === 'mood' && <MoodPage t={t} onReflect={startMoodReflection} locale={locale} userId={session?.user_id} />}{activeView === 'knowledge' && <KnowledgePage t={t} canManageKnowledge={session?.can_manage_knowledge} />}{activeView === 'operations' && <OperationsPage t={t} />}{activeView === 'privacy' && <PrivacyPage t={t} onDeleted={logout} />}</Suspense></section>}
         </div>
       </section>
       <MobileBottomNavigation activeView={activeView} moreOpen={mobileMoreOpen} navigateWorkspace={navigateWorkspace} setMoreOpen={setMobileMoreOpen} t={t} visibleNavigation={visibleNavigation} />
@@ -865,7 +907,17 @@ function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote
   </article>
 }
 
-function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, quotedMessage, clearQuote, t }) { return <div className="composer-wrap">{quotedMessage && <div className="composer-quote"><Reply size={14} /><div><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div><button type="button" className="icon-button" title={t('removeQuote')} onClick={clearQuote}><X size={15} /></button></div>}<div className="composer"><textarea value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key !== 'Enter' || event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); sendMessage() }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div></div> }
+function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, quotedMessage, clearQuote, t }) {
+  const textareaRef = useRef(null)
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) return
+    textarea.style.height = 'auto'
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`
+    textarea.style.overflowY = textarea.scrollHeight > 180 ? 'auto' : 'hidden'
+  }, [draft])
+  return <div className="composer-wrap">{quotedMessage && <div className="composer-quote"><Reply size={14} /><div><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div><button type="button" className="icon-button" title={t('removeQuote')} onClick={clearQuote}><X size={15} /></button></div>}<div className="composer"><textarea ref={textareaRef} value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key !== 'Enter' || event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); sendMessage() }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div></div>
+}
 
 function PreferencesControls({ theme, setTheme, locale, setLocale, t }) { return <div className="preferences-controls"><label><SunMoon size={15} /><span>{t('theme')}</span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select></label><label><Languages size={15} /><span>{t('language')}</span><select value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">{t('english')}</option><option value="zh">{t('chinese')}</option></select></label></div> }
 

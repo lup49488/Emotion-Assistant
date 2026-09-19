@@ -84,6 +84,10 @@ test('a saved message can be quoted for a focused follow-up', async ({ page }) =
   await sendMessage(page, 'Could you expand that?')
   await expect(page.getByText('Quoted reply with the selected context.')).toBeVisible()
   await expect(page.getByText('Replying to Serenova')).toHaveCount(1)
+  const retryRequest = page.waitForRequest((request) => request.url().endsWith('/api/v1/chat/stream') && JSON.parse(request.postData() || '{}').retry_last_response)
+  await page.getByTitle('Regenerate').click()
+  expect(JSON.parse((await retryRequest).postData() || '{}').quoted_message_id).toBeTruthy()
+  await expect(page.getByText('Regenerated answer')).toBeVisible()
 })
 
 test('assistant replies render HTML line breaks and LaTeX delimiters safely', async ({ page }) => {
@@ -210,7 +214,13 @@ test('chat header controls set a gentle tone and open the model reply window', a
   await signIn(page)
 
   await page.getByRole('button', { name: /Conversation tone/ }).click()
-  await expect(page.getByRole('menu', { name: 'Conversation tone' })).toBeVisible()
+  const toneMenu = page.getByRole('menu', { name: 'Conversation tone' })
+  await expect(toneMenu).toBeVisible()
+  const menuIsNotClippedByHeader = await toneMenu.evaluate((menu) => {
+    const header = menu.closest('.chat-panel')?.querySelector('.chat-header')
+    return header ? getComputedStyle(header).overflow === 'visible' : false
+  })
+  expect(menuIsNotClippedByHeader).toBe(true)
   await expect(page.getByRole('menuitemradio', { name: 'Gentle' })).toHaveCount(1)
   await page.getByRole('menuitemradio', { name: 'Gentle' }).click()
   await expect(page.getByRole('button', { name: /Conversation tone/ })).toContainText('Gentle')
@@ -456,9 +466,16 @@ test('mobile bottom navigation keeps chat primary and opens each workspace witho
   await page.locator('.mobile-chat-menu').click()
   await expect(page.locator('.mobile-sidebar')).toBeVisible()
   await expect(page.locator('.mobile-sidebar').getByText('Conversations')).toBeVisible()
+  const closeSidebar = page.locator('.mobile-sidebar .mobile-sidebar-close')
+  await expect(closeSidebar).toBeVisible()
+  expect(await closeSidebar.evaluate((button) => {
+    const bounds = button.getBoundingClientRect()
+    const topmost = document.elementFromPoint(bounds.left + bounds.width / 2, bounds.top + bounds.height / 2)
+    return topmost === button || button.contains(topmost)
+  })).toBe(true)
   await page.locator('.mobile-sidebar .preferences-controls select').first().selectOption('dark')
   await expect.poll(() => page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark')
-  await page.locator('.mobile-sidebar .mobile-sidebar-close').click()
+  await closeSidebar.click()
   await expect(page.locator('.mobile-sidebar')).toHaveCount(0)
   await page.locator('.mobile-bottom-navigation').getByRole('button', { name: 'Personal data' }).click()
   await expect(page.getByRole('heading', { name: 'What your assistant remembers about you' })).toBeVisible()

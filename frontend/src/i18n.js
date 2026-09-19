@@ -1,5 +1,12 @@
 const messages = {
   en: {
+    deleteMoodCheckinConfirm: 'Delete the Mood Check-in for {date}?',
+    deleteKnowledgeDocumentConfirm: 'Delete {name} and rebuild the knowledge index?',
+    exportDownloaded: 'Your export has been downloaded.',
+    deleteConfirmationRequired: 'Type DELETE to confirm.',
+    deleteAllDataConfirm: 'This permanently removes all of your user data. Continue?',
+    noMoodTrend: 'There are no Mood Check-ins in this time range yet.',
+    startMoodCheckin: 'Add a check-in',
     chat: 'Chat', personalData: 'Personal data', mood: 'Mood check-in', knowledge: 'Knowledge & RAG', operations: 'Operations', privacy: 'Privacy & export', more: 'More', moreNavigation: 'More workspace options', workspaceNavigation: 'Workspace navigation', workspaceRedesign: 'Frontend workspace redesign', openSidebar: 'Open sidebar', closeSidebar: 'Close sidebar',
     newChat: 'New chat', conversations: 'Conversations', noChats: 'No saved chats yet.', logout: 'Log out', renameConversation: 'Rename conversation', deleteConversation: 'Delete conversation', deleteConversationConfirm: 'Delete this conversation permanently?', conversationTitle: 'Conversation title', saveTitle: 'Save title', cancel: 'Cancel',
     theme: 'Theme', language: 'Language', light: 'Light', dark: 'Dark', system: 'System', english: 'English', chinese: 'Chinese',
@@ -21,6 +28,13 @@ const messages = {
     ragInsufficientEvidence: 'The knowledge base does not contain enough relevant information for a grounded answer. Try rephrasing, add a source document, or turn off knowledge retrieval for a general response.',
   },
   zh: {
+    deleteMoodCheckinConfirm: '确定删除 {date} 的心情记录吗？',
+    deleteKnowledgeDocumentConfirm: '确定删除 {name} 并重建知识库索引吗？',
+    exportDownloaded: '导出文件已下载。',
+    deleteConfirmationRequired: '请输入 DELETE 以确认。',
+    deleteAllDataConfirm: '这会永久删除您的全部数据。确定继续吗？',
+    noMoodTrend: '这个时间范围内还没有心情记录。',
+    startMoodCheckin: '添加一条记录',
     memorySaveMode: '记忆保存方式', memorySaveModeLabel: '对话记忆策略', memorySaveAuto: '自动保存', memorySaveConfirm: '询问后保存', memorySaveOff: '不自动保存', memorySaveMode_auto: '对话中符合条件的记忆会自动保存。', memorySaveMode_confirm: '符合条件的记忆会先进入待确认队列。', memorySaveMode_off: '不自动提取对话记忆；仍可手动管理个人数据。', pendingMemories: '待确认记忆', noPendingMemories: '暂无待确认的记忆候选。', confirmMemory: '确认写入', discardMemory: '丢弃', memoryEventPending: '等待确认', memoryEventConfirmed: '已确认', memoryEventRejected: '已丢弃',
     chat: '聊天', personalData: '个人数据', mood: '心情记录', knowledge: '知识库与 RAG', operations: '运维', privacy: '隐私与导出', more: '更多', moreNavigation: '更多功能', workspaceNavigation: '工作区导航', workspaceRedesign: '前端界面重设计', openSidebar: '打开侧边栏', closeSidebar: '关闭侧边栏',
     newChat: '新建对话', conversations: '历史会话', noChats: '暂无已保存的会话。', logout: '退出登录', renameConversation: '重命名对话', deleteConversation: '删除对话', deleteConversationConfirm: '确定永久删除此对话吗？', conversationTitle: '对话标题', saveTitle: '保存标题', cancel: '取消',

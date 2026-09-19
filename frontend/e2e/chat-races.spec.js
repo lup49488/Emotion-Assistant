@@ -30,6 +30,18 @@ test('IME confirmation keeps the draft until a separate Enter submits it', async
   expect(submissions).toBe(1)
 })
 
+test('a failed first conversation request preserves the unsent draft', async ({ page }) => {
+  const composer = page.getByPlaceholder('Message Serenova')
+  await page.route('**/api/v1/conversations', (route) => route.request().method() === 'POST'
+    ? route.fulfill({ status: 503, json: { detail: 'Conversation service unavailable' } })
+    : route.fallback())
+  await composer.fill('Please keep this draft')
+  await page.getByTitle('Message Serenova', { exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Unable to generate a reply.')
+  await expect(composer).toHaveValue('Please keep this draft')
+  await expect(page.locator('.message.user')).toHaveCount(0)
+})
+
 test('conversation controls cannot replace the active thread during generation', async ({ page }) => {
   let release
   const gate = new Promise((resolve) => { release = resolve })
