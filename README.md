@@ -226,6 +226,30 @@ For a public HTTPS domain, set `API_PUBLIC_MODE=true`, `API_COOKIE_SECURE=true`,
 
 The app uses a per-user access key. In the GUI, enter a User ID and access key, then save/verify it. The FastAPI frontend authenticates with `/api/v1/auth/login`, then uses the signed session cookie plus CSRF token issued by the API.
 
+### Optional email/password sign-in
+
+Set `EMAIL_AUTH_ENABLED=true` only after migrating to the SQLite storage backend
+and configuring a Resend sender. New users verify their email before receiving a
+server-generated internal user ID. Existing users can use the migration screen
+to verify an email and prove control of their existing `user_id` plus access key;
+their conversations, memories, images, and Mood Check-ins stay attached to the
+same internal user ID.
+
+For Docker, place the Resend API key and Turnstile secret in these ignored files:
+
+```text
+secrets/email_auth_resend_api_key.txt
+secrets/turnstile_secret_key.txt
+```
+
+Set `EMAIL_AUTH_FROM`, `TURNSTILE_SITE_KEY`, and, for public deployments,
+`TURNSTILE_EXPECTED_HOSTNAME` in `.env`. Public email authentication requires a
+server-side Turnstile Siteverify check; the browser receives only the sitekey.
+Keep the legacy endpoint available during the published migration window. Use
+Cloudflare Access with MFA for administrator-only routes or a separate admin
+hostname rather than treating the regular-user email login as administrator
+authorization.
+
 User data is stored in:
 
 - local JSON files under `users/` when `STORAGE_BACKEND=json`

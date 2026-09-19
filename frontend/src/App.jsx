@@ -860,22 +860,140 @@ function WorkspaceSidebar({
   )
 }
 
+function TurnstileField({ authConfig, onToken }) {
+  const container = useRef(null)
+
+  useEffect(() => {
+    if (!authConfig.turnstile_required || !authConfig.turnstile_site_key || !container.current) return undefined
+    const render = () => {
+      if (!container.current || !window.turnstile) return
+      container.current.replaceChildren()
+      window.turnstile.render(container.current, {
+        sitekey: authConfig.turnstile_site_key,
+        action: authConfig.turnstile_action,
+        callback: onToken,
+        'expired-callback': () => onToken(''),
+        'error-callback': () => onToken(''),
+      })
+    }
+    const existing = document.getElementById('turnstile-api')
+    if (existing) {
+      existing.addEventListener('load', render)
+      if (window.turnstile) render()
+      return () => existing.removeEventListener('load', render)
+    }
+    const script = document.createElement('script')
+    script.id = 'turnstile-api'
+    script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit'
+    script.async = true
+    script.defer = true
+    script.addEventListener('load', render)
+    document.head.appendChild(script)
+    return () => script.removeEventListener('load', render)
+  }, [authConfig, onToken])
+
+  return authConfig.turnstile_required ? <div className="turnstile-field" ref={container} aria-label="Turnstile verification" /> : null
+}
+
 function LoginScreen({ onSuccess, t }) {
+  const [authConfig, setAuthConfig] = useState({ email_auth_enabled: false, legacy_login_enabled: true, turnstile_required: false, turnstile_site_key: '', turnstile_action: 'email-auth' })
+  const [mode, setMode] = useState('legacy')
+  const [phase, setPhase] = useState('start')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [code, setCode] = useState('')
+  const [challengeId, setChallengeId] = useState('')
+  const [verifiedIntent, setVerifiedIntent] = useState('')
+  const [turnstileToken, setTurnstileToken] = useState('')
   const [userId, setUserId] = useState('')
   const [accessKey, setAccessKey] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  async function submit(event) {
-    event.preventDefault()
+  useEffect(() => {
+    let active = true
+    readJson('/api/v1/auth/config').then((nextConfig) => {
+      if (!active) return
+      setAuthConfig(nextConfig)
+      if (nextConfig.email_auth_enabled) setMode('password')
+    }).catch(() => {})
+    return () => { active = false }
+  }, [])
+
+  const emailPurpose = mode === 'migrate' ? 'legacy_migration' : 'registration'
+  const busyLabel = loading ? <LoaderCircle className="spin" size={18} /> : null
+
+  async function run(action) {
     setLoading(true); setError('')
-    try {
-      await apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ user_id: userId, access_key: accessKey }) })
-      await onSuccess()
-    } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
+    try { await action() } catch (requestError) { setError(requestError.message) } finally { setLoading(false) }
   }
 
-  return <main className="login-page"><section className="login-intro"><div className="brand"><Sparkles size={20} /><span>{ASSISTANT_NAME}</span></div><div><h1>{t('loginTitle')}</h1><p>{t('loginText')}</p></div><div className="intro-mark"><Bot size={38} /></div></section><form className="login-form" onSubmit={submit}><h2>{t('welcomeBack')}</h2><p>{t('loginHelp')}</p><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><label>{t('password')}<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} autoComplete="current-password" required /></label>{error && <div className="login-error">{error}</div>}<button className="login-button" disabled={loading}>{loading ? <LoaderCircle className="spin" size={18} /> : t('signIn')}</button></form></main>
+  async function submitLegacy(event) {
+    event.preventDefault()
+    await run(async () => {
+      await apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify({ user_id: userId, access_key: accessKey }) })
+      await onSuccess()
+    })
+  }
+
+  async function submitPassword(event) {
+    event.preventDefault()
+    await run(async () => {
+      await apiFetch('/api/v1/auth/password/login', { method: 'POST', body: JSON.stringify({ email, password }) })
+      await onSuccess()
+    })
+  }
+
+  async function startChallenge(event) {
+    event.preventDefault()
+    await run(async () => {
+      const response = await readJson('/api/v1/auth/email/start', { method: 'POST', body: JSON.stringify({ email, purpose: emailPurpose, turnstile_token: turnstileToken }) })
+      setChallengeId(response.challenge_id)
+      setPhase('verify')
+    })
+  }
+
+  async function verifyChallenge(event) {
+    event.preventDefault()
+    await run(async () => {
+      const response = await readJson('/api/v1/auth/email/verify', { method: 'POST', body: JSON.stringify({ challenge_id: challengeId, code, purpose: emailPurpose }) })
+      setVerifiedIntent(response.verified_intent)
+      setPhase('complete')
+    })
+  }
+
+  async function completeEmailAuth(event) {
+    event.preventDefault()
+    await run(async () => {
+      const path = mode === 'migrate' ? '/api/v1/auth/migrate-legacy' : '/api/v1/auth/register'
+      const body = mode === 'migrate'
+        ? { verified_intent: verifiedIntent, legacy_user_id: userId, legacy_access_key: accessKey, password }
+        : { verified_intent: verifiedIntent, password }
+      await apiFetch(path, { method: 'POST', body: JSON.stringify(body) })
+      await onSuccess()
+    })
+  }
+
+  function chooseMode(nextMode) {
+    setMode(nextMode); setPhase('start'); setError(''); setCode(''); setChallengeId(''); setVerifiedIntent(''); setTurnstileToken('')
+  }
+
+  const modeControls = authConfig.email_auth_enabled && <div className="login-mode-tabs" role="tablist" aria-label="Sign-in method"><button type="button" role="tab" aria-selected={mode === 'password'} className={mode === 'password' ? 'selected' : ''} onClick={() => chooseMode('password')}>{t('emailSignIn')}</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'selected' : ''} onClick={() => chooseMode('register')}>{t('createAccount')}</button><button type="button" role="tab" aria-selected={mode === 'migrate'} className={mode === 'migrate' ? 'selected' : ''} onClick={() => chooseMode('migrate')}>{t('migrateLegacyAccount')}</button>{authConfig.legacy_login_enabled && <button type="button" role="tab" aria-selected={mode === 'legacy'} className={mode === 'legacy' ? 'selected' : ''} onClick={() => chooseMode('legacy')}>{t('legacySignIn')}</button>}</div>
+
+  let form
+  if (!authConfig.email_auth_enabled || (mode === 'legacy' && authConfig.legacy_login_enabled)) {
+    form = <form onSubmit={submitLegacy}><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><label>{t('password')}<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} autoComplete="current-password" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('signIn')}</button></form>
+  } else if (mode === 'password') {
+    form = <form onSubmit={submitPassword}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><label>{t('emailPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('emailSignIn')}</button></form>
+  } else if (phase === 'start') {
+    form = <form onSubmit={startChallenge}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><TurnstileField authConfig={authConfig} onToken={setTurnstileToken} /><button className="login-button" disabled={loading}>{busyLabel || t('sendCode')}</button></form>
+  } else if (phase === 'verify') {
+    form = <form onSubmit={verifyChallenge}><p className="login-step-copy">{t('codeSent')}</p><label>{t('verificationCode')}<input value={code} onChange={(event) => setCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('verifyCode')}</button><button type="button" className="login-secondary" onClick={() => setPhase('start')}>{t('backToSignIn')}</button></form>
+  } else {
+    form = <form onSubmit={completeEmailAuth}><label>{t('setPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength="12" required /></label>{mode === 'migrate' && <><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><label>{t('legacyAccessKey')}<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} autoComplete="current-password" required /></label></>}<button className="login-button" disabled={loading}>{busyLabel || (mode === 'migrate' ? t('completeMigration') : t('createAccount'))}</button></form>
+  }
+
+  return <main className="login-page"><section className="login-intro"><div className="brand"><Sparkles size={20} /><span>{ASSISTANT_NAME}</span></div><div><h1>{t('loginTitle')}</h1><p>{t('loginText')}</p></div><div className="intro-mark"><Bot size={38} /></div></section><section className="login-form"><h2>{t('welcomeBack')}</h2><p>{t('loginHelp')}</p>{modeControls}{form}{error && <div className="login-error" role="alert">{error}</div>}</section></main>
 }
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt(null, t('talkPromptMessage'))}>{t('talkPrompt')}</button><button onClick={() => onPrompt(null, t('planPromptMessage'))}>{t('planPrompt')}</button></div></div> }

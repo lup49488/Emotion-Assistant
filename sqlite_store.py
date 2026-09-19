@@ -17,7 +17,7 @@ DEFAULT_DATABASE_PATH = BASE_DIR / "data" / "chatbot.db"
 # Bumped whenever ensure_schema() gains a statement. Stamped into the database
 # as PRAGMA user_version so an already-migrated file can skip the whole upgrade
 # pass instead of re-running it on every single connection.
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SQLITE_BACKEND = "sqlite"
 JSON_BACKEND = "json"
 
@@ -116,6 +116,48 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_auth_events_user_created
             ON auth_events(user_id, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS email_identities (
+            user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+            email_normalized TEXT NOT NULL UNIQUE,
+            email_verified_at TEXT NOT NULL,
+            legacy_migrated_at TEXT,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS password_credentials (
+            user_id TEXT PRIMARY KEY REFERENCES users(user_id) ON DELETE CASCADE,
+            password_hash TEXT NOT NULL,
+            changed_at TEXT NOT NULL,
+            credential_version TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS email_challenges (
+            id TEXT PRIMARY KEY,
+            email_normalized TEXT NOT NULL,
+            purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'legacy_migration')),
+            code_hash TEXT NOT NULL,
+            expires_at INTEGER NOT NULL,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            send_count INTEGER NOT NULL DEFAULT 1,
+            verified_at INTEGER,
+            consumed_at INTEGER,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_challenges_email_created
+            ON email_challenges(email_normalized, created_at DESC);
+
+        CREATE TABLE IF NOT EXISTS email_auth_audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id TEXT REFERENCES users(user_id) ON DELETE SET NULL,
+            event_type TEXT NOT NULL,
+            outcome TEXT NOT NULL,
+            request_id TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_email_auth_audit_user_created
+            ON email_auth_audit_events(user_id, created_at DESC);
 
         CREATE TABLE IF NOT EXISTS user_preferences (
             user_id TEXT NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,

@@ -90,6 +90,33 @@ test('a saved message can be quoted for a focused follow-up', async ({ page }) =
   await expect(page.getByText('Regenerated answer')).toBeVisible()
 })
 
+test('email registration completes its verification steps before opening the workspace', async ({ page }) => {
+  let registered = false
+  await page.route('**/api/v1/auth/config', (route) => route.fulfill({ json: {
+    email_auth_enabled: true, legacy_login_enabled: true, turnstile_required: false, turnstile_site_key: '', turnstile_action: 'email-auth',
+  } }))
+  await page.route('**/api/v1/auth/email/start', (route) => route.fulfill({ status: 202, json: { status: 'verification_started', challenge_id: 'challenge-for-e2e-registration' } }))
+  await page.route('**/api/v1/auth/email/verify', (route) => route.fulfill({ json: { verified_intent: 'verified-intent-for-e2e-registration' } }))
+  await page.route('**/api/v1/auth/register', (route) => {
+    registered = true
+    return route.fulfill({ json: { token_type: 'cookie', expires_in: 3600, user_id: 'usr_e2e_registration' } })
+  })
+  await page.route('**/api/v1/auth/session', (route) => registered
+    ? route.fulfill({ json: { user_id: 'usr_e2e_registration', authentication: 'signed_cookie', can_access_operations: false, can_manage_knowledge: false } })
+    : route.fulfill({ status: 401, json: { detail: 'Signed session cookie is required.' } }))
+
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Create account' }).click()
+  await page.getByLabel('Email address').fill('student@example.test')
+  await page.getByRole('button', { name: 'Send verification code' }).click()
+  await expect(page.getByText('Enter the verification code sent to your email.')).toBeVisible()
+  await page.getByLabel('Verification code').fill('12345678')
+  await page.getByRole('button', { name: 'Verify code' }).click()
+  await page.getByLabel('Set password').fill('correct-horse-battery')
+  await page.getByRole('button', { name: 'Create account' }).click()
+  await expect(page.getByPlaceholder('Message Serenova')).toBeVisible()
+})
+
 test('assistant replies render HTML line breaks and LaTeX delimiters safely', async ({ page }) => {
   await signIn(page)
   await sendMessage(page, 'Show markdown')

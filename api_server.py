@@ -68,6 +68,7 @@ from api_routes.system import create_system_router
 from chatbot import crisis_precheck, handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from emotion import detect_lang
 from auth_store import access_key_version
+from email_auth_store import EmailAuthService
 from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_RAG_ADMIN_USER_IDS, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER, RAG_REQUIRE_EVIDENCE
 from api_usage_store import list_usage_events, usage_summary
 from conversation_store import append_exchange, get_conversation_message, last_exchange_message_ids, remove_last_exchange
@@ -131,6 +132,7 @@ if _configured_session_secret and len(_configured_session_secret) < 32:
 if not _configured_session_secret:
     logger.warning("API_SESSION_SECRET 未设置，正在使用进程临时密钥；服务重启后登录 Cookie 会失效。")
 SESSION_SECRET = _configured_session_secret.encode("utf-8") or secrets.token_bytes(32)
+EMAIL_AUTH_SERVICE = EmailAuthService(SESSION_SECRET)
 
 
 def _trusted_hosts() -> list[str]:
@@ -391,7 +393,7 @@ def _read_signed_session(cookie_value: str) -> dict[str, Any] | None:
 
 
 def _issue_session(user_id: str) -> tuple[str, int]:
-    credential_version = access_key_version(user_id)
+    credential_version = EMAIL_AUTH_SERVICE.credential_version(user_id) or access_key_version(user_id)
     if not credential_version:
         raise RuntimeError("无法读取访问凭据版本。")
     expires_at = int(time.time()) + API_SESSION_TTL_SECONDS
@@ -423,7 +425,8 @@ def _current_user(
         credential_version = str(payload["ver"])
     except (KeyError, TypeError, ValueError):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid signed session cookie.") from None
-    if expires_at <= int(time.time()) or access_key_version(user_id) != credential_version:
+    active_version = EMAIL_AUTH_SERVICE.credential_version(user_id) or access_key_version(user_id)
+    if expires_at <= int(time.time()) or active_version != credential_version:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session is missing or expired.")
     return user_id
 
@@ -533,6 +536,8 @@ app.include_router(
         },
         operations_users=lambda: {item.strip() for item in API_OPERATIONS_USER_IDS.split(",") if item.strip()},
         can_manage_knowledge=lambda user_id: _can_manage_knowledge(user_id),
+        email_auth=EMAIL_AUTH_SERVICE,
+        request_id=lambda request: _request_id_from_header(request),
     )
 )
 app.include_router(
