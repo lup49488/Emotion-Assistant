@@ -128,6 +128,32 @@ test('email registration waits for the required Turnstile token before sending a
   await expect(page.getByRole('button', { name: 'Send verification code' })).toBeDisabled()
 })
 
+test('a completed Turnstile challenge remains usable after the login form rerenders', async ({ page }) => {
+  await page.route('**/api/v1/auth/config', (route) => route.fulfill({ json: {
+    email_auth_enabled: true, legacy_login_enabled: true, turnstile_required: true, turnstile_site_key: 'site-key', turnstile_action: 'email-auth',
+  } }))
+  await page.route('**/turnstile/v0/api.js?render=explicit', (route) => route.fulfill({
+    contentType: 'application/javascript',
+    body: `window.turnstile = {
+      render: (_container, options) => {
+        window.__turnstileRenderCount = (window.__turnstileRenderCount || 0) + 1;
+        window.__turnstileSuccess = options.callback;
+        return window.__turnstileRenderCount;
+      },
+      remove: () => {},
+    };`,
+  }))
+
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Create account' }).click()
+  await page.getByLabel('Email address').fill('student@example.test')
+  await expect.poll(() => page.evaluate(() => window.__turnstileRenderCount)).toBe(1)
+
+  await page.evaluate(() => window.__turnstileSuccess('valid-turnstile-token'))
+  await expect(page.getByRole('button', { name: 'Send verification code' })).toBeEnabled()
+  await expect.poll(() => page.evaluate(() => window.__turnstileRenderCount)).toBe(1)
+})
+
 test('assistant replies render HTML line breaks and LaTeX delimiters safely', async ({ page }) => {
   await signIn(page)
   await sendMessage(page, 'Show markdown')

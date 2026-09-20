@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Activity,
   BookOpen,
@@ -865,10 +865,11 @@ function TurnstileField({ authConfig, onToken, onError }) {
 
   useEffect(() => {
     if (!authConfig.turnstile_required || !authConfig.turnstile_site_key || !container.current) return undefined
+    let widgetId
     const render = () => {
       if (!container.current || !window.turnstile) return
       container.current.replaceChildren()
-      window.turnstile.render(container.current, {
+      widgetId = window.turnstile.render(container.current, {
         sitekey: authConfig.turnstile_site_key,
         action: authConfig.turnstile_action,
         callback: onToken,
@@ -880,7 +881,10 @@ function TurnstileField({ authConfig, onToken, onError }) {
     if (existing) {
       existing.addEventListener('load', render)
       if (window.turnstile) render()
-      return () => existing.removeEventListener('load', render)
+      return () => {
+        existing.removeEventListener('load', render)
+        if (widgetId !== undefined && window.turnstile) window.turnstile.remove(widgetId)
+      }
     }
     const script = document.createElement('script')
     script.id = 'turnstile-api'
@@ -889,8 +893,11 @@ function TurnstileField({ authConfig, onToken, onError }) {
     script.defer = true
     script.addEventListener('load', render)
     document.head.appendChild(script)
-    return () => script.removeEventListener('load', render)
-  }, [authConfig, onToken])
+    return () => {
+      script.removeEventListener('load', render)
+      if (widgetId !== undefined && window.turnstile) window.turnstile.remove(widgetId)
+    }
+  }, [authConfig.turnstile_action, authConfig.turnstile_required, authConfig.turnstile_site_key, onError, onToken])
 
   return authConfig.turnstile_required ? <div className="turnstile-field" ref={container} aria-label="Turnstile verification" /> : null
 }
@@ -924,6 +931,13 @@ function LoginScreen({ onSuccess, t }) {
 
   const emailPurpose = mode === 'migrate' ? 'legacy_migration' : 'registration'
   const busyLabel = loading ? <LoaderCircle className="spin" size={18} /> : null
+  const handleTurnstileToken = useCallback((token) => {
+    setTurnstileToken(token)
+    setTurnstileError('')
+  }, [])
+  const handleTurnstileError = useCallback((reason) => {
+    setTurnstileError(reason)
+  }, [])
 
   async function run(action) {
     setLoading(true); setError('')
@@ -998,7 +1012,7 @@ function LoginScreen({ onSuccess, t }) {
   } else if (mode === 'password') {
     form = <form onSubmit={submitPassword}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><label>{t('emailPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('emailSignIn')}</button></form>
   } else if (phase === 'start') {
-    form = <form onSubmit={startChallenge}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><TurnstileField key={turnstileRevision} authConfig={authConfig} onToken={(token) => { setTurnstileToken(token); setTurnstileError('') }} onError={setTurnstileError} />{turnstileError && <p className="login-step-copy" role="status">{t('turnstileRetry')}</p>}<button className="login-button" disabled={loading || (authConfig.turnstile_required && !turnstileToken)}>{busyLabel || t('sendCode')}</button></form>
+    form = <form onSubmit={startChallenge}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><TurnstileField key={turnstileRevision} authConfig={authConfig} onToken={handleTurnstileToken} onError={handleTurnstileError} />{turnstileError && <p className="login-step-copy" role="status">{t('turnstileRetry')}</p>}<button className="login-button" disabled={loading || (authConfig.turnstile_required && !turnstileToken)}>{busyLabel || t('sendCode')}</button></form>
   } else if (phase === 'verify') {
     form = <form onSubmit={verifyChallenge}><p className="login-step-copy">{t('codeSent')}</p><label>{t('verificationCode')}<input value={code} onChange={(event) => setCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('verifyCode')}</button><button type="button" className="login-secondary" onClick={() => setPhase('start')}>{t('backToSignIn')}</button></form>
   } else {
