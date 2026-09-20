@@ -23,7 +23,7 @@ def test_email_registration_flow_issues_the_existing_signed_session(tmp_path, mo
         config_response = client.get("/api/v1/auth/config")
         start = client.post("/api/v1/auth/email/start", json={"email": "student@example.test", "purpose": "registration", "turnstile_token": ""})
         verified = client.post("/api/v1/auth/email/verify", json={"challenge_id": start.json()["challenge_id"], "code": sent[-1], "purpose": "registration"})
-        registered = client.post("/api/v1/auth/register", json={"verified_intent": verified.json()["verified_intent"], "password": "correct-horse-battery"})
+        registered = client.post("/api/v1/auth/register", json={"verified_intent": verified.json()["verified_intent"], "password": "eight123"})
         session = client.get("/api/v1/auth/session")
 
     assert config_response.json()["email_auth_enabled"] is True

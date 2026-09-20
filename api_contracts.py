@@ -133,7 +133,7 @@ class EmailChallengeVerifyResponse(ContractModel):
 
 class EmailPasswordRegisterRequest(ContractModel):
     verified_intent: str = Field(min_length=32, max_length=2048)
-    password: str = Field(min_length=12, max_length=512)
+    password: str = Field(min_length=8, max_length=512)
 
 
 class LegacyMigrationRequest(EmailPasswordRegisterRequest):
