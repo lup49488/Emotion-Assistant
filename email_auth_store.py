@@ -200,8 +200,8 @@ class EmailAuthService:
             raise EmailAuthError("Verification has expired. Request a new code.")
 
     def _new_password_hash(self, password: str) -> str:
-        if len(password or "") < 12 or len(password) > 512:
-            raise EmailAuthError("Use a password between 12 and 512 characters.")
+        if len(password or "") < 8 or len(password) > 512:
+            raise EmailAuthError("Use a password between 8 and 512 characters.")
         return PASSWORD_HASHER.hash(password)
 
     def register(self, intent_token: str, password: str, request_id: str) -> str:

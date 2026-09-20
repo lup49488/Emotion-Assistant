@@ -36,6 +36,14 @@ def test_email_registration_creates_an_opaque_account_and_one_time_password_logi
         service.register(intent, "another-correct-password", "register-2")
 
 
+def test_email_password_accepts_eight_characters_and_rejects_shorter_values(tmp_path, monkeypatch):
+    service, _sent = _service(tmp_path, monkeypatch)
+
+    assert service._new_password_hash("eight123")
+    with pytest.raises(EmailAuthError, match="between 8 and 512"):
+        service._new_password_hash("seven77")
+
+
 def test_legacy_migration_binds_existing_user_without_replacing_its_id(tmp_path, monkeypatch):
     service, sent = _service(tmp_path, monkeypatch)
     assert verify_access("legacy-user", "legacy-access-key")[0] is True
