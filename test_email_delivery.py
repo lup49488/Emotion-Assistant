@@ -30,5 +30,5 @@ def test_resend_rejection_logs_only_status_and_error_category(monkeypatch, caplo
         with pytest.raises(email_delivery.EmailDeliveryError, match="rejected"):
             email_delivery.send_verification_code("student@example.test", "12345678")
 
-    assert "status=403 category=restricted_api_key" in caplog.text
+    assert "status=403 category=restricted_api_key detail=<email> is blocked" in caplog.text
     assert "student@example.test" not in caplog.text

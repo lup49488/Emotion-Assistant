@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import urllib.error
 import urllib.request
 
@@ -10,6 +11,16 @@ import config
 
 
 logger = logging.getLogger(__name__)
+_EMAIL_IN_TEXT = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
+
+
+def _safe_provider_detail(payload: object) -> tuple[str, str]:
+    """Return a short diagnostic without retaining a recipient address."""
+    if not isinstance(payload, dict):
+        return "unknown", ""
+    kind = payload.get("name") if isinstance(payload.get("name"), str) else "unknown"
+    message = payload.get("message") if isinstance(payload.get("message"), str) else ""
+    return kind[:80], _EMAIL_IN_TEXT.sub("<email>", message.strip())[:240]
 
 
 class EmailDeliveryError(RuntimeError):
@@ -57,13 +68,13 @@ def send_verification_code(email: str, code: str) -> None:
         # Resend may include the recipient address in its human-readable message.
         # Keep logs useful for operators without recording personal data.
         error_kind = "unknown"
+        detail = ""
         try:
             payload = json.loads(exc.read().decode("utf-8"))
-            if isinstance(payload, dict) and isinstance(payload.get("name"), str):
-                error_kind = payload["name"][:80]
+            error_kind, detail = _safe_provider_detail(payload)
         except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
             pass
-        logger.warning("Resend verification delivery rejected: status=%s category=%s", exc.code, error_kind)
+        logger.warning("Resend verification delivery rejected: status=%s category=%s detail=%s", exc.code, error_kind, detail or "none")
         raise EmailDeliveryError("Email provider rejected the request.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         logger.warning("Resend verification delivery unavailable: error=%s", type(exc).__name__)
