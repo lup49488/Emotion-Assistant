@@ -45,7 +45,7 @@
 }
 .tone-control { min-width: 0; flex: 0 1 auto; }
 .tone-summary, .model-summary { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.model-summary { flex: 1 1 auto; }
+.model-summary { flex: 0 1 auto; }
 .conversation-summary:hover,
 .conversation-summary.active {
   border-color: var(--accent);

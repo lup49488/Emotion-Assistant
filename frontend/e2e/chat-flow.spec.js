@@ -298,6 +298,12 @@ test('English system summaries stay English while user-entered mood labels stay 
 test('chat header controls set a gentle tone and open the model reply window', async ({ page }) => {
   await signIn(page)
 
+  const headerSummaryLayout = await page.locator('.chat-summary-row').evaluate((row) => {
+    const model = row.querySelector('.model-summary')
+    return { rowWidth: row.getBoundingClientRect().width, modelWidth: model?.getBoundingClientRect().width || 0 }
+  })
+  expect(headerSummaryLayout.modelWidth).toBeLessThan(headerSummaryLayout.rowWidth * 0.8)
+
   await page.getByRole('button', { name: /Conversation tone/ }).click()
   const toneMenu = page.getByRole('menu', { name: 'Conversation tone' })
   await expect(toneMenu).toBeVisible()
