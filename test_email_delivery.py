@@ -15,7 +15,10 @@ def test_resend_rejection_logs_only_status_and_error_category(monkeypatch, caplo
     monkeypatch.setattr(config, "EMAIL_AUTH_FROM", "Serenova <no-reply@example.test>")
     monkeypatch.setattr(config, "EMAIL_AUTH_RESEND_API_KEY", "test-email-secret")
 
-    def rejected(*_args, **_kwargs):
+    captured: dict[str, str] = {}
+
+    def rejected(request, *_args, **_kwargs):
+        captured["user_agent"] = request.get_header("User-agent")
         raise urllib.error.HTTPError(
             "https://api.resend.com/emails",
             403,
@@ -32,3 +35,4 @@ def test_resend_rejection_logs_only_status_and_error_category(monkeypatch, caplo
 
     assert "status=403 category=restricted_api_key detail=<email> is blocked" in caplog.text
     assert "student@example.test" not in caplog.text
+    assert captured["user_agent"] == "Serenova/1.0 (+https://chat.serenova.dev)"

@@ -57,6 +57,9 @@ def send_verification_code(email: str, code: str) -> None:
         headers={
             "Authorization": f"Bearer {config.EMAIL_AUTH_RESEND_API_KEY}",
             "Content-Type": "application/json",
+            # Resend's Cloudflare edge rejects Python's default urllib user agent
+            # before the request reaches the provider API.
+            "User-Agent": "Serenova/1.0 (+https://chat.serenova.dev)",
         },
         method="POST",
     )
