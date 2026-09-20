@@ -90,6 +90,27 @@ test('a saved message can be quoted for a focused follow-up', async ({ page }) =
   await expect(page.getByText('Regenerated answer')).toBeVisible()
 })
 
+test('a long quoted message stays inside the composer instead of widening the chat', async ({ page }) => {
+  await signIn(page)
+  const longMessage = 'unbroken-quote-'.repeat(400)
+  await page.route('**/api/v1/chat/stream', (route) => route.fulfill({
+    contentType: 'text/event-stream',
+    body: `event: chunk\ndata: ${JSON.stringify({ text: longMessage })}\n\nevent: archived\ndata: ${JSON.stringify({ user_message_id: 'quoted-user', assistant_message_id: 'quoted-assistant' })}\n\nevent: done\ndata: {}\n\n`,
+  }))
+  await sendMessage(page, 'Keep this conversation title short')
+  await expect(page.locator('.message.assistant')).toContainText(longMessage)
+
+  await page.getByTitle('Reply to this message').last().click()
+  await expect(page.locator('.composer-quote')).toBeVisible()
+  const layout = await page.locator('.composer-wrap').evaluate((composer) => ({
+    composerRight: composer.getBoundingClientRect().right,
+    viewportWidth: window.innerWidth,
+    scrollWidth: document.documentElement.scrollWidth,
+  }))
+  expect(layout.composerRight).toBeLessThanOrEqual(layout.viewportWidth + 1)
+  expect(layout.scrollWidth).toBeLessThanOrEqual(layout.viewportWidth + 1)
+})
+
 test('email registration completes its verification steps before opening the workspace', async ({ page }) => {
   let registered = false
   await page.route('**/api/v1/auth/config', (route) => route.fulfill({ json: {
@@ -282,7 +303,14 @@ test('chat header controls set a gentle tone and open the model reply window', a
   await expect(toneMenu).toBeVisible()
   const menuIsNotClippedByHeader = await toneMenu.evaluate((menu) => {
     const header = menu.closest('.chat-panel')?.querySelector('.chat-header')
-    return header ? getComputedStyle(header).overflow === 'visible' : false
+    const summaryRow = menu.parentElement?.parentElement
+    const item = menu.querySelector('[role="menuitemradio"]')
+    if (!header || !summaryRow || !item) return false
+    const bounds = item.getBoundingClientRect()
+    const visibleAtCenter = document.elementFromPoint(bounds.left + 8, bounds.top + 8)?.closest('.tone-menu') === menu
+    return getComputedStyle(header).overflow === 'visible'
+      && getComputedStyle(summaryRow).overflow === 'visible'
+      && visibleAtCenter
   })
   expect(menuIsNotClippedByHeader).toBe(true)
   await expect(page.getByRole('menuitemradio', { name: 'Gentle' })).toHaveCount(1)
