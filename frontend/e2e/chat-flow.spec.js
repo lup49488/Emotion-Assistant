@@ -117,6 +117,17 @@ test('email registration completes its verification steps before opening the wor
   await expect(page.getByPlaceholder('Message Serenova')).toBeVisible()
 })
 
+test('email registration waits for the required Turnstile token before sending a code', async ({ page }) => {
+  await page.route('**/api/v1/auth/config', (route) => route.fulfill({ json: {
+    email_auth_enabled: true, legacy_login_enabled: true, turnstile_required: true, turnstile_site_key: 'site-key', turnstile_action: 'email-auth',
+  } }))
+
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Create account' }).click()
+  await page.getByLabel('Email address').fill('student@example.test')
+  await expect(page.getByRole('button', { name: 'Send verification code' })).toBeDisabled()
+})
+
 test('assistant replies render HTML line breaks and LaTeX delimiters safely', async ({ page }) => {
   await signIn(page)
   await sendMessage(page, 'Show markdown')

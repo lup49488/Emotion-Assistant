@@ -860,7 +860,7 @@ function WorkspaceSidebar({
   )
 }
 
-function TurnstileField({ authConfig, onToken }) {
+function TurnstileField({ authConfig, onToken, onError }) {
   const container = useRef(null)
 
   useEffect(() => {
@@ -872,8 +872,8 @@ function TurnstileField({ authConfig, onToken }) {
         sitekey: authConfig.turnstile_site_key,
         action: authConfig.turnstile_action,
         callback: onToken,
-        'expired-callback': () => onToken(''),
-        'error-callback': () => onToken(''),
+        'expired-callback': () => { onToken(''); onError('expired') },
+        'error-callback': () => { onToken(''); onError('failed') },
       })
     }
     const existing = document.getElementById('turnstile-api')
@@ -908,6 +908,8 @@ function LoginScreen({ onSuccess, t }) {
   const [userId, setUserId] = useState('')
   const [accessKey, setAccessKey] = useState('')
   const [error, setError] = useState('')
+  const [turnstileError, setTurnstileError] = useState('')
+  const [turnstileRevision, setTurnstileRevision] = useState(0)
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
@@ -946,10 +948,20 @@ function LoginScreen({ onSuccess, t }) {
 
   async function startChallenge(event) {
     event.preventDefault()
+    if (authConfig.turnstile_required && !turnstileToken) {
+      setError(t('turnstileRequired'))
+      return
+    }
     await run(async () => {
-      const response = await readJson('/api/v1/auth/email/start', { method: 'POST', body: JSON.stringify({ email, purpose: emailPurpose, turnstile_token: turnstileToken }) })
-      setChallengeId(response.challenge_id)
-      setPhase('verify')
+      try {
+        const response = await readJson('/api/v1/auth/email/start', { method: 'POST', body: JSON.stringify({ email, purpose: emailPurpose, turnstile_token: turnstileToken }) })
+        setChallengeId(response.challenge_id)
+        setPhase('verify')
+      } catch (requestError) {
+        setTurnstileToken('')
+        setTurnstileRevision((value) => value + 1)
+        throw requestError
+      }
     })
   }
 
@@ -975,7 +987,7 @@ function LoginScreen({ onSuccess, t }) {
   }
 
   function chooseMode(nextMode) {
-    setMode(nextMode); setPhase('start'); setError(''); setCode(''); setChallengeId(''); setVerifiedIntent(''); setTurnstileToken('')
+    setMode(nextMode); setPhase('start'); setError(''); setTurnstileError(''); setCode(''); setChallengeId(''); setVerifiedIntent(''); setTurnstileToken(''); setTurnstileRevision((value) => value + 1)
   }
 
   const modeControls = authConfig.email_auth_enabled && <div className="login-mode-tabs" role="tablist" aria-label="Sign-in method"><button type="button" role="tab" aria-selected={mode === 'password'} className={mode === 'password' ? 'selected' : ''} onClick={() => chooseMode('password')}>{t('emailSignIn')}</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'selected' : ''} onClick={() => chooseMode('register')}>{t('createAccount')}</button><button type="button" role="tab" aria-selected={mode === 'migrate'} className={mode === 'migrate' ? 'selected' : ''} onClick={() => chooseMode('migrate')}>{t('migrateLegacyAccount')}</button>{authConfig.legacy_login_enabled && <button type="button" role="tab" aria-selected={mode === 'legacy'} className={mode === 'legacy' ? 'selected' : ''} onClick={() => chooseMode('legacy')}>{t('legacySignIn')}</button>}</div>
@@ -986,7 +998,7 @@ function LoginScreen({ onSuccess, t }) {
   } else if (mode === 'password') {
     form = <form onSubmit={submitPassword}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><label>{t('emailPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('emailSignIn')}</button></form>
   } else if (phase === 'start') {
-    form = <form onSubmit={startChallenge}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><TurnstileField authConfig={authConfig} onToken={setTurnstileToken} /><button className="login-button" disabled={loading}>{busyLabel || t('sendCode')}</button></form>
+    form = <form onSubmit={startChallenge}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><TurnstileField key={turnstileRevision} authConfig={authConfig} onToken={(token) => { setTurnstileToken(token); setTurnstileError('') }} onError={setTurnstileError} />{turnstileError && <p className="login-step-copy" role="status">{t('turnstileRetry')}</p>}<button className="login-button" disabled={loading || (authConfig.turnstile_required && !turnstileToken)}>{busyLabel || t('sendCode')}</button></form>
   } else if (phase === 'verify') {
     form = <form onSubmit={verifyChallenge}><p className="login-step-copy">{t('codeSent')}</p><label>{t('verificationCode')}<input value={code} onChange={(event) => setCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('verifyCode')}</button><button type="button" className="login-secondary" onClick={() => setPhase('start')}>{t('backToSignIn')}</button></form>
   } else {
