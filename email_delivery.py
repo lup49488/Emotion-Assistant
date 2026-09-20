@@ -2,10 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import urllib.error
 import urllib.request
 
 import config
+
+
+logger = logging.getLogger(__name__)
 
 
 class EmailDeliveryError(RuntimeError):
@@ -49,5 +53,18 @@ def send_verification_code(email: str, code: str) -> None:
         with urllib.request.urlopen(request, timeout=10) as response:
             if not 200 <= response.status < 300:
                 raise EmailDeliveryError("Email provider rejected the request.")
+    except urllib.error.HTTPError as exc:
+        # Resend may include the recipient address in its human-readable message.
+        # Keep logs useful for operators without recording personal data.
+        error_kind = "unknown"
+        try:
+            payload = json.loads(exc.read().decode("utf-8"))
+            if isinstance(payload, dict) and isinstance(payload.get("name"), str):
+                error_kind = payload["name"][:80]
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+            pass
+        logger.warning("Resend verification delivery rejected: status=%s category=%s", exc.code, error_kind)
+        raise EmailDeliveryError("Email provider rejected the request.") from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        logger.warning("Resend verification delivery unavailable: error=%s", type(exc).__name__)
         raise EmailDeliveryError("Email provider is unavailable.") from exc
