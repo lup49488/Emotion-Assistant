@@ -315,20 +315,20 @@ def test_versioned_status_exposes_safe_runtime_metrics():
 
 
 def test_model_provider_catalog_exposes_choices_without_secret_values(monkeypatch, tmp_path):
-    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "secret-nim-key")
-    monkeypatch.setenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-8b-instruct")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret-deepseek-key")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
 
     with TestClient(api_server.app, base_url="https://testserver") as client:
         _login(client, monkeypatch, tmp_path)
         response = client.get("/api/v1/model/providers")
 
     payload = response.json()
-    nvidia = next(provider for provider in payload["providers"] if provider["id"] == "nvidia_nim")
+    deepseek = next(provider for provider in payload["providers"] if provider["id"] == "deepseek")
     assert response.status_code == 200
-    assert nvidia["default_model"] == "meta/llama-3.1-8b-instruct"
-    assert "openai/gpt-oss-20b" in nvidia["models"]
-    assert "NVIDIA_NIM_API_KEY" in nvidia["api_key_envs"]
-    assert "secret-nim-key" not in json.dumps(payload)
+    assert deepseek["default_model"] == "deepseek-v4-pro"
+    assert "deepseek-flash" in deepseek["models"]
+    assert "DEEPSEEK_API_KEY" in deepseek["api_key_envs"]
+    assert "secret-deepseek-key" not in json.dumps(payload)
 
 
 def test_api_lifespan_starts_warmup_once(monkeypatch):

@@ -18,6 +18,7 @@ these values in `frontend/.env*`.
 ```env
 LLM_PROVIDER=deepseek
 DEEPSEEK_API_KEY=replace-with-your-server-side-key
+DEEPSEEK_MODEL=deepseek-flash
 API_SESSION_SECRET=replace-with-a-unique-random-value-at-least-32-characters
 API_COOKIE_SECURE=true
 API_COOKIE_SAMESITE=lax

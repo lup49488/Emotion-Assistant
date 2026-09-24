@@ -16,6 +16,23 @@ from config import (
 ProviderKind = Literal["local", "openai_compatible", "anthropic"]
 
 
+@dataclass(frozen=True)
+class ChatCompletionRequestProfile:
+    """Per-model constraints for the OpenAI Chat Completions transport."""
+
+    output_token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    supports_temperature: bool = True
+    supports_top_p: bool = True
+
+
+DEFAULT_CHAT_COMPLETION_PROFILE = ChatCompletionRequestProfile()
+GPT6_CHAT_COMPLETION_PROFILE = ChatCompletionRequestProfile(
+    output_token_parameter="max_completion_tokens",
+    supports_temperature=False,
+    supports_top_p=False,
+)
+
+
 def env_or(name: str | None, default: str) -> str:
     if not name:
         return default
@@ -40,6 +57,7 @@ class ProviderDefinition:
     model_env: str | None = None
     default_model: str = DEFAULT_API_MODEL
     model_choices: tuple[str, ...] = ()
+    model_request_profiles: tuple[tuple[str, ChatCompletionRequestProfile], ...] = ()
     base_url_env: str | None = None
     default_base_url: str = ""
     show_in_ui: bool = True
@@ -49,6 +67,19 @@ class ProviderDefinition:
 
     def model_options(self) -> list[str]:
         return unique_choices([self.default_model_value(), *self.model_choices])
+
+    def chat_completion_parameters(
+        self, model: str, *, temperature: float, top_p: float, max_new_tokens: int
+    ) -> dict[str, float | int]:
+        profile = dict(self.model_request_profiles).get(model, DEFAULT_CHAT_COMPLETION_PROFILE)
+        parameters: dict[str, float | int] = {
+            profile.output_token_parameter: max_new_tokens,
+        }
+        if profile.supports_temperature:
+            parameters["temperature"] = temperature
+        if profile.supports_top_p:
+            parameters["top_p"] = top_p
+        return parameters
 
     def base_url_value(self) -> str:
         return env_or(self.base_url_env, self.default_base_url)
@@ -84,9 +115,9 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         model_env="ANTHROPIC_MODEL",
         default_model=ANTHROPIC_MODEL,
         model_choices=(
-            "claude-opus-5",
-            "claude-sonnet-5",
             "claude-haiku-4-5",
+            "claude-sonnet-5",
+            "claude-opus-5",
         ),
         base_url_env="ANTHROPIC_BASE_URL",
         default_base_url=ANTHROPIC_BASE_URL,
@@ -97,8 +128,8 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         kind="openai_compatible",
         api_key_envs=("DEEPSEEK_API_KEY", "LLM_API_KEY"),
         model_env="DEEPSEEK_MODEL",
-        default_model="deepseek-chat",
-        model_choices=("deepseek-chat", "deepseek-reasoner"),
+        default_model="deepseek-flash",
+        model_choices=("deepseek-flash", "deepseek-v4-pro"),
         default_base_url="https://api.deepseek.com",
     ),
     "openai": ProviderDefinition(
@@ -107,8 +138,19 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         kind="openai_compatible",
         api_key_envs=("OPENAI_API_KEY", "LLM_API_KEY"),
         model_env="OPENAI_MODEL",
-        default_model="gpt-4.1-mini",
-        model_choices=("gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o"),
+        default_model="gpt-6-luna",
+        model_choices=(
+            "gpt-6-luna",
+            "gpt-6-sol",
+            "gpt-4o",
+        ),
+        model_request_profiles=(
+            ("gpt-6-luna", GPT6_CHAT_COMPLETION_PROFILE),
+            ("gpt-6-sol", GPT6_CHAT_COMPLETION_PROFILE),
+            # Astra remains configurable through OPENAI_MODEL or a custom id,
+            # but is deliberately not a standard UI choice while costs are reviewed.
+            ("gpt-6-astra", GPT6_CHAT_COMPLETION_PROFILE),
+        ),
     ),
     "openrouter": ProviderDefinition(
         id="openrouter",
@@ -116,30 +158,12 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         kind="openai_compatible",
         api_key_envs=("OPENROUTER_API_KEY", "LLM_API_KEY"),
         model_env="OPENROUTER_MODEL",
-        default_model="openai/gpt-4.1-mini",
+        default_model="openrouter/auto",
         model_choices=(
-            "openai/gpt-4.1-mini",
-            "openai/gpt-4o-mini",
-            "anthropic/claude-3.5-sonnet",
-            "google/gemini-2.0-flash-001",
-            "deepseek/deepseek-chat",
+            "openrouter/auto",
+            "openrouter/free",
         ),
         default_base_url="https://openrouter.ai/api/v1",
-    ),
-    "nvidia_nim": ProviderDefinition(
-        id="nvidia_nim",
-        label="NVIDIA NIM",
-        kind="openai_compatible",
-        api_key_envs=("NVIDIA_NIM_API_KEY", "LLM_API_KEY"),
-        model_env="NVIDIA_NIM_MODEL",
-        default_model="openai/gpt-oss-20b",
-        model_choices=(
-            "openai/gpt-oss-20b",
-            "meta/llama-3.1-8b-instruct",
-            "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-        ),
-        base_url_env="NVIDIA_NIM_BASE_URL",
-        default_base_url="https://integrate.api.nvidia.com/v1",
     ),
     "openai_compatible": ProviderDefinition(
         id="openai_compatible",
@@ -147,7 +171,7 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         kind="openai_compatible",
         model_env="LLM_API_MODEL",
         default_model=DEFAULT_API_MODEL,
-        model_choices=("deepseek-chat", "qwen-plus", "moonshot-v1-8k"),
+        model_choices=("deepseek-flash", "qwen-plus", "moonshot-v1-8k"),
         base_url_env="LLM_API_BASE_URL",
         default_base_url=DEFAULT_API_BASE_URL,
     ),

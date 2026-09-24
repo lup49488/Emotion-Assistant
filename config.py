@@ -140,8 +140,8 @@ SAFETY_SEMANTIC_LOAD_RETRY_SECONDS = max(
     0, _env_int("SAFETY_SEMANTIC_LOAD_RETRY_SECONDS", 300)
 )
 
-DEFAULT_LLM_PROVIDER = _env_str("LLM_PROVIDER", "nvidia_nim")
-DEFAULT_API_MODEL = _env_str("LLM_API_MODEL", "deepseek-chat")
+DEFAULT_LLM_PROVIDER = _env_str("LLM_PROVIDER", "deepseek")
+DEFAULT_API_MODEL = _env_str("LLM_API_MODEL", "deepseek-flash")
 DEFAULT_API_BASE_URL = _env_str("LLM_API_BASE_URL", "https://api.deepseek.com")
 DEFAULT_TEMPERATURE = _env_float("LLM_TEMPERATURE", 0.8)
 DEFAULT_TOP_P = _env_float("LLM_TOP_P", 0.9)
@@ -153,7 +153,7 @@ LLM_FALLBACKS_JSON = os.getenv("LLM_FALLBACKS_JSON", "").strip()
 # Native Anthropic provider. The Messages API differs from the OpenAI-compatible
 # shape in ways that need their own settings, so they live here rather than being
 # folded into the shared LLM_* values.
-ANTHROPIC_MODEL = _env_str("ANTHROPIC_MODEL", "claude-opus-5")
+ANTHROPIC_MODEL = _env_str("ANTHROPIC_MODEL", "claude-sonnet-5")
 ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "").strip()
 # Thinking is off by default for this app. It shares the max_tokens budget with
 # the reply, and the default output budget is sized for normal supportive

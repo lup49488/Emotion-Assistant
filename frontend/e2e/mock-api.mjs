@@ -68,8 +68,9 @@ const server = http.createServer(async (request, response) => {
   if (request.method === 'GET' && url.pathname === '/health') return send(response, 200, { status: 'ok' })
   if (request.method === 'GET' && url.pathname === '/api/v1/model/providers') return send(response, 200, {
     providers: [
-      { id: 'nvidia_nim', label: 'NVIDIA NIM', kind: 'openai_compatible', models: ['openai/gpt-oss-20b', 'meta/llama-3.1-8b-instruct'], default_model: 'openai/gpt-oss-20b', default_base_url: 'https://integrate.api.nvidia.com/v1', api_key_envs: ['NVIDIA_NIM_API_KEY', 'LLM_API_KEY'] },
-      { id: 'deepseek', label: 'DeepSeek', kind: 'openai_compatible', models: ['deepseek-chat', 'deepseek-reasoner'], default_model: 'deepseek-chat', default_base_url: 'https://api.deepseek.com', api_key_envs: ['DEEPSEEK_API_KEY', 'LLM_API_KEY'] },
+      { id: 'deepseek', label: 'DeepSeek', kind: 'openai_compatible', models: ['deepseek-flash', 'deepseek-v4-pro'], default_model: 'deepseek-flash', default_base_url: 'https://api.deepseek.com', api_key_envs: ['DEEPSEEK_API_KEY', 'LLM_API_KEY'] },
+      { id: 'openai', label: 'OpenAI', kind: 'openai_compatible', models: ['gpt-6-luna', 'gpt-6-sol', 'gpt-4o'], default_model: 'gpt-6-luna', default_base_url: '', api_key_envs: ['OPENAI_API_KEY', 'LLM_API_KEY'] },
+      { id: 'openrouter', label: 'OpenRouter', kind: 'openai_compatible', models: ['openrouter/auto', 'openrouter/free'], default_model: 'openrouter/auto', default_base_url: 'https://openrouter.ai/api/v1', api_key_envs: ['OPENROUTER_API_KEY', 'LLM_API_KEY'] },
       { id: 'custom', label: 'Custom endpoint', kind: 'openai_compatible', models: ['custom-model'], default_model: 'custom-model', default_base_url: '', api_key_envs: ['LLM_API_KEY'] },
     ],
   })
