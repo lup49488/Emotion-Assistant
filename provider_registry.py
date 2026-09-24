@@ -16,6 +16,23 @@ from config import (
 ProviderKind = Literal["local", "openai_compatible", "anthropic"]
 
 
+@dataclass(frozen=True)
+class ChatCompletionRequestProfile:
+    """Per-model constraints for the OpenAI Chat Completions transport."""
+
+    output_token_parameter: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    supports_temperature: bool = True
+    supports_top_p: bool = True
+
+
+DEFAULT_CHAT_COMPLETION_PROFILE = ChatCompletionRequestProfile()
+GPT6_CHAT_COMPLETION_PROFILE = ChatCompletionRequestProfile(
+    output_token_parameter="max_completion_tokens",
+    supports_temperature=False,
+    supports_top_p=False,
+)
+
+
 def env_or(name: str | None, default: str) -> str:
     if not name:
         return default
@@ -40,6 +57,7 @@ class ProviderDefinition:
     model_env: str | None = None
     default_model: str = DEFAULT_API_MODEL
     model_choices: tuple[str, ...] = ()
+    model_request_profiles: tuple[tuple[str, ChatCompletionRequestProfile], ...] = ()
     base_url_env: str | None = None
     default_base_url: str = ""
     show_in_ui: bool = True
@@ -49,6 +67,19 @@ class ProviderDefinition:
 
     def model_options(self) -> list[str]:
         return unique_choices([self.default_model_value(), *self.model_choices])
+
+    def chat_completion_parameters(
+        self, model: str, *, temperature: float, top_p: float, max_new_tokens: int
+    ) -> dict[str, float | int]:
+        profile = dict(self.model_request_profiles).get(model, DEFAULT_CHAT_COMPLETION_PROFILE)
+        parameters: dict[str, float | int] = {
+            profile.output_token_parameter: max_new_tokens,
+        }
+        if profile.supports_temperature:
+            parameters["temperature"] = temperature
+        if profile.supports_top_p:
+            parameters["top_p"] = top_p
+        return parameters
 
     def base_url_value(self) -> str:
         return env_or(self.base_url_env, self.default_base_url)
@@ -108,7 +139,21 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
         api_key_envs=("OPENAI_API_KEY", "LLM_API_KEY"),
         model_env="OPENAI_MODEL",
         default_model="gpt-4.1-mini",
-        model_choices=("gpt-4.1-mini", "gpt-4.1", "gpt-4o-mini", "gpt-4o"),
+        model_choices=(
+            "gpt-6-luna",
+            "gpt-6-sol",
+            "gpt-4o",
+            "gpt-4.1-mini",
+            "gpt-4.1",
+            "gpt-4o-mini",
+        ),
+        model_request_profiles=(
+            ("gpt-6-luna", GPT6_CHAT_COMPLETION_PROFILE),
+            ("gpt-6-sol", GPT6_CHAT_COMPLETION_PROFILE),
+            # Astra remains configurable through OPENAI_MODEL or a custom id,
+            # but is deliberately not a standard UI choice while costs are reviewed.
+            ("gpt-6-astra", GPT6_CHAT_COMPLETION_PROFILE),
+        ),
     ),
     "openrouter": ProviderDefinition(
         id="openrouter",

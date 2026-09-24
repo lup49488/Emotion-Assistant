@@ -64,7 +64,7 @@ const FALLBACK_PROVIDER_CATALOG = [
   { id: 'openai_compatible', label: 'OpenAI-compatible', models: ['deepseek-chat'], default_model: 'deepseek-chat', default_base_url: '' },
   { id: 'anthropic', label: 'Anthropic (Claude)', models: ['claude-opus-5', 'claude-sonnet-5'], default_model: 'claude-opus-5', default_base_url: '' },
   { id: 'deepseek', label: 'DeepSeek', models: ['deepseek-chat', 'deepseek-reasoner'], default_model: 'deepseek-chat', default_base_url: 'https://api.deepseek.com' },
-  { id: 'openai', label: 'OpenAI', models: ['gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini', 'gpt-4o'], default_model: 'gpt-4.1-mini', default_base_url: '' },
+  { id: 'openai', label: 'OpenAI', models: ['gpt-6-luna', 'gpt-6-sol', 'gpt-4o', 'gpt-4.1-mini', 'gpt-4.1', 'gpt-4o-mini'], default_model: 'gpt-4.1-mini', default_base_url: '' },
   { id: 'openrouter', label: 'OpenRouter', models: ['openai/gpt-4.1-mini', 'openai/gpt-4o-mini'], default_model: 'openai/gpt-4.1-mini', default_base_url: 'https://openrouter.ai/api/v1' },
   { id: 'nvidia_nim', label: 'NVIDIA NIM', models: ['openai/gpt-oss-20b', 'meta/llama-3.1-8b-instruct'], default_model: 'openai/gpt-oss-20b', default_base_url: 'https://integrate.api.nvidia.com/v1' },
   { id: 'custom', label: 'Custom endpoint', models: ['deepseek-chat'], default_model: 'deepseek-chat', default_base_url: '' },

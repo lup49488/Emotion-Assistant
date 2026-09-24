@@ -328,6 +328,10 @@ test('chat header controls set a gentle tone and open the model reply window', a
   await expect(settings).toBeVisible()
   await settings.getByRole('button', { name: /NVIDIA NIM/ }).click()
   await expect(settings.getByRole('button', { name: 'openai/gpt-oss-20b', exact: true })).toHaveClass(/selected/)
+  await settings.getByRole('button', { name: /^OpenAI/ }).click()
+  await settings.getByRole('button', { name: 'gpt-6-luna', exact: true }).click()
+  await expect(settings.getByRole('button', { name: 'gpt-6-luna', exact: true })).toHaveClass(/selected/)
+  await expect(settings.getByRole('button', { name: 'gpt-6-sol', exact: true })).toBeVisible()
   await expect(settings.getByText('Reply profile')).toBeVisible()
 })
 

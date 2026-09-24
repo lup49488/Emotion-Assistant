@@ -529,6 +529,21 @@ def _stream_openai_compatible(
     chunks: list[str] = []
     provider = config.normalized_provider()
     model = config.resolved_model()
+    definition = provider_definition(provider)
+    request_parameters = (
+        definition.chat_completion_parameters(
+            model,
+            temperature=config.temperature,
+            top_p=config.top_p,
+            max_new_tokens=config.max_new_tokens,
+        )
+        if definition
+        else {
+            "temperature": config.temperature,
+            "top_p": config.top_p,
+            "max_tokens": config.max_new_tokens,
+        }
+    )
 
     try:
         for attempt in range(API_MAX_RETRIES + 1):
@@ -539,10 +554,8 @@ def _stream_openai_compatible(
                 response = client.chat.completions.create(
                     model=model,
                     messages=full_messages,
-                    temperature=config.temperature,
-                    top_p=config.top_p,
-                    max_tokens=config.max_new_tokens,
                     stream=True,
+                    **request_parameters,
                 )
                 for event in response:
                     if not event.choices:

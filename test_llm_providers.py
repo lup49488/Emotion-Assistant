@@ -48,6 +48,56 @@ def test_provider_registry_exposes_multiple_models_without_secrets(monkeypatch):
     assert "secret-nim-key" not in json.dumps(catalog)
 
 
+def test_openai_catalog_exposes_verified_gpt6_models_but_not_astra():
+    catalog = provider_catalog()
+    openai = next(item for item in catalog["providers"] if item["id"] == "openai")
+
+    assert "gpt-6-luna" in openai["models"]
+    assert "gpt-6-sol" in openai["models"]
+    assert "gpt-6-astra" not in openai["models"]
+
+
+def test_gpt6_chat_request_uses_its_supported_parameters():
+    event = SimpleNamespace(
+        choices=[SimpleNamespace(delta=SimpleNamespace(content="ok"), finish_reason="stop")]
+    )
+    fake_client = Mock()
+    fake_client.chat.completions.create.return_value = iter([event])
+    fake_openai = Mock(return_value=fake_client)
+    config = llm_providers.ModelRuntimeConfig(
+        provider="openai",
+        model="gpt-6-luna",
+        api_key="test-key",
+        temperature=0.4,
+        top_p=0.9,
+        max_new_tokens=8,
+    )
+
+    with patch.object(llm_providers, "require_openai_client", return_value=fake_openai), \
+         patch.object(llm_providers, "record_usage"), \
+         patch.object(llm_providers, "check_request_allowed"):
+        assert list(llm_providers._stream_openai_compatible([
+            {"role": "user", "content": "hello"},
+        ], config)) == ["ok"]
+
+    request = fake_client.chat.completions.create.call_args.kwargs
+    assert request["max_completion_tokens"] == 8
+    assert "max_tokens" not in request
+    assert "temperature" not in request
+    assert "top_p" not in request
+
+
+def test_existing_openai_models_keep_sampling_parameters():
+    definition = provider_definition("openai")
+    assert definition is not None
+
+    parameters = definition.chat_completion_parameters(
+        "gpt-4o", temperature=0.4, top_p=0.9, max_new_tokens=8,
+    )
+
+    assert parameters == {"max_tokens": 8, "temperature": 0.4, "top_p": 0.9}
+
+
 def test_default_provider_is_nvidia_nim(monkeypatch):
     # resolved_model/base_url read the environment at call time, so the ambient
     # NVIDIA_NIM_* values have to be cleared for this to assert the defaults.
