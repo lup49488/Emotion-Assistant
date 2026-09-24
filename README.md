@@ -39,7 +39,7 @@ flowchart LR
     Knowledge --> KnowledgeFiles["knowledge_base/documents<br/>knowledge.index + chunks"]
     Style --> StyleFiles["style_base/documents<br/>style.index + chunks"]
     Memory --> Storage["users/ JSON or SQLite<br/>sqlite_store.py"]
-    Providers --> RemoteLLM["OpenAI-compatible APIs<br/>NVIDIA NIM / DeepSeek / OpenAI / OpenRouter"]
+    Providers --> RemoteLLM["OpenAI-compatible APIs<br/>DeepSeek / OpenAI / OpenRouter"]
     Providers --> LocalLLM["Local Hugging Face model"]
 ```
 
@@ -104,13 +104,12 @@ Copy `.env.example` to `.env` and fill only the values you need:
 Copy-Item .env.example .env
 ```
 
-Default NVIDIA NIM provider settings:
+Default DeepSeek provider settings:
 
 ```env
-LLM_PROVIDER=nvidia_nim
-NVIDIA_NIM_API_KEY=replace-with-your-key
-NVIDIA_NIM_MODEL=openai/gpt-oss-20b
-NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=replace-with-your-key
+DEEPSEEK_MODEL=deepseek-flash
 ```
 
 Provider-specific alternatives are also supported:
@@ -119,7 +118,6 @@ Provider-specific alternatives are also supported:
 - `DEEPSEEK_API_KEY` with `LLM_PROVIDER=deepseek`
 - `OPENAI_API_KEY` with `LLM_PROVIDER=openai`
 - `OPENROUTER_API_KEY` with `LLM_PROVIDER=openrouter`
-- `NVIDIA_NIM_API_KEY` with `LLM_PROVIDER=nvidia_nim`
 - `LLM_PROVIDER=local_hf` to load `CHAT_MODEL_NAME` locally
 
 Provider metadata is centralized in `provider_registry.py`. The API exposes the safe, non-secret provider and model catalog at `GET /api/v1/model/providers`, and the React settings panel uses that catalog so users can choose a known model or type another model id.
@@ -130,7 +128,7 @@ Provider metadata is centralized in `provider_registry.py`. The API exposes the 
 
 ```env
 ANTHROPIC_API_KEY=replace-with-your-key
-ANTHROPIC_MODEL=claude-opus-5
+ANTHROPIC_MODEL=claude-sonnet-5
 ```
 
 Two differences from the OpenAI-compatible providers are worth knowing:

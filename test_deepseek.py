@@ -12,7 +12,7 @@ def main() -> None:
 
     client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
     response = client.chat.completions.create(
-        model=os.getenv("DEEPSEEK_MODEL", "deepseek-chat"),
+        model=os.getenv("DEEPSEEK_MODEL", "deepseek-flash"),
         messages=[
             {"role": "system", "content": "You are a helpful assistant"},
             {"role": "user", "content": "您好"},

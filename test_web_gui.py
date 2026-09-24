@@ -109,7 +109,7 @@ def test_test_model_connection_reports_missing_api_key():
     }, clear=False):
         result = Web_GUI.test_model_connection(
             provider="deepseek",
-            model="deepseek-chat",
+            model="deepseek-flash",
             base_url="https://api.deepseek.com",
             api_key="",
             temperature=0,
@@ -124,7 +124,7 @@ def test_test_model_connection_reports_missing_api_key():
 def test_gui_provider_choices_hide_local_hf():
     assert "local_hf" not in PROVIDER_CHOICES
     assert "deepseek" in PROVIDER_CHOICES
-    assert "nvidia_nim" in PROVIDER_CHOICES
+    assert "nvidia_nim" not in PROVIDER_CHOICES
 
 
 def test_test_model_connection_api_success():
@@ -135,7 +135,7 @@ def test_test_model_connection_api_success():
     with patch.object(Web_GUI, "require_openai_client", return_value=fake_openai):
         result = Web_GUI.test_model_connection(
             provider="deepseek",
-            model="deepseek-chat",
+            model="deepseek-flash",
             base_url="https://api.deepseek.com",
             api_key="test-key",
             temperature=0,
@@ -143,7 +143,7 @@ def test_test_model_connection_api_success():
             max_new_tokens=1,
         )
 
-    assert result == "[成功] API 连接成功：deepseek / deepseek-chat"
+    assert result == "[成功] API 连接成功：deepseek / deepseek-flash"
     fake_openai.assert_called_once_with(api_key="test-key", base_url="https://api.deepseek.com")
     fake_client.chat.completions.create.assert_called_once()
 
@@ -162,7 +162,7 @@ def test_save_model_config_to_env_updates_local_env_without_blank_key(tmp_path):
     with patch.object(Web_GUI, "LOCAL_ENV_PATH", env_path):
         result = Web_GUI.save_model_config_to_env(
             provider="deepseek",
-            model="deepseek-reasoner",
+            model="deepseek-v4-pro",
             base_url="https://api.deepseek.com",
             api_key="",
             temperature=0.2,
@@ -174,8 +174,8 @@ def test_save_model_config_to_env_updates_local_env_without_blank_key(tmp_path):
     assert "已保存模型配置" in result
     assert "DEEPSEEK_API_KEY=old-key" in text
     assert "LLM_PROVIDER=deepseek" in text
-    assert "LLM_API_MODEL=deepseek-reasoner" in text
-    assert "DEEPSEEK_MODEL=deepseek-reasoner" in text
+    assert "LLM_API_MODEL=deepseek-v4-pro" in text
+    assert "DEEPSEEK_MODEL=deepseek-v4-pro" in text
     assert "LLM_MAX_NEW_TOKENS=128" in text
 
 
@@ -185,7 +185,7 @@ def test_save_model_config_to_env_writes_explicit_api_key(tmp_path):
     with patch.object(Web_GUI, "LOCAL_ENV_PATH", env_path):
         Web_GUI.save_model_config_to_env(
             provider="openai",
-            model="gpt-4.1-mini",
+            model="gpt-6-luna",
             base_url="",
             api_key="new-key",
             temperature=0.5,
@@ -195,28 +195,27 @@ def test_save_model_config_to_env_writes_explicit_api_key(tmp_path):
 
     text = env_path.read_text(encoding="utf-8")
     assert "OPENAI_API_KEY=new-key" in text
-    assert "OPENAI_MODEL=gpt-4.1-mini" in text
+    assert "OPENAI_MODEL=gpt-6-luna" in text
 
 
-def test_save_model_config_to_env_writes_nvidia_nim_settings(tmp_path):
+def test_save_model_config_to_env_writes_openrouter_settings(tmp_path):
     env_path = tmp_path / ".env.local"
 
     with patch.object(Web_GUI, "LOCAL_ENV_PATH", env_path):
         Web_GUI.save_model_config_to_env(
-            provider="nvidia_nim",
-            model="openai/gpt-oss-20b",
-            base_url="https://integrate.api.nvidia.com/v1",
-            api_key="nim-key",
+            provider="openrouter",
+            model="openrouter/auto",
+            base_url="https://openrouter.ai/api/v1",
+            api_key="router-key",
             temperature=0.5,
             top_p=1,
             max_new_tokens=256,
         )
 
     text = env_path.read_text(encoding="utf-8")
-    assert "LLM_PROVIDER=nvidia_nim" in text
-    assert "NVIDIA_NIM_API_KEY=nim-key" in text
-    assert "NVIDIA_NIM_MODEL=openai/gpt-oss-20b" in text
-    assert "NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1" in text
+    assert "LLM_PROVIDER=openrouter" in text
+    assert "OPENROUTER_API_KEY=router-key" in text
+    assert "OPENROUTER_MODEL=openrouter/auto" in text
 
 
 def test_save_local_runtime_config_writes_supported_values(tmp_path):
@@ -240,14 +239,14 @@ def test_connection_test_detail_includes_timing_and_suggestion():
     detail = Web_GUI.build_connection_test_detail(
         "[认证失败] API Key 无效或无权限",
         "deepseek",
-        "deepseek-chat",
+        "deepseek-flash",
         "https://api.deepseek.com",
         0.42,
     )
 
     assert "耗时：0.42 秒" in detail
     assert "API Key、账户权限" in detail
-    assert "deepseek-chat" in detail
+    assert "deepseek-flash" in detail
 
 
 def test_weekly_mood_chart_uses_dark_palette():
@@ -850,7 +849,7 @@ def test_chat_error_is_localized_under_english_locale(tmp_path, monkeypatch):
          patch.object(Web_GUI, "conversation_choices", return_value=[]):
         outputs = [text for text, _ in Web_GUI.respond(
             "hi", [], "i18n-chat-err", "alice-secret", False, False, False,
-            "deepseek", "deepseek-chat", "", "key", 0.8, 0.9, 64, "en",
+            "deepseek", "deepseek-flash", "", "key", 0.8, 0.9, 64, "en",
         )]
 
     # 界面把抛出的异常本地化为英文的“请求失败”提示。

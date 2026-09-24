@@ -26,7 +26,7 @@ $env:DIALOGUE_REGRESSION_URL = 'http://127.0.0.1:8000'
 $env:DIALOGUE_REGRESSION_USER_ID = 'serenova-regression'
 $env:DIALOGUE_REGRESSION_ACCESS_KEY = 'use-a-dedicated-long-password'
 $env:DIALOGUE_REGRESSION_PROVIDER = 'deepseek'
-$env:DIALOGUE_REGRESSION_MODEL = 'deepseek-chat'
+$env:DIALOGUE_REGRESSION_MODEL = 'deepseek-flash'
 & D:\software\Python312\python.exe dialogue_regression.py
 ```
 

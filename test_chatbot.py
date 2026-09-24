@@ -888,7 +888,7 @@ class TestModelRuntimeConfig(unittest.TestCase):
 
     def test_deepseek_defaults(self):
         config = chatbot.make_model_config(provider="deepseek", model="")
-        self.assertEqual(config.resolved_model(), "deepseek-chat")
+        self.assertEqual(config.resolved_model(), "deepseek-flash")
         self.assertEqual(config.resolved_base_url(), "https://api.deepseek.com")
 
     def test_explicit_api_key_takes_precedence(self):

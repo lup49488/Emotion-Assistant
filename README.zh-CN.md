@@ -39,7 +39,7 @@ flowchart LR
     Knowledge --> KnowledgeFiles["knowledge_base/documents<br/>knowledge.index + chunks"]
     Style --> StyleFiles["style_base/documents<br/>style.index + chunks"]
     Memory --> Storage["users/ JSON 或 SQLite<br/>sqlite_store.py"]
-    Providers --> RemoteLLM["OpenAI-compatible API<br/>NVIDIA NIM / DeepSeek / OpenAI / OpenRouter"]
+    Providers --> RemoteLLM["OpenAI-compatible API<br/>DeepSeek / OpenAI / OpenRouter"]
     Providers --> LocalLLM["本地 Hugging Face 模型"]
 ```
 
@@ -104,13 +104,12 @@ cd ..
 Copy-Item .env.example .env
 ```
 
-默认 NVIDIA NIM 配置：
+默认 DeepSeek 配置：
 
 ```env
-LLM_PROVIDER=nvidia_nim
-NVIDIA_NIM_API_KEY=replace-with-your-key
-NVIDIA_NIM_MODEL=openai/gpt-oss-20b
-NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
+LLM_PROVIDER=deepseek
+DEEPSEEK_API_KEY=replace-with-your-key
+DEEPSEEK_MODEL=deepseek-flash
 ```
 
 也可以使用提供方专用变量：
@@ -119,7 +118,6 @@ NVIDIA_NIM_BASE_URL=https://integrate.api.nvidia.com/v1
 - `DEEPSEEK_API_KEY` 搭配 `LLM_PROVIDER=deepseek`
 - `OPENAI_API_KEY` 搭配 `LLM_PROVIDER=openai`
 - `OPENROUTER_API_KEY` 搭配 `LLM_PROVIDER=openrouter`
-- `NVIDIA_NIM_API_KEY` 搭配 `LLM_PROVIDER=nvidia_nim`
 - `LLM_PROVIDER=local_hf` 使用本地 `CHAT_MODEL_NAME`
 
 Provider 元数据集中维护在 `provider_registry.py`。API 会通过 `GET /api/v1/model/providers` 暴露不含密钥的 Provider 与模型目录；React 设置面板会读取这个目录，因此可以选择常用模型，也可以手动输入其他模型 ID。
@@ -130,7 +128,7 @@ Provider 元数据集中维护在 `provider_registry.py`。API 会通过 `GET /a
 
 ```env
 ANTHROPIC_API_KEY=replace-with-your-key
-ANTHROPIC_MODEL=claude-opus-5
+ANTHROPIC_MODEL=claude-sonnet-5
 ```
 
 与 OpenAI 兼容 Provider 有两点差异需要注意：

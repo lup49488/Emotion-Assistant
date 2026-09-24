@@ -34,18 +34,18 @@ def test_resolved_base_url_rejects_unsupported_scheme():
 
 
 def test_provider_registry_exposes_multiple_models_without_secrets(monkeypatch):
-    monkeypatch.setenv("NVIDIA_NIM_MODEL", "meta/llama-3.1-8b-instruct")
-    monkeypatch.setenv("NVIDIA_NIM_API_KEY", "secret-nim-key")
+    monkeypatch.setenv("DEEPSEEK_MODEL", "deepseek-v4-pro")
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret-deepseek-key")
 
-    nvidia = provider_definition("nvidia_nim")
+    deepseek = provider_definition("deepseek")
     catalog = provider_catalog()
-    nvidia_item = next(item for item in catalog["providers"] if item["id"] == "nvidia_nim")
+    deepseek_item = next(item for item in catalog["providers"] if item["id"] == "deepseek")
 
-    assert nvidia is not None
-    assert nvidia.default_model_value() == "meta/llama-3.1-8b-instruct"
-    assert "openai/gpt-oss-20b" in nvidia.model_options()
-    assert "meta/llama-3.1-8b-instruct" in nvidia_item["models"]
-    assert "secret-nim-key" not in json.dumps(catalog)
+    assert deepseek is not None
+    assert deepseek.default_model_value() == "deepseek-v4-pro"
+    assert "deepseek-flash" in deepseek.model_options()
+    assert "deepseek-v4-pro" in deepseek_item["models"]
+    assert "secret-deepseek-key" not in json.dumps(catalog)
 
 
 def test_openai_catalog_exposes_verified_gpt6_models_but_not_astra():
@@ -98,33 +98,28 @@ def test_existing_openai_models_keep_sampling_parameters():
     assert parameters == {"max_tokens": 8, "temperature": 0.4, "top_p": 0.9}
 
 
-def test_default_provider_is_nvidia_nim(monkeypatch):
-    # resolved_model/base_url read the environment at call time, so the ambient
-    # NVIDIA_NIM_* values have to be cleared for this to assert the defaults.
-    monkeypatch.delenv("NVIDIA_NIM_MODEL", raising=False)
-    monkeypatch.delenv("NVIDIA_NIM_BASE_URL", raising=False)
+def test_default_provider_is_deepseek(monkeypatch):
+    # resolved_model reads the environment at call time, so clear an ambient
+    # per-provider value before asserting the package defaults.
+    monkeypatch.delenv("DEEPSEEK_MODEL", raising=False)
     config = llm_providers.ModelRuntimeConfig()
 
-    assert llm_providers.DEFAULT_LLM_PROVIDER == "nvidia_nim"
-    assert config.normalized_provider() == "nvidia_nim"
-    assert config.resolved_model() == "openai/gpt-oss-20b"
-    assert config.resolved_base_url() == "https://integrate.api.nvidia.com/v1"
+    assert llm_providers.DEFAULT_LLM_PROVIDER == "deepseek"
+    assert config.normalized_provider() == "deepseek"
+    assert config.resolved_model() == "deepseek-flash"
+    assert config.resolved_base_url() == "https://api.deepseek.com"
 
 
-def test_blank_nvidia_settings_fall_back_to_the_defaults(monkeypatch):
-    """`NVIDIA_NIM_BASE_URL=` injects "", which would otherwise drop the endpoint
-    and let the OpenAI SDK send NVIDIA-keyed requests to api.openai.com."""
-    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", "")
-    monkeypatch.setenv("NVIDIA_NIM_MODEL", "   ")
-    config = llm_providers.ModelRuntimeConfig(provider="nvidia_nim")
+def test_blank_deepseek_model_falls_back_to_the_default(monkeypatch):
+    monkeypatch.setenv("DEEPSEEK_MODEL", "   ")
+    config = llm_providers.ModelRuntimeConfig(provider="deepseek")
 
-    assert config.resolved_base_url() == "https://integrate.api.nvidia.com/v1"
-    assert config.resolved_model() == "openai/gpt-oss-20b"
+    assert config.resolved_base_url() == "https://api.deepseek.com"
+    assert config.resolved_model() == "deepseek-flash"
 
 
-def test_a_blank_endpoint_never_reaches_the_openai_client(monkeypatch):
-    monkeypatch.setenv("NVIDIA_NIM_BASE_URL", "")
-    config = llm_providers.ModelRuntimeConfig(provider="nvidia_nim", api_key="nim-key")
+def test_deepseek_uses_its_default_endpoint():
+    config = llm_providers.ModelRuntimeConfig(provider="deepseek", api_key="deepseek-key")
     client = Mock()
     client.chat.completions.create.return_value = iter([])
     factory = Mock(return_value=client)
@@ -134,24 +129,23 @@ def test_a_blank_endpoint_never_reaches_the_openai_client(monkeypatch):
          patch.object(llm_providers, "check_request_allowed"):
         list(llm_providers._stream_openai_compatible([{"role": "user", "content": "hi"}], config))
 
-    assert factory.call_args.kwargs["base_url"] == "https://integrate.api.nvidia.com/v1"
+    assert factory.call_args.kwargs["base_url"] == "https://api.deepseek.com"
 
 
-def test_nvidia_nim_provider_uses_dedicated_defaults_and_key():
-    config = llm_providers.ModelRuntimeConfig(provider="nvidia_nim")
+def test_deepseek_provider_uses_dedicated_defaults_and_key():
+    config = llm_providers.ModelRuntimeConfig(provider="deepseek")
 
     with patch.dict("os.environ", {
-        "NVIDIA_NIM_API_KEY": "nim-key",
-        "NVIDIA_NIM_MODEL": "meta/llama-3.1-8b-instruct",
-        "NVIDIA_NIM_BASE_URL": "https://integrate.api.nvidia.com/v1",
+        "DEEPSEEK_API_KEY": "deepseek-key",
+        "DEEPSEEK_MODEL": "deepseek-v4-pro",
         "LLM_API_KEY": "fallback-key",
     }, clear=False):
-        assert config.resolved_api_key() == "nim-key"
-        assert config.resolved_model() == "meta/llama-3.1-8b-instruct"
-        assert config.resolved_base_url() == "https://integrate.api.nvidia.com/v1"
+        assert config.resolved_api_key() == "deepseek-key"
+        assert config.resolved_model() == "deepseek-v4-pro"
+        assert config.resolved_base_url() == "https://api.deepseek.com"
 
 
-def test_nvidia_nim_provider_can_be_used_as_server_fallback():
+def test_openrouter_provider_can_be_used_as_server_fallback():
     config = llm_providers.ModelRuntimeConfig(
         provider="deepseek", model="primary-model", api_key=None, max_new_tokens=8,
     )
@@ -163,19 +157,19 @@ def test_nvidia_nim_provider_can_be_used_as_server_fallback():
             raise llm_providers.ProviderRequestError(
                 "primary timed out", kind="timeout", retryable=True,
             )
-        assert candidate.resolved_api_key() == "nim-key"
-        yield "nim fallback"
+        assert candidate.resolved_api_key() == "router-key"
+        yield "router fallback"
 
-    with patch.dict("os.environ", {"NVIDIA_NIM_API_KEY": "nim-key"}, clear=False), \
+    with patch.dict("os.environ", {"OPENROUTER_API_KEY": "router-key"}, clear=False), \
         patch.object(llm_providers, "LLM_FALLBACKS_JSON", json.dumps([
-            {"provider": "nvidia_nim", "model": "openai/gpt-oss-20b"},
+            {"provider": "openrouter", "model": "openrouter/auto"},
         ])), patch.object(llm_providers, "_stream_openai_compatible", side_effect=stream):
         chunks = list(llm_providers.stream_model_response([
             {"role": "user", "content": "hello"},
         ], config))
 
-    assert chunks == ["nim fallback"]
-    assert [item.normalized_provider() for item in calls] == ["deepseek", "nvidia_nim"]
+    assert chunks == ["router fallback"]
+    assert [item.normalized_provider() for item in calls] == ["deepseek", "openrouter"]
 
 
 def test_get_llm_applies_local_model_loading_options():
