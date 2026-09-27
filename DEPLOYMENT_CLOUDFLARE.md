@@ -142,16 +142,30 @@ CI verified, so `/opt/Emotion-Assistant` sits on a **detached HEAD**. A manual
 manually with `workflow_dispatch` and a full 40-character `commit_sha`, or leave
 that input empty to deploy the current `origin/main` tip.
 
-Each deployment records where it came from. If a newly started Docker stack
-fails its deployment health check, the workflow automatically restores this
-previous revision, verifies it, and still marks the failed deployment red:
+Each deployment records where it came from and makes an integrity-checked SQLite
+backup in `.deployment/backups/` before starting the new image. If the stack
+fails its health check, the workflow restores the previous revision only when
+its code supports the database's current schema version. The failed deployment
+is marked red in either case:
 
 ```bash
 cat /opt/Emotion-Assistant/.deployment/current_sha    # what is running now
 cat /opt/Emotion-Assistant/.deployment/previous_sha   # what it replaced
 ```
 
-To roll back, re-run the workflow with `commit_sha` set to the recorded
+If the schema is newer than the previous code supports, automatic rollback
+stops to avoid starting an incompatible image. Inspect the failed deployment
+and preserve any user writes made since the backup. A database restore reverts
+those writes, so schedule it only after making that decision. For a recovery
+drill, stop both services, move the current database together with its `-wal`
+and `-shm` files to a private location, then restore a chosen backup with
+`python3 deployment_db.py restore .deployment/backups/<backup-file>.db`.
+The restore command checks integrity, requires the services to be stopped, and
+refuses to overwrite an existing database. Restart the previous revision and
+run `deployment_check.py` afterward. Keep the original database files until
+the restored copy has passed login and data checks.
+
+To roll back when the schema is compatible, re-run the workflow with `commit_sha` set to the recorded
 `previous_sha`, so the rollback goes through the same health checks. Only if the
 workflow itself is unavailable, do it on the host:
 

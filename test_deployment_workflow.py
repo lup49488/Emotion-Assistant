@@ -13,3 +13,5 @@ def test_deployment_workflow_serializes_runs_and_rolls_back_on_termination():
     assert "trap 'rollback 130' INT" in workflow
     assert "trap 'rollback 143' TERM" in workflow
     assert "trap - ERR HUP INT TERM" in workflow
+    assert 'python3 deployment_db.py backup' in workflow
+    assert 'python3 deployment_db.py check "$previous_sha"' in workflow

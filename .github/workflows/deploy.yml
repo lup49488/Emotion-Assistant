@@ -109,6 +109,11 @@ jobs:
                 if [ "$rollback_started" != true ]; then
                   exit "$deploy_status"
                 fi
+                if ! python3 deployment_db.py check "$previous_sha"; then
+                  echo "Automatic rollback stopped: the previous code may not read the current SQLite database." >&2
+                  echo "A pre-deployment SQLite backup is in .deployment/backups/. Review data written after the backup before restoring it." >&2
+                  exit "$deploy_status"
+                fi
                 echo "Deployment failed; restoring $previous_sha..." >&2
                 git checkout --detach "$previous_sha"
                 docker compose up --build -d
@@ -155,6 +160,9 @@ jobs:
 
               echo "Validating Docker Compose configuration..."
               docker compose config --quiet
+
+              echo "Creating a verified SQLite backup before starting the new revision..."
+              python3 deployment_db.py backup
 
               echo "Building and starting Docker services..."
               docker compose up --build -d
