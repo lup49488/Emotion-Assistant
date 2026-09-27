@@ -189,6 +189,7 @@ class ModelRuntimeConfig:
     top_p: float = DEFAULT_TOP_P
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
     user_id: str | None = None
+    allow_fallback: bool = True
     run_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def normalized_provider(self) -> str:
@@ -587,6 +588,12 @@ def _stream_openai_compatible(
                         emitted_content = True
                         chunks.append(content)
                         yield content
+                config.run_metadata.update({
+                    "provider": provider,
+                    "model": model,
+                    "finish_reason": finish_reason or "stream_exhausted",
+                    "truncated": finish_reason == "length",
+                })
                 if finish_reason == "length":
                     logger.warning(
                         "event=model_output_truncated request_id=%s provider=%s model=%s max_new_tokens=%s",
@@ -606,6 +613,13 @@ def _stream_openai_compatible(
                 retryable = _is_retryable_api_error(exc)
                 if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
                     error_kind = _api_error_kind(exc)
+                    config.run_metadata.update({
+                        "provider": provider,
+                        "model": model,
+                        "finish_reason": "provider_error",
+                        "error_kind": error_kind,
+                        "truncated": False,
+                    })
                     record_usage(
                         config.user_id,
                         provider=provider,
@@ -754,6 +768,13 @@ def _stream_anthropic(
                             chunks.append(text)
                             yield text
                     final = stream.get_final_message()
+                stop_reason = str(getattr(final, "stop_reason", "") or "stream_exhausted")
+                config.run_metadata.update({
+                    "provider": provider,
+                    "model": model,
+                    "finish_reason": stop_reason,
+                    "truncated": stop_reason == "max_tokens",
+                })
                 _record_anthropic_usage(config, provider, model, final, input_tokens, chunks, started)
                 _raise_for_anthropic_stop_reason(final, emitted_content)
                 return
@@ -763,6 +784,13 @@ def _stream_anthropic(
                 retryable = _is_retryable_api_error(exc)
                 if emitted_content or attempt >= API_MAX_RETRIES or not retryable:
                     error_kind = _api_error_kind(exc)
+                    config.run_metadata.update({
+                        "provider": provider,
+                        "model": model,
+                        "finish_reason": "provider_error",
+                        "error_kind": error_kind,
+                        "truncated": False,
+                    })
                     record_usage(
                         config.user_id,
                         provider=provider,
@@ -910,6 +938,7 @@ def _stream_for_provider(
 def stream_model_response(
     full_messages: list[dict[str, str]], config: ModelRuntimeConfig
 ) -> Generator[str, None, None]:
+    config.run_metadata.clear()
     provider = config.normalized_provider()
     if provider == "local_hf":
         try:
@@ -923,7 +952,7 @@ def stream_model_response(
             yield from _stream_for_provider(full_messages, config)
             return
         except ProviderRequestError as primary_error:
-            if not primary_error.retryable or primary_error.emitted_content:
+            if not config.allow_fallback or not primary_error.retryable or primary_error.emitted_content:
                 raise
             fallbacks = _fallback_configs(config)
             if not fallbacks:
@@ -937,6 +966,7 @@ def stream_model_response(
                 )
                 try:
                     yield from _stream_for_provider(full_messages, fallback)
+                    config.run_metadata.update(fallback.run_metadata)
                     return
                 except ProviderRequestError as fallback_error:
                     if not fallback_error.retryable or fallback_error.emitted_content:
