@@ -1,3 +1,4 @@
+.deployment/
 # Secrets / local config
 .env
 .env.local
