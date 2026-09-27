@@ -17,7 +17,7 @@ DEFAULT_DATABASE_PATH = BASE_DIR / "data" / "chatbot.db"
 # Bumped whenever ensure_schema() gains a statement. Stamped into the database
 # as PRAGMA user_version so an already-migrated file can skip the whole upgrade
 # pass instead of re-running it on every single connection.
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 SQLITE_BACKEND = "sqlite"
 JSON_BACKEND = "json"
 
@@ -136,7 +136,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS email_challenges (
             id TEXT PRIMARY KEY,
             email_normalized TEXT NOT NULL,
-            purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'legacy_migration')),
+            purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'legacy_migration', 'password_reset')),
             code_hash TEXT NOT NULL,
             expires_at INTEGER NOT NULL,
             attempts INTEGER NOT NULL DEFAULT 0,
@@ -353,6 +353,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         message_id = uuid.uuid5(uuid.NAMESPACE_URL, f"serenova-message:{fingerprint}").hex
         conn.execute("UPDATE conversation_messages SET message_id = ? WHERE id = ?", (message_id, row["id"]))
     _ensure_pending_memory_section(conn)
+    _ensure_password_reset_challenge(conn)
     conn.execute(
         "INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES (?, ?)",
         (SCHEMA_VERSION, _now()),
@@ -397,6 +398,40 @@ def _ensure_pending_memory_section(conn: sqlite3.Connection) -> None:
     try:
         for statement in statements:
             conn.execute(statement)
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    conn.execute("COMMIT")
+
+
+def _ensure_password_reset_challenge(conn: sqlite3.Connection) -> None:
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'email_challenges'").fetchone()
+    if row is None or "password_reset" in str(row["sql"]):
+        return
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        conn.execute("""
+            CREATE TABLE email_challenges_new (
+                id TEXT PRIMARY KEY,
+                email_normalized TEXT NOT NULL,
+                purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'legacy_migration', 'password_reset')),
+                code_hash TEXT NOT NULL,
+                expires_at INTEGER NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                send_count INTEGER NOT NULL DEFAULT 1,
+                verified_at INTEGER,
+                consumed_at INTEGER,
+                created_at INTEGER NOT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT INTO email_challenges_new
+            SELECT id, email_normalized, purpose, code_hash, expires_at, attempts,
+                   send_count, verified_at, consumed_at, created_at FROM email_challenges
+        """)
+        conn.execute("DROP TABLE email_challenges")
+        conn.execute("ALTER TABLE email_challenges_new RENAME TO email_challenges")
+        conn.execute("CREATE INDEX idx_email_challenges_email_created ON email_challenges(email_normalized, created_at DESC)")
     except Exception:
         conn.execute("ROLLBACK")
         raise

@@ -112,14 +112,14 @@ class EmailAuthConfigResponse(ContractModel):
 
 class EmailChallengeStartRequest(ContractModel):
     email: str = Field(min_length=3, max_length=254)
-    purpose: Literal["registration", "legacy_migration"]
+    purpose: Literal["registration", "legacy_migration", "password_reset"]
     turnstile_token: str = Field(default="", max_length=2048)
 
 
 class EmailChallengeVerifyRequest(ContractModel):
     challenge_id: str = Field(min_length=16, max_length=128)
     code: str = Field(min_length=6, max_length=16)
-    purpose: Literal["registration", "legacy_migration"]
+    purpose: Literal["registration", "legacy_migration", "password_reset"]
 
 
 class EmailChallengeStartResponse(ContractModel):

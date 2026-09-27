@@ -134,7 +134,7 @@ class EmailAuthService:
     def start_challenge(self, email: str, purpose: str, turnstile_token: str, client_ip: str, request_id: str) -> str:
         self._require_enabled()
         normalized = normalize_email(email)
-        if purpose not in {"registration", "legacy_migration"}:
+        if purpose not in {"registration", "legacy_migration", "password_reset"}:
             raise EmailAuthError("Invalid verification request.")
         if not self._validate_turnstile(turnstile_token, client_ip):
             raise EmailAuthError("Verification could not be completed. Please try again.")
@@ -295,6 +295,28 @@ class EmailAuthService:
                 raise EmailAuthError("Email or password is incorrect.")
             self._audit(conn, row["user_id"], "password_login", "succeeded", request_id)
             return str(row["user_id"])
+
+    def reset_password(self, intent_token: str, password: str, request_id: str) -> None:
+        self._require_enabled()
+        intent = self._read_intent(intent_token, "password_reset")
+        password_hash = self._new_password_hash(password)
+        now = int(self._clock())
+        with connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            self._require_challenge(conn, intent)
+            identity = conn.execute(
+                "SELECT user_id FROM email_identities WHERE email_normalized = ?", (intent.email,)
+            ).fetchone()
+            if identity is None:
+                raise EmailAuthError("Password reset could not be completed.")
+            updated = conn.execute(
+                "UPDATE password_credentials SET password_hash = ?, changed_at = ?, credential_version = ? WHERE user_id = ?",
+                (password_hash, _now_text(), secrets.token_urlsafe(18), identity["user_id"]),
+            )
+            if updated.rowcount != 1:
+                raise EmailAuthError("Password reset could not be completed.")
+            conn.execute("UPDATE email_challenges SET consumed_at = ? WHERE id = ?", (now, intent.challenge_id))
+            self._audit(conn, identity["user_id"], "password_reset", "succeeded", request_id)
 
     def credential_version(self, user_id: str) -> str | None:
         if not sqlite_enabled():

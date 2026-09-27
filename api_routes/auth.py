@@ -87,6 +87,14 @@ def create_auth_router(
         expires_in = set_session_cookies(response, user_id)
         return {"token_type": "cookie", "expires_in": expires_in, "user_id": user_id}
 
+    @router.post("/api/v1/auth/password/reset", status_code=status.HTTP_204_NO_CONTENT)
+    def reset_password(request: EmailPasswordRegisterRequest, raw_request: Request) -> None:
+        _require_allowed_origin(raw_request)
+        try:
+            email_auth.reset_password(request.verified_intent, request.password, request_id(raw_request))
+        except EmailAuthError as exc:
+            raise _email_error(exc) from None
+
     @router.post("/api/v1/auth/migrate-legacy", response_model=LoginResponse)
     def migrate_legacy(request: LegacyMigrationRequest, response: Response, raw_request: Request) -> dict[str, Any]:
         _require_allowed_origin(raw_request)

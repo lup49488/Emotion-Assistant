@@ -94,3 +94,46 @@ def test_turnstile_failure_prevents_code_delivery(tmp_path, monkeypatch):
     with pytest.raises(EmailAuthError, match="could not be completed"):
         protected.start_challenge("student@example.test", "registration", "bad-token", "127.0.0.1", "turnstile-1")
     assert sent == []
+
+
+def test_wrong_codes_persist_attempts_and_audit_before_rejection(tmp_path, monkeypatch):
+    service, sent = _service(tmp_path, monkeypatch)
+    monkeypatch.setattr(config, "EMAIL_AUTH_MAX_CODE_ATTEMPTS", 3)
+    challenge_id = service.start_challenge("student@example.test", "registration", "", "127.0.0.1", "start")
+
+    for attempt in range(3):
+        with pytest.raises(EmailAuthError, match="Request a new code"):
+            service.verify_challenge(challenge_id, "wrong-code", "registration", f"wrong-{attempt}")
+    with connection() as conn:
+        attempts = conn.execute("SELECT attempts FROM email_challenges WHERE id = ?", (challenge_id,)).fetchone()[0]
+        outcomes = [row[0] for row in conn.execute("SELECT outcome FROM email_auth_audit_events WHERE event_type = 'challenge_verify' ORDER BY id")]
+    assert attempts == 3
+    assert outcomes == ["rejected"] * 3
+    with pytest.raises(EmailAuthError, match="Request a new code"):
+        service.verify_challenge(challenge_id, sent[-1][1], "registration", "correct-after-limit")
+
+
+def test_password_reset_uses_one_verified_challenge_and_revokes_old_version(tmp_path, monkeypatch):
+    service, sent = _service(tmp_path, monkeypatch)
+    registration = service.start_challenge("student@example.test", "registration", "", "127.0.0.1", "register")
+    user_id = service.register(service.verify_challenge(registration, sent[-1][1], "registration", "register"), "old-password", "register")
+    previous_version = service.credential_version(user_id)
+
+    challenge_id = service.start_challenge("student@example.test", "password_reset", "", "127.0.0.1", "reset")
+    intent = service.verify_challenge(challenge_id, sent[-1][1], "password_reset", "reset")
+    service.reset_password(intent, "new-password", "reset")
+
+    assert service.credential_version(user_id) != previous_version
+    assert service.login_password("student@example.test", "new-password", "login") == user_id
+    with pytest.raises(EmailAuthError, match="incorrect"):
+        service.login_password("student@example.test", "old-password", "old-login")
+    with pytest.raises(EmailAuthError, match="expired"):
+        service.reset_password(intent, "other-password", "again")
+
+
+def test_password_reset_does_not_create_account_for_unknown_email(tmp_path, monkeypatch):
+    service, sent = _service(tmp_path, monkeypatch)
+    challenge_id = service.start_challenge("unknown@example.test", "password_reset", "", "127.0.0.1", "reset")
+    intent = service.verify_challenge(challenge_id, sent[-1][1], "password_reset", "reset")
+    with pytest.raises(EmailAuthError, match="could not be completed"):
+        service.reset_password(intent, "new-password", "reset")

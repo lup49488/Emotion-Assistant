@@ -48,6 +48,24 @@ def test_sqlite_rejects_a_database_newer_than_supported(tmp_path, monkeypatch):
     assert version == SCHEMA_VERSION + 1
 
 
+def test_sqlite_upgrade_preserves_existing_email_challenges(tmp_path, monkeypatch):
+    _enable_sqlite(tmp_path, monkeypatch)
+    with connection() as conn:
+        conn.execute("INSERT INTO email_challenges(id, email_normalized, purpose, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)", ("existing", "user@example.test", "registration", "hash", 1000, 1))
+    path = database_path()
+    with sqlite3.connect(path) as raw:
+        raw.execute("PRAGMA user_version = 7")
+        raw.execute("ALTER TABLE email_challenges RENAME TO email_challenges_current")
+        raw.execute("CREATE TABLE email_challenges (id TEXT PRIMARY KEY, email_normalized TEXT NOT NULL, purpose TEXT NOT NULL CHECK (purpose IN ('registration', 'legacy_migration')), code_hash TEXT NOT NULL, expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, send_count INTEGER NOT NULL DEFAULT 1, verified_at INTEGER, consumed_at INTEGER, created_at INTEGER NOT NULL)")
+        raw.execute("INSERT INTO email_challenges SELECT * FROM email_challenges_current")
+        raw.execute("DROP TABLE email_challenges_current")
+    with connection() as conn:
+        assert conn.execute("SELECT email_normalized FROM email_challenges WHERE id = 'existing'").fetchone()[0] == "user@example.test"
+        conn.execute("INSERT INTO email_challenges(id, email_normalized, purpose, code_hash, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)", ("reset", "user@example.test", "password_reset", "hash", 1000, 2))
+    with sqlite3.connect(path) as raw:
+        assert raw.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+
+
 def test_sqlite_persists_onboarding_completion(tmp_path, monkeypatch):
     _enable_sqlite(tmp_path, monkeypatch)
 
