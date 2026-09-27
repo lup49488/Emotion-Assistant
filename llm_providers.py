@@ -8,7 +8,7 @@ import ctypes
 import re
 from urllib.parse import urlparse
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Generator
 import numpy as np
 
@@ -189,6 +189,7 @@ class ModelRuntimeConfig:
     top_p: float = DEFAULT_TOP_P
     max_new_tokens: int = DEFAULT_MAX_NEW_TOKENS
     user_id: str | None = None
+    run_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
 
     def normalized_provider(self) -> str:
         return (self.provider or DEFAULT_LLM_PROVIDER).strip().lower()
