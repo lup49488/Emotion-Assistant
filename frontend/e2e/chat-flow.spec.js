@@ -138,6 +138,26 @@ test('email registration completes its verification steps before opening the wor
   await expect(page.getByPlaceholder('Message Serenova')).toBeVisible()
 })
 
+test('email password recovery returns to sign-in with a success message', async ({ page }) => {
+  await page.route('**/api/v1/auth/config', (route) => route.fulfill({ json: {
+    email_auth_enabled: true, legacy_login_enabled: true, turnstile_required: false, turnstile_site_key: '', turnstile_action: 'email-auth',
+  } }))
+  await page.route('**/api/v1/auth/email/start', (route) => route.fulfill({ status: 202, json: { status: 'verification_started', challenge_id: 'reset-challenge' } }))
+  await page.route('**/api/v1/auth/email/verify', (route) => route.fulfill({ json: { verified_intent: 'reset-intent' } }))
+  await page.route('**/api/v1/auth/password/reset', (route) => route.fulfill({ status: 204, body: '' }))
+
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Forgot password?' }).click()
+  await page.getByLabel('Email address').fill('student@example.test')
+  await page.getByRole('button', { name: 'Send verification code' }).click()
+  await page.getByLabel('Verification code').fill('12345678')
+  await page.getByRole('button', { name: 'Verify code' }).click()
+  await page.getByLabel('Set password').fill('new-password')
+  await page.getByRole('button', { name: 'Reset password' }).click()
+  await expect(page.getByRole('status')).toHaveText('Password updated. Sign in with your new password.')
+  await expect(page.getByRole('button', { name: 'Forgot password?' })).toBeVisible()
+})
+
 test('email registration waits for the required Turnstile token before sending a code', async ({ page }) => {
   await page.route('**/api/v1/auth/config', (route) => route.fulfill({ json: {
     email_auth_enabled: true, legacy_login_enabled: true, turnstile_required: true, turnstile_site_key: 'site-key', turnstile_action: 'email-auth',
@@ -147,6 +167,24 @@ test('email registration waits for the required Turnstile token before sending a
   await page.getByRole('tab', { name: 'Create account' }).click()
   await page.getByLabel('Email address').fill('student@example.test')
   await expect(page.getByRole('button', { name: 'Send verification code' })).toBeDisabled()
+})
+
+test('failed Turnstile script shows a retry action', async ({ page }) => {
+  let requests = 0
+  await page.route('**/api/v1/auth/config', (route) => route.fulfill({ json: {
+    email_auth_enabled: true, legacy_login_enabled: true, turnstile_required: true, turnstile_site_key: 'site-key', turnstile_action: 'email-auth',
+  } }))
+  await page.route('**/turnstile/v0/api.js?render=explicit', (route) => {
+    requests += 1
+    return route.abort()
+  })
+
+  await page.goto('/')
+  await page.getByRole('tab', { name: 'Create account' }).click()
+  await expect(page.getByText('The security check could not load. Check your connection and try again.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Send verification code' })).toBeDisabled()
+  await page.getByRole('button', { name: 'Retry security check' }).click()
+  await expect.poll(() => requests).toBe(2)
 })
 
 test('a completed Turnstile challenge remains usable after the login form rerenders', async ({ page }) => {
@@ -491,6 +529,8 @@ test('a user-selected Mood Check-in is sent to a new chat as bounded context', a
 
   const savedCheckin = page.locator('.mood-reflection-callout')
   await expect(savedCheckin).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Update check-in' })).toBeVisible()
+  await expect(page.getByRole('textbox', { name: 'Mood' })).toHaveValue('anxious')
   await savedCheckin.getByRole('button', { name: 'Discuss record and trend' }).click()
   await expect(page.locator('.message.user .message-body').last()).toHaveText("I'd like to talk about this mood check-in and its recent trend.")
   await expect(page.locator('.message.assistant .message-body').last()).toHaveText('Mood reflection: anxious (3/5) - Interview tomorrow')
@@ -567,6 +607,33 @@ test('tablet Mood Check-in keeps form controls within their panel', async ({ pag
   expect(bounds).not.toBeNull()
   expect(bounds.inputRight).toBeLessThanOrEqual(bounds.formRight + 1)
   expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1)
+})
+
+test('tablet-height chat keeps the composer below the message scroller', async ({ page }) => {
+  // An iPad keyboard reduces visible height while retaining a tablet-width layout.
+  await page.setViewportSize({ width: 1024, height: 480 })
+  await signIn(page)
+
+  const bounds = await page.locator('.chat-panel').evaluate((panel) => {
+    const messages = panel.querySelector('.messages')
+    const composer = panel.querySelector('.composer-wrap')
+    if (!messages || !composer) return null
+    const panelBounds = panel.getBoundingClientRect()
+    const messageBounds = messages.getBoundingClientRect()
+    const composerBounds = composer.getBoundingClientRect()
+    return {
+      panelBottom: panelBounds.bottom,
+      messageBottom: messageBounds.bottom,
+      composerTop: composerBounds.top,
+      composerBottom: composerBounds.bottom,
+      viewportHeight: window.innerHeight,
+    }
+  })
+
+  expect(bounds).not.toBeNull()
+  expect(bounds.messageBottom).toBeLessThanOrEqual(bounds.composerTop + 1)
+  expect(bounds.composerBottom).toBeLessThanOrEqual(bounds.panelBottom + 1)
+  expect(bounds.panelBottom).toBeLessThanOrEqual(bounds.viewportHeight + 1)
 })
 
 test('mobile bottom navigation keeps chat primary and opens each workspace without overflow', async ({ page }) => {

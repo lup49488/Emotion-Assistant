@@ -264,7 +264,7 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
         setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' })
       } else {
         setSavedRecord(record)
-        setForm(emptyForm)
+        setForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' })
         if (moodDraftKey) sessionStorage.removeItem(moodDraftKey)
       }
       await refresh()

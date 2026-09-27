@@ -6,6 +6,7 @@
   grid-template-columns: 106px minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
   height: 100vh;
+  height: 100dvh;
 }
 .navigation-rail { grid-column: 1; grid-row: 1; z-index: 2; }
 .workspace-frame {
@@ -69,9 +70,10 @@
 .workspace-segment button:focus-visible,
 .rail-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .workspace-content { min-width: 0; min-height: 0; }
-.chat-workspace-content { display: grid; grid-template-columns: 320px minmax(0, 1fr); }
+.chat-workspace-content { display: grid; min-height: 0; grid-template-columns: 320px minmax(0, 1fr); }
 .chat-workspace-content .conversation-sidebar { grid-column: 1; min-height: 0; height: auto; }
 .chat-workspace-content .chat-panel { grid-column: 2; min-height: 0; max-height: none; height: 100%; }
+.chat-workspace-content .messages { min-height: 0; overflow-y: auto; }
 .chat-workspace-content.reply-context-open { grid-template-columns: 320px minmax(0, 1fr) 384px; }
 .chat-workspace-content.reply-context-open .reply-context {
   position: static;
