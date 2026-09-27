@@ -170,26 +170,32 @@ class EmailAuthService:
     def verify_challenge(self, challenge_id: str, code: str, purpose: str, request_id: str) -> str:
         self._require_enabled()
         now = int(self._clock())
+        failure = None
+        intent = None
         with connection() as conn:
+            conn.execute("BEGIN IMMEDIATE")
             row = conn.execute(
                 "SELECT email_normalized, purpose, code_hash, expires_at, attempts, verified_at, consumed_at FROM email_challenges WHERE id = ?",
                 (challenge_id,),
             ).fetchone()
             if row is None or row["purpose"] != purpose or row["consumed_at"] is not None or row["expires_at"] <= now:
                 self._audit(conn, None, "challenge_verify", "rejected", request_id)
-                raise EmailAuthError("Verification could not be completed. Request a new code.")
-            if row["attempts"] >= config.EMAIL_AUTH_MAX_CODE_ATTEMPTS:
+                failure = "Verification could not be completed. Request a new code."
+            elif row["attempts"] >= config.EMAIL_AUTH_MAX_CODE_ATTEMPTS:
                 self._audit(conn, None, "challenge_verify", "attempt_limit", request_id)
-                raise EmailAuthError("Verification could not be completed. Request a new code.")
-            expected = self._hash_code(challenge_id, (code or "").strip())
-            if not hmac.compare_digest(expected, row["code_hash"]):
+                failure = "Verification could not be completed. Request a new code."
+            elif not hmac.compare_digest(self._hash_code(challenge_id, (code or "").strip()), row["code_hash"]):
                 conn.execute("UPDATE email_challenges SET attempts = attempts + 1 WHERE id = ?", (challenge_id,))
                 self._audit(conn, None, "challenge_verify", "rejected", request_id)
-                raise EmailAuthError("Verification could not be completed. Request a new code.")
-            if row["verified_at"] is None:
-                conn.execute("UPDATE email_challenges SET verified_at = ? WHERE id = ?", (now, challenge_id))
-            self._audit(conn, None, "challenge_verify", "verified", request_id)
-            return self._issue_intent(challenge_id, row["email_normalized"], purpose, min(row["expires_at"], now + 300))
+                failure = "Verification could not be completed. Request a new code."
+            else:
+                if row["verified_at"] is None:
+                    conn.execute("UPDATE email_challenges SET verified_at = ? WHERE id = ?", (now, challenge_id))
+                self._audit(conn, None, "challenge_verify", "verified", request_id)
+                intent = self._issue_intent(challenge_id, row["email_normalized"], purpose, min(row["expires_at"], now + 300))
+        if failure:
+            raise EmailAuthError(failure)
+        return intent
 
     def _require_challenge(self, conn: sqlite3.Connection, intent: VerifiedIntent) -> None:
         row = conn.execute(
