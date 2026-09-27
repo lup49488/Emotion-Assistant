@@ -71,7 +71,15 @@ class ProviderDefinition:
     def chat_completion_parameters(
         self, model: str, *, temperature: float, top_p: float, max_new_tokens: int
     ) -> dict[str, float | int]:
-        profile = dict(self.model_request_profiles).get(model, DEFAULT_CHAT_COMPLETION_PROFILE)
+        profiles = dict(self.model_request_profiles)
+        profile = profiles.get(model)
+        if profile is None:
+            profile = next(
+                (candidate for model_id, candidate in sorted(
+                    profiles.items(), key=lambda item: len(item[0]), reverse=True
+                ) if model.startswith(f"{model_id}-")),
+                DEFAULT_CHAT_COMPLETION_PROFILE,
+            )
         parameters: dict[str, float | int] = {
             profile.output_token_parameter: max_new_tokens,
         }

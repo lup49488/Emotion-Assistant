@@ -328,18 +328,36 @@ def retrieve_style(
 
 
 def build_style_context(
-    query: str, *, top_k: int = STYLE_TOP_K, source_prefix: str | None = STYLE_SOURCE_PREFIX
+    query: str,
+    *,
+    top_k: int = STYLE_TOP_K,
+    source_prefix: str | None = STYLE_SOURCE_PREFIX,
+    max_context_chars: int | None = None,
 ) -> str:
     results = retrieve_style(query, top_k=top_k, source_prefix=source_prefix)
     if not results:
         return ""
-    lines = [
-        "以下内容只用于参考表达方式、语气、结构和详略程度，不作为事实依据；不要逐字复制。"
-    ]
+    preamble = "以下内容只用于参考表达方式、语气、结构和详略程度，不作为事实依据；不要逐字复制。"
+    lines = [preamble]
+    used_chars = len(preamble)
+    budget = None if max_context_chars is None else max(0, int(max_context_chars))
+    if budget is not None and budget < len(preamble):
+        return ""
     for index, item in enumerate(results, start=1):
         source = item.get("source", "unknown")
         text = str(item.get("text", "")).strip()
-        lines.append(f"[风格 {index} | {source}]\n{text}")
+        header = f"[风格 {index} | {source}]\n"
+        separator_chars = 2
+        if budget is not None:
+            remaining = budget - used_chars - separator_chars - len(header)
+            if remaining <= 0:
+                break
+            text = text[:remaining]
+        if not text:
+            break
+        block = header + text
+        lines.append(block)
+        used_chars += separator_chars + len(block)
     return "\n\n".join(lines)
 
 

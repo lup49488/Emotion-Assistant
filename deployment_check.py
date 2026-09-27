@@ -15,6 +15,8 @@ import urllib.error
 from pathlib import Path
 
 from env_loader import load_project_env_if_enabled
+from config import DEFAULT_LLM_PROVIDER
+from provider_registry import provider_definition
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -175,9 +177,14 @@ def check_runtime_configuration(reporter: CheckReporter) -> None:
     else:
         reporter.ok(f"GUI bind address: {host or '127.0.0.1'}")
 
-    provider = os.getenv("LLM_PROVIDER", "openai_compatible").strip().lower()
-    if provider not in {"", "local_hf"} and not os.getenv("LLM_API_KEY", "").strip():
-        reporter.warn("No generic LLM_API_KEY is configured; provider-specific environment keys or GUI input are required.")
+    provider = os.getenv("LLM_PROVIDER", DEFAULT_LLM_PROVIDER).strip().lower()
+    definition = provider_definition(provider)
+    if definition is None:
+        reporter.fail(f"LLM_PROVIDER '{provider}' is not supported by this application.")
+    elif definition.kind != "local" and definition.api_key() is None:
+        reporter.warn(
+            f"No API key is configured for LLM_PROVIDER '{provider}'; requests need a user-supplied key."
+        )
 
     if backend == "sqlite":
         database_path = Path(os.getenv("SQLITE_DATABASE_PATH", BASE_DIR / "data" / "chatbot.db"))

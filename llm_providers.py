@@ -457,10 +457,11 @@ def _stream_local_hf(
     )
 
     generation_errors: list[Exception] = []
+    generation_results: list[Any] = []
 
     def run_generation() -> None:
         try:
-            _run_generate_locked(model, generate_kwargs)
+            generation_results.append(_run_generate_locked(model, generate_kwargs))
         except Exception as exc:
             generation_errors.append(exc)
             logger.exception("本地模型生成线程失败。")
@@ -481,6 +482,22 @@ def _stream_local_hf(
         logger.info("本地模型回复完成，用时 %.2fs", time.perf_counter() - start)
     if generation_errors:
         raise RuntimeError(f"本地模型生成失败：{generation_errors[0]}") from generation_errors[0]
+    generated = generation_results[0] if generation_results else None
+    sequences = getattr(generated, "sequences", generated)
+    generated_tokens = None
+    try:
+        input_tokens = int(encoded["input_ids"].shape[-1])
+        generated_tokens = max(0, int(sequences.shape[-1]) - input_tokens)
+    except (AttributeError, KeyError, IndexError, TypeError, ValueError):
+        pass
+    truncated = generated_tokens is not None and generated_tokens >= config.max_new_tokens
+    config.run_metadata.update({
+        "provider": "local_hf",
+        "model": CHAT_MODEL_NAME,
+        "finish_reason": "length" if truncated else "stream_exhausted",
+        "truncated": truncated if generated_tokens is not None else None,
+        "output_tokens": generated_tokens,
+    })
 
 
 def _close_quietly(resource: Any) -> None:
@@ -929,11 +946,11 @@ def stream_model_response(
         raise ServiceError("provider_not_supported", f"未知模型 Provider: {config.provider!r}")
     
     
-def _run_generate_locked(model: Any, generate_kwargs: dict[str, Any]) -> None:
+def _run_generate_locked(model: Any, generate_kwargs: dict[str, Any]) -> Any:
     """
     在独立线程里持有 _llm_inference_lock 并调用 model.generate()。
     锁保证多用户并发时同一时间只有一个推理在跑。
     """
     with _llm_inference_lock:
         with torch.inference_mode():
-            model.generate(**generate_kwargs)
+            return model.generate(**generate_kwargs)

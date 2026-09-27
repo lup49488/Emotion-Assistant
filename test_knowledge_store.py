@@ -348,6 +348,14 @@ def test_build_context_enforces_character_budget_and_shows_scores():
     assert "相关度 0.800" in context
 
 
+def test_context_budget_below_200_is_honored_without_silent_floor():
+    results = [{"source": "a.txt", "text": "依据内容" * 80, "score": 0.8}]
+    with patch.object(knowledge_store, "diagnose_knowledge_search", return_value={"results": results, "scope_reason": None}):
+        context = knowledge_store.build_knowledge_context("问题", max_context_chars=80)
+
+    assert 0 < len(context) <= 80
+
+
 def test_knowledge_bundle_only_cites_chunks_that_fit_the_context_budget():
     results = [
         {"source": "a.txt", "chunk_index": 2, "text": "A" * 300, "score": 0.8},
@@ -360,6 +368,15 @@ def test_knowledge_bundle_only_cites_chunks_that_fit_the_context_budget():
     assert bundle["citations"][0]["source"] == "a.txt"
     assert bundle["citations"][0]["chunk_index"] == 2
     assert len(bundle["context"]) <= 200
+
+
+def test_knowledge_bundle_returns_no_evidence_when_budget_cannot_fit_a_header():
+    results = [{"source": "a.txt", "chunk_index": 0, "text": "依据", "score": 0.8}]
+    with patch.object(knowledge_store, "diagnose_knowledge_search", return_value={"results": results, "scope_reason": None}):
+        bundle = knowledge_store.build_knowledge_bundle("问题", max_context_chars=10)
+
+    assert bundle["context"] == ""
+    assert bundle["citations"] == []
 
 
 def test_results_without_usable_text_are_not_treated_as_evidence():

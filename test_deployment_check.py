@@ -30,6 +30,17 @@ def test_invalid_storage_backend_fails(monkeypatch):
     assert reporter.failures == ["STORAGE_BACKEND must be either 'json' or 'sqlite'."]
 
 
+def test_unsupported_provider_fails_before_deployment(monkeypatch):
+    monkeypatch.setenv("LLM_PROVIDER", "nvidia_nim")
+    reporter = deployment_check.CheckReporter()
+
+    deployment_check.check_runtime_configuration(reporter)
+
+    assert reporter.failures == [
+        "LLM_PROVIDER 'nvidia_nim' is not supported by this application."
+    ]
+
+
 def test_docker_runtime_accepts_running_services(monkeypatch):
     output = """
 [

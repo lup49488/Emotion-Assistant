@@ -91,6 +91,20 @@ def test_build_messages_includes_style_context():
     assert "我先帮你拆开看" in messages[0]["content"]
 
 
+def test_build_style_context_honors_small_character_budget(monkeypatch):
+    monkeypatch.setattr(
+        style_store,
+        "retrieve_style",
+        lambda *args, **kwargs: [{"source": "style.md", "text": "温柔表达" * 30}],
+    )
+
+    context = style_store.build_style_context("你好", max_context_chars=120)
+    too_small = style_store.build_style_context("你好", max_context_chars=20)
+
+    assert 0 < len(context) <= 120
+    assert too_small == ""
+
+
 def test_style_prefixes_are_derived_from_filename_prefix(monkeypatch):
     monkeypatch.setattr(
         style_store, "list_documents",

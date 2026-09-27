@@ -953,7 +953,7 @@ def _collect_context_blocks(
     lines: list[str] = []
     citations: list[dict[str, Any]] = []
     used_chars = 0
-    max_context_chars = max(200, int(max_context_chars))
+    max_context_chars = max(0, int(max_context_chars))
     for index, item in enumerate(results, start=1):
         source = item.get("source", "unknown")
         text = str(item.get("text", "")).strip()

@@ -98,6 +98,60 @@ def test_existing_openai_models_keep_sampling_parameters():
     assert parameters == {"max_tokens": 8, "temperature": 0.4, "top_p": 0.9}
 
 
+@pytest.mark.parametrize("model", [
+    "gpt-6-luna-2026-09-01",
+    "gpt-6-sol-preview",
+    "gpt-6-astra-2026-09-01",
+])
+def test_gpt6_model_variants_use_supported_parameters(model):
+    definition = provider_definition("openai")
+    assert definition is not None
+
+    parameters = definition.chat_completion_parameters(
+        model, temperature=0.4, top_p=0.9, max_new_tokens=8,
+    )
+
+    assert parameters == {"max_completion_tokens": 8}
+
+
+def test_local_hf_stream_populates_run_metadata():
+    class Encoded(dict):
+        def to(self, _device):
+            return self
+
+    class FakeStreamer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __iter__(self):
+            return iter(["local reply"])
+
+        def end(self):
+            pass
+
+    input_ids = SimpleNamespace(shape=(1, 4))
+    encoded = Encoded(input_ids=input_ids)
+    tokenizer = Mock()
+    tokenizer.apply_chat_template.return_value = "prompt"
+    tokenizer.return_value = encoded
+    model = SimpleNamespace(device="cpu")
+    config = llm_providers.ModelRuntimeConfig(provider="local_hf", max_new_tokens=8)
+    generated = SimpleNamespace(sequences=SimpleNamespace(shape=(1, 7)))
+
+    with patch.object(llm_providers, "get_llm", return_value=(tokenizer, model)), \
+         patch.object(llm_providers, "get_text_iterator_streamer", return_value=FakeStreamer), \
+         patch.object(llm_providers, "_run_generate_locked", return_value=generated):
+        assert list(llm_providers._stream_local_hf([], config)) == ["local reply"]
+
+    assert config.run_metadata == {
+        "provider": "local_hf",
+        "model": llm_providers.CHAT_MODEL_NAME,
+        "finish_reason": "stream_exhausted",
+        "truncated": False,
+        "output_tokens": 3,
+    }
+
+
 def test_default_provider_is_deepseek(monkeypatch):
     # resolved_model reads the environment at call time, so clear an ambient
     # per-provider value before asserting the package defaults.
