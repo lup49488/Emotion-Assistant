@@ -536,6 +536,27 @@ test('a user-selected Mood Check-in is sent to a new chat as bounded context', a
   await expect(page.locator('.message.assistant .message-body').last()).toHaveText('Mood reflection: anxious (3/5) - Interview tomorrow')
 })
 
+test('Save and discuss persists the Mood Check-in before starting its chat', async ({ page }) => {
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await page.getByRole('textbox', { name: 'Mood' }).fill('overwhelmed')
+  await page.getByLabel('Note').fill('Too many deadlines today')
+
+  const saveRequest = page.waitForRequest((request) => request.method() === 'POST' && request.url().endsWith('/api/v1/mood/checkins'))
+  const saveResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().endsWith('/api/v1/mood/checkins'))
+  await page.locator('.checkin-form').getByRole('button', { name: 'Discuss record and trend' }).click()
+  const request = await saveRequest
+  const response = await saveResponse
+  expect(request.postDataJSON()).toMatchObject({ mood: 'overwhelmed', note: 'Too many deadlines today' })
+  expect(response.ok()).toBe(true)
+
+  await expect(page.locator('.message.user .message-body').last()).toHaveText("I'd like to talk about this mood check-in and its recent trend.")
+  await expect(page.locator('.message.assistant .message-body').last()).toHaveText('Mood reflection: overwhelmed (3/5) - Too many deadlines today')
+
+  await page.locator('.rail-link[aria-label="Mood check-in"]').click()
+  await expect(page.locator('.record-row').filter({ hasText: 'overwhelmed' })).toContainText('Too many deadlines today')
+})
+
 test('a historical Mood Check-in can be discussed from its record action', async ({ page }) => {
   await signIn(page)
   await page.getByRole('button', { name: 'Mood check-in' }).click()

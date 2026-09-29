@@ -19,7 +19,15 @@ from api_contracts import (
     LoginResponse,
     SessionResponse,
 )
-from auth_rate_limit import clear_login_failures, login_allowed, record_login_failure
+from auth_rate_limit import (
+    EMAIL_VERIFY_SCOPE,
+    attempt_allowed,
+    clear_login_failures,
+    login_allowed,
+    record_attempt_failure,
+    record_login_failure,
+)
+from config import EMAIL_AUTH_VERIFY_MAX_FAILURES_PER_IP
 from email_auth_store import EmailAuthError, EmailAuthService, EmailAuthUnavailable
 from gui_auth import authorize
 
@@ -71,9 +79,23 @@ def create_auth_router(
     @router.post("/api/v1/auth/email/verify", response_model=EmailChallengeVerifyResponse)
     def verify_email_challenge(request: EmailChallengeVerifyRequest, raw_request: Request) -> dict[str, str]:
         _require_allowed_origin(raw_request)
+        # Keyed on the address alone: a per-challenge key would add nothing to the
+        # database's own attempt cap, which this is meant to back up. Successes do
+        # not clear the count, or one valid code would reset an attacker's budget.
+        address = client_ip(raw_request)
+        allowed, retry_after = attempt_allowed(EMAIL_VERIFY_SCOPE, address, "", EMAIL_AUTH_VERIFY_MAX_FAILURES_PER_IP)
+        if not allowed:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=f"Too many failed verification attempts. Try again in {retry_after} seconds.",
+            )
         try:
             verified_intent = email_auth.verify_challenge(request.challenge_id, request.code, request.purpose, request_id(raw_request))
+        except EmailAuthUnavailable as exc:
+            # The service being down is not the caller's failure.
+            raise _email_error(exc) from None
         except EmailAuthError as exc:
+            record_attempt_failure(EMAIL_VERIFY_SCOPE, address, "")
             raise _email_error(exc) from None
         return {"verified_intent": verified_intent}
 

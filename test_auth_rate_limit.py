@@ -36,3 +36,13 @@ def test_expired_failures_are_pruned_from_memory():
         clock[0] += 61
         auth_rate_limit.login_allowed("127.0.0.1", "bob")
         assert len(auth_rate_limit._FAILURES) == 0
+
+
+def test_limiter_scopes_do_not_share_a_budget():
+    with patch.object(auth_rate_limit, "_FAILURES", {}):
+        for _ in range(3):
+            auth_rate_limit.record_attempt_failure(auth_rate_limit.EMAIL_VERIFY_SCOPE, "127.0.0.1", "alice")
+
+        assert not auth_rate_limit.attempt_allowed(auth_rate_limit.EMAIL_VERIFY_SCOPE, "127.0.0.1", "alice", 3)[0]
+        # The same address and identifier are still free to sign in.
+        assert auth_rate_limit.attempt_allowed(auth_rate_limit.LOGIN_SCOPE, "127.0.0.1", "alice", 3)[0]

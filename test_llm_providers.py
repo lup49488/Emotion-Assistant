@@ -406,3 +406,106 @@ def test_frontend_fallback_catalog_stays_in_sync_with_the_registry():
     assert fallback_ids <= set(PROVIDER_CHOICES), (
         f"fallback lists providers the registry does not offer: {sorted(fallback_ids - set(PROVIDER_CHOICES))}"
     )
+
+
+def _run_local_hf(generated, *, max_new_tokens=8, eos_token_id=None, thread_class=None):
+    """Drive _stream_local_hf with fakes and return the recorded run metadata."""
+    class Encoded(dict):
+        def to(self, _device):
+            return self
+
+    class FakeStreamer:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def __iter__(self):
+            return iter(["local reply"])
+
+        def end(self):
+            pass
+
+    tokenizer = Mock()
+    tokenizer.apply_chat_template.return_value = "prompt"
+    tokenizer.return_value = Encoded(input_ids=SimpleNamespace(shape=(1, 4)))
+    tokenizer.eos_token_id = eos_token_id
+    model = SimpleNamespace(device="cpu", generation_config=SimpleNamespace(eos_token_id=eos_token_id))
+    config = llm_providers.ModelRuntimeConfig(provider="local_hf", max_new_tokens=max_new_tokens)
+
+    patches = [
+        patch.object(llm_providers, "get_llm", return_value=(tokenizer, model)),
+        patch.object(llm_providers, "get_text_iterator_streamer", return_value=FakeStreamer),
+        patch.object(llm_providers, "_run_generate_locked", return_value=generated),
+    ]
+    if thread_class is not None:
+        patches.append(patch.object(llm_providers.threading, "Thread", thread_class))
+    for item in patches:
+        item.start()
+    try:
+        assert list(llm_providers._stream_local_hf([], config)) == ["local reply"]
+    finally:
+        for item in reversed(patches):
+            item.stop()
+    return config.run_metadata
+
+
+class _Sequences:
+    """A (1, length) output whose last token id can be read like a tensor."""
+
+    def __init__(self, length, last_token):
+        self.shape = (1, length)
+        self._last = last_token
+
+    def __getitem__(self, index):
+        assert index == (0, -1)
+        return self._last
+
+
+def test_local_hf_reports_unknown_when_the_token_count_is_unreadable():
+    # A normal finish must not be claimed when the length cannot be checked.
+    metadata = _run_local_hf(generated=object())
+
+    assert metadata["finish_reason"] == "unknown"
+    assert metadata["truncated"] is None
+    assert metadata["output_tokens"] is None
+
+
+def test_local_hf_reply_ending_on_eos_at_the_limit_is_not_truncated():
+    metadata = _run_local_hf(generated=_Sequences(4 + 8, last_token=2), eos_token_id=2)
+
+    assert metadata["output_tokens"] == 8
+    assert metadata["truncated"] is False
+    assert metadata["finish_reason"] == "stream_exhausted"
+
+
+def test_local_hf_reply_cut_at_the_limit_is_truncated():
+    metadata = _run_local_hf(generated=_Sequences(4 + 8, last_token=17), eos_token_id=[2, 3])
+
+    assert metadata["truncated"] is True
+    assert metadata["finish_reason"] == "length"
+
+
+def test_local_hf_limit_without_known_eos_stays_conservative():
+    # Without EOS ids there is no way to tell a natural stop, so assume the cut.
+    metadata = _run_local_hf(generated=_Sequences(4 + 8, last_token=2), eos_token_id=None)
+
+    assert metadata["truncated"] is True
+
+
+def test_local_hf_reports_unknown_when_generation_outlives_the_join():
+    class StillRunning:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def start(self):
+            pass
+
+        def join(self, timeout=None):
+            pass
+
+        def is_alive(self):
+            return True
+
+    metadata = _run_local_hf(generated=_Sequences(4 + 3, last_token=2), thread_class=StillRunning)
+
+    assert metadata["finish_reason"] == "unknown"
+    assert metadata["truncated"] is None

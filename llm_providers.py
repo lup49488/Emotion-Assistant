@@ -484,6 +484,13 @@ def _stream_local_hf(
         logger.info("本地模型回复完成，用时 %.2fs", time.perf_counter() - start)
     if generation_errors:
         raise RuntimeError(f"本地模型生成失败：{generation_errors[0]}") from generation_errors[0]
+    metadata = {"provider": "local_hf", "model": CHAT_MODEL_NAME}
+    if generate_thread.is_alive():
+        # The streamer ended but generate() did not return within the join
+        # window, so nothing about the output length can be trusted.
+        logger.warning("event=local_generation_join_timeout model=%s", CHAT_MODEL_NAME)
+        config.run_metadata.update({**metadata, "finish_reason": "unknown", "truncated": None, "output_tokens": None})
+        return
     generated = generation_results[0] if generation_results else None
     sequences = getattr(generated, "sequences", generated)
     generated_tokens = None
@@ -492,14 +499,39 @@ def _stream_local_hf(
         generated_tokens = max(0, int(sequences.shape[-1]) - input_tokens)
     except (AttributeError, KeyError, IndexError, TypeError, ValueError):
         pass
-    truncated = generated_tokens is not None and generated_tokens >= config.max_new_tokens
+    if generated_tokens is None:
+        # Say so rather than reporting a normal finish: a consumer cannot tell a
+        # truncated reply from a complete one without the token count.
+        config.run_metadata.update({**metadata, "finish_reason": "unknown", "truncated": None, "output_tokens": None})
+        return
+    truncated = generated_tokens >= config.max_new_tokens and not _ended_on_eos(sequences, tokenizer, model)
     config.run_metadata.update({
-        "provider": "local_hf",
-        "model": CHAT_MODEL_NAME,
+        **metadata,
         "finish_reason": "length" if truncated else "stream_exhausted",
-        "truncated": truncated if generated_tokens is not None else None,
+        "truncated": truncated,
         "output_tokens": generated_tokens,
     })
+
+
+def _ended_on_eos(sequences: Any, tokenizer: Any, model: Any) -> bool:
+    """Whether generation stopped on an end-of-sequence token.
+
+    A reply can end on EOS exactly at max_new_tokens; that is a complete reply,
+    not a truncated one. When the last token or the EOS ids cannot be read, this
+    returns False so the length check stays conservative.
+    """
+    eos_ids: set[int] = set()
+    for source in (getattr(model, "generation_config", None), tokenizer):
+        value = getattr(source, "eos_token_id", None)
+        for item in value if isinstance(value, (list, tuple, set)) else [value]:
+            if isinstance(item, int):
+                eos_ids.add(item)
+    if not eos_ids:
+        return False
+    try:
+        return int(sequences[0, -1]) in eos_ids
+    except (IndexError, KeyError, TypeError, ValueError):
+        return False
 
 
 def _close_quietly(resource: Any) -> None:

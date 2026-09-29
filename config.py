@@ -210,6 +210,12 @@ EMAIL_AUTH_RESEND_API_KEY = os.getenv("EMAIL_AUTH_RESEND_API_KEY", "").strip()
 EMAIL_AUTH_CODE_TTL_SECONDS = max(300, min(600, _env_int("EMAIL_AUTH_CODE_TTL_SECONDS", 600)))
 EMAIL_AUTH_MAX_CODE_ATTEMPTS = max(1, _env_int("EMAIL_AUTH_MAX_CODE_ATTEMPTS", 6))
 EMAIL_AUTH_MAX_SENDS_PER_WINDOW = max(1, _env_int("EMAIL_AUTH_MAX_SENDS_PER_WINDOW", 3))
+# Failed code verifications allowed per client IP within API_AUTH_WINDOW_SECONDS.
+# Each challenge is already capped by EMAIL_AUTH_MAX_CODE_ATTEMPTS, so this only
+# stops one address cycling through challenges. It is generous on purpose: many
+# users can share an address behind NAT, and it relies on API_TRUST_PROXY_HEADERS
+# resolving the real client address behind the reverse proxy.
+EMAIL_AUTH_VERIFY_MAX_FAILURES_PER_IP = max(1, _env_int("EMAIL_AUTH_VERIFY_MAX_FAILURES_PER_IP", 30))
 EMAIL_AUTH_SEND_WINDOW_SECONDS = max(60, _env_int("EMAIL_AUTH_SEND_WINDOW_SECONDS", 900))
 EMAIL_AUTH_TURNSTILE_REQUIRED = os.getenv("EMAIL_AUTH_TURNSTILE_REQUIRED", str(API_PUBLIC_MODE)).lower() == "true"
 TURNSTILE_SITE_KEY = os.getenv("TURNSTILE_SITE_KEY", "").strip()
