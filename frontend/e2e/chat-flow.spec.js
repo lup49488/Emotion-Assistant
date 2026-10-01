@@ -630,31 +630,48 @@ test('tablet Mood Check-in keeps form controls within their panel', async ({ pag
   expect(bounds.scrollWidth).toBeLessThanOrEqual(bounds.clientWidth + 1)
 })
 
-test('tablet-height chat keeps the composer below the message scroller', async ({ page }) => {
-  // An iPad keyboard reduces visible height while retaining a tablet-width layout.
-  await page.setViewportSize({ width: 1024, height: 480 })
+test('tablet-height chat keeps long message history separate from the composer', async ({ page }) => {
+  // Model the reduced visible area while an iPad keyboard is open.
+  await page.setViewportSize({ width: 1180, height: 480 })
   await signIn(page)
 
-  const bounds = await page.locator('.chat-panel').evaluate((panel) => {
-    const messages = panel.querySelector('.messages')
-    const composer = panel.querySelector('.composer-wrap')
-    if (!messages || !composer) return null
-    const panelBounds = panel.getBoundingClientRect()
-    const messageBounds = messages.getBoundingClientRect()
-    const composerBounds = composer.getBoundingClientRect()
-    return {
-      panelBottom: panelBounds.bottom,
-      messageBottom: messageBounds.bottom,
-      composerTop: composerBounds.top,
-      composerBottom: composerBounds.bottom,
-      viewportHeight: window.innerHeight,
-    }
-  })
+  for (let index = 0; index < 8; index += 1) {
+    const text = `Tablet layout message ${index}`
+    await sendMessage(page, text)
+    await expect(page.locator('.message.user').getByText(text, { exact: true })).toBeVisible()
+    await expect(page.locator('.message.assistant').last()).toContainText('Grounded answer from the knowledge base.')
+  }
 
-  expect(bounds).not.toBeNull()
-  expect(bounds.messageBottom).toBeLessThanOrEqual(bounds.composerTop + 1)
-  expect(bounds.composerBottom).toBeLessThanOrEqual(bounds.panelBottom + 1)
-  expect(bounds.panelBottom).toBeLessThanOrEqual(bounds.viewportHeight + 1)
+  for (const viewport of [
+    { width: 1180, height: 820 },
+    { width: 1180, height: 480 },
+    { width: 1024, height: 480 },
+    { width: 820, height: 480 },
+  ]) {
+    await page.setViewportSize(viewport)
+    const bounds = await page.locator('.chat-panel').evaluate((panel) => {
+      const messages = panel.querySelector('.messages')
+      const composer = panel.querySelector('.composer-wrap')
+      if (!messages || !composer) return null
+      const panelBounds = panel.getBoundingClientRect()
+      const messageBounds = messages.getBoundingClientRect()
+      const composerBounds = composer.getBoundingClientRect()
+      return {
+        panelBottom: panelBounds.bottom,
+        messageBottom: messageBounds.bottom,
+        composerTop: composerBounds.top,
+        composerBottom: composerBounds.bottom,
+        viewportHeight: window.innerHeight,
+        messageScrolls: messages.scrollHeight > messages.clientHeight,
+      }
+    })
+
+    expect(bounds, `layout at ${viewport.width}x${viewport.height}`).not.toBeNull()
+    expect(bounds.messageBottom, `messages overlap composer at ${viewport.width}x${viewport.height}`).toBeLessThanOrEqual(bounds.composerTop + 1)
+    expect(bounds.composerBottom, `composer outside panel at ${viewport.width}x${viewport.height}`).toBeLessThanOrEqual(bounds.panelBottom + 1)
+    expect(bounds.panelBottom, `panel outside viewport at ${viewport.width}x${viewport.height}`).toBeLessThanOrEqual(bounds.viewportHeight + 1)
+    expect(bounds.messageScrolls, `messages do not scroll at ${viewport.width}x${viewport.height}`).toBe(true)
+  }
 })
 
 test('mobile bottom navigation keeps chat primary and opens each workspace without overflow', async ({ page }) => {
