@@ -176,3 +176,7 @@
   .model-settings-panel { top: 72px; right: 12px; left: 12px; width: auto; max-height: calc(100dvh - 84px); }
   .reply-context { width: min(100vw - 24px, 352px); }
 }
+
+/* A reply the provider cut at its length limit says so and offers to continue. */
+.reply-truncated { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0; color: var(--muted); font-size: 13px; }
+.reply-truncated button { min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--accent-deep); font-weight: 700; }

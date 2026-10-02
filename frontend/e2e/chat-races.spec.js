@@ -36,7 +36,7 @@ test('a failed first conversation request preserves the unsent draft', async ({ 
     ? route.fulfill({ status: 503, json: { detail: 'Conversation service unavailable' } })
     : route.fallback())
   await composer.fill('Please keep this draft')
-  await page.getByTitle('Message Serenova', { exact: true }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByRole('alert')).toContainText('Unable to generate a reply.')
   await expect(composer).toHaveValue('Please keep this draft')
   await expect(page.locator('.message.user')).toHaveCount(0)
@@ -53,7 +53,7 @@ test('conversation controls cannot replace the active thread during generation',
   const conversation = page.locator('.desktop-sidebar .conversation').first()
   await expect(conversation).toBeVisible()
   await page.getByPlaceholder('Message Serenova').fill('Keep this reply in its thread')
-  await page.getByTitle('Message Serenova', { exact: true }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
   try {
     await expect(page.getByTitle('Stop generating')).toBeVisible()
     await expect(conversation).toBeDisabled()

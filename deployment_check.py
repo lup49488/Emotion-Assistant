@@ -24,6 +24,7 @@ load_project_env_if_enabled(BASE_DIR)
 REQUIRED_PROJECT_FILES = (
     "Web_GUI.py", "api_server.py", "config.py", "requirements.txt", "sqlite_store.py",
     "Dockerfile", "Dockerfile.frontend", "docker-compose.yml", "docker/nginx.conf",
+    "docker/security-headers.conf",
 )
 REQUIRED_MODULES = ("fastapi", "gradio", "numpy", "openai", "pytest")
 FRONTEND_DIR = BASE_DIR / "frontend"
@@ -78,6 +79,11 @@ def check_docker_configuration(reporter: CheckReporter) -> None:
     compose_file = (BASE_DIR / "docker-compose.yml").read_text(encoding="utf-8")
     compose_flat = _normalized(compose_file)
     nginx_config = _normalized((BASE_DIR / "docker" / "nginx.conf").read_text(encoding="utf-8"))
+    security_headers = _normalized((BASE_DIR / "docker" / "security-headers.conf").read_text(encoding="utf-8"))
+    headers_include = "include /etc/nginx/snippets/security-headers.conf;"
+    # Nginx drops server-level add_header in any location that declares its own,
+    # so every such location has to include the shared headers again.
+    header_locations = re.findall(r"location [^{]*\{[^}]*add_header[^}]*\}", nginx_config)
 
     checks: list[tuple[bool, str, str]] = [
         (
@@ -150,6 +156,23 @@ def check_docker_configuration(reporter: CheckReporter) -> None:
             "location = /health/ready" in nginx_config and "location = /health/live" in nginx_config,
             "Docker Nginx proxies liveness and readiness endpoints",
             "Docker Nginx must proxy /health/live and /health/ready to the API.",
+        ),
+        (
+            "COPY docker/security-headers.conf /etc/nginx/snippets/security-headers.conf" in frontend_dockerfile
+            and headers_include in nginx_config
+            and all(headers_include in block for block in header_locations),
+            "Docker Nginx sends the shared security headers from every location",
+            "Docker Nginx must include security-headers.conf at server level and in every location with its own add_header.",
+        ),
+        (
+            "frame-ancestors 'none'" in security_headers and 'X-Frame-Options "DENY"' in security_headers,
+            "Security headers forbid framing the app",
+            "security-headers.conf must forbid framing (frame-ancestors and X-Frame-Options).",
+        ),
+        (
+            "location /docs" not in nginx_config and "location = /openapi.json" not in nginx_config,
+            "Docker Nginx does not publish the API docs or schema",
+            "Docker Nginx must not proxy /docs or /openapi.json to the public site.",
         ),
     ]
     for passed, ok_message, fail_message in checks:

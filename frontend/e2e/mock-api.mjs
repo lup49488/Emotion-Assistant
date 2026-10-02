@@ -196,6 +196,12 @@ const server = http.createServer(async (request, response) => {
       response.write('event: error\ndata: {"code":"provider_timeout","retryable":true}\n\n')
       return response.end('event: done\ndata: {}\n\n')
     }
+    if (body.message === 'Trigger truncated reply') {
+      response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
+      response.write('event: chunk\ndata: {"text":"The first half of an answer that"}\n\n')
+      response.write('event: truncated\ndata: {"finish_reason":"length"}\n\n')
+      return response.end('event: done\ndata: {}\n\n')
+    }
     if (body.message === 'Ask without sources' && body.use_knowledge) {
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
       response.write('event: rag_status\ndata: {"status":"insufficient","code":"insufficient_evidence","reason":"no_relevant_sources","enforced":true}\n\n')

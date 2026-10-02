@@ -44,7 +44,17 @@ def _save_json_conversations(user_id: str, conversations: list[dict[str, Any]]) 
 
 def _title_from_text(text: str) -> str:
     compact = " ".join((text or "").split())
-    return (compact[:_MAX_TITLE_LENGTH] or "New conversation")
+    if not compact:
+        return "New conversation"
+    if len(compact) <= _MAX_TITLE_LENGTH:
+        return compact
+    # Leave room for the ellipsis and, for spaced scripts, end on a word so a
+    # title does not stop mid-word ("... I can't stop thi").
+    cut = compact[: _MAX_TITLE_LENGTH - 1]
+    boundary = cut.rfind(" ")
+    if boundary >= _MAX_TITLE_LENGTH // 2:
+        cut = cut[:boundary]
+    return cut.rstrip(" ,.;:!?，。；：！？、") + "…"
 
 
 def _summary(record: dict[str, Any]) -> dict[str, Any]:

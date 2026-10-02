@@ -27,12 +27,14 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
+  Eye,
+  EyeOff,
   Languages,
   Menu,
   SunMoon,
   X,
 } from 'lucide-react'
-import { ApiRequestError, apiFetch, csrfHeaders, readJson } from './api'
+import { ApiRequestError, apiFetch, csrfHeaders, hasSessionCookie, readJson } from './api'
 import { translate } from './i18n'
 import './App.css'
 
@@ -108,7 +110,7 @@ function isComposingEnter(event) {
 
 function App() {
   const [theme, setTheme] = useState(() => localStorage.getItem('mindful-theme') || 'system')
-  const [locale, setLocale] = useState(() => localStorage.getItem('mindful-locale') || 'en')
+  const [locale, setLocale] = useState(() => localStorage.getItem('mindful-locale') || (navigator.language?.toLowerCase().startsWith('zh') ? 'zh' : 'en'))
   const [session, setSession] = useState(null)
   const [activeView, setActiveView] = useState('chat')
   const [conversations, setConversations] = useState([])
@@ -235,6 +237,10 @@ function App() {
   }
 
   async function restoreSession() {
+    if (!hasSessionCookie()) {
+      setSession(null)
+      return
+    }
     try {
       const response = await apiFetch('/api/v1/auth/session')
       const data = await response.json()
@@ -478,6 +484,11 @@ function App() {
               ? { ...item, citations: payload.citations || [], citationTraceId: payload.trace_id || null }
               : item))
           }
+          if (eventName === 'truncated') {
+            setMessages((current) => current.map((item, index) => index === current.length - 1
+              ? { ...item, truncated: true }
+              : item))
+          }
           if (eventName === 'response_basis') {
             setMessages((current) => current.map((item, index) => index === current.length - 1
               ? { ...item, responseBasis: payload }
@@ -596,7 +607,7 @@ function App() {
     setQuotedMessage(null)
   }
 
-  if (!session) return <LoginScreen onSuccess={restoreSession} t={t} />
+  if (!session) return <LoginScreen onSuccess={restoreSession} locale={locale} setLocale={setLocale} t={t} />
 
   const activeNavigationItem = visibleNavigation.find((item) => item.id === activeView)
   const isChatView = activeView === 'chat'
@@ -697,10 +708,10 @@ function App() {
 
       <div className="mobile-app-bar">{isChatView && <button className="icon-button" title={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={19} /></button>}<span>{mobileTitle}</span></div>
       {isChatView ? <><section className="chat-panel">
-        <header className="chat-header"><button className="mobile-chat-menu icon-button" title={t('openSidebar')} aria-label={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={22} /></button><div className="chat-title-block"><h1>{activeTitle}</h1><div className="chat-summary-row"><div className="tone-control"><button className={`conversation-summary tone-summary ${toneOpen ? 'active' : ''}`} aria-expanded={toneOpen} onClick={() => { setSettingsOpen(false); setToneOpen((open) => !open) }}><Sparkles size={13} />{t('conversationTone')}：{activeToneLabel}<ChevronDown size={13} /></button>{toneOpen && <ToneMenu activeStyle={options.stylePrefix} onClose={() => setToneOpen(false)} onSelect={saveStylePrefix} styleName={styleName} styles={visibleStylePrefixes} t={t} />}</div><button className="conversation-summary model-summary" aria-label={t('modelResponseSettings')} onClick={() => { setToneOpen(false); setWhyOpen(false); setSettingsOpen(true) }}><Settings2 size={13} />{activeModelLabel} · {activeToneLabel}{options.useKnowledge && <> · {t('knowledgeShort')}</>}<ChevronDown size={13} /></button></div></div><div className="chat-header-actions"><button className={`icon-button context-toggle ${whyOpen ? 'active' : ''}`} title={t('replyContext')} aria-label={t('replyContext')} onClick={() => { setSettingsOpen(false); setToneOpen(false); setWhyOpen((open) => !open) }}><Info size={18} /></button><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('modelResponseSettings')} onClick={() => { setWhyOpen(false); setToneOpen(false); setSettingsOpen((open) => !open) }}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></div></header>
+        <header className="chat-header"><button className="mobile-chat-menu icon-button" title={t('openSidebar')} aria-label={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={22} /></button><div className="chat-title-block"><h1>{activeTitle}</h1><div className="chat-summary-row"><div className="tone-control"><button className={`conversation-summary tone-summary ${toneOpen ? 'active' : ''}`} aria-expanded={toneOpen} onClick={() => { setSettingsOpen(false); setToneOpen((open) => !open) }}><Sparkles size={13} />{t('conversationTone')}{t('labelSeparator')}{activeToneLabel}<ChevronDown size={13} /></button>{toneOpen && <ToneMenu activeStyle={options.stylePrefix} onClose={() => setToneOpen(false)} onSelect={saveStylePrefix} styleName={styleName} styles={visibleStylePrefixes} t={t} />}</div><button className="conversation-summary model-summary" aria-label={t('modelResponseSettings')} onClick={() => { setToneOpen(false); setWhyOpen(false); setSettingsOpen(true) }}><Settings2 size={13} />{activeModelLabel} · {activeToneLabel}{options.useKnowledge && <> · {t('knowledgeShort')}</>}<ChevronDown size={13} /></button></div></div><div className="chat-header-actions"><button className={`icon-button context-toggle ${whyOpen ? 'active' : ''}`} title={t('replyContext')} aria-label={t('replyContext')} onClick={() => { setSettingsOpen(false); setToneOpen(false); setWhyOpen((open) => !open) }}><Info size={18} /></button><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('modelResponseSettings')} onClick={() => { setWhyOpen(false); setToneOpen(false); setSettingsOpen((open) => !open) }}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></div></header>
         <div className="messages" aria-live="polite">
           {!hasMessages && <Welcome onPrompt={sendMessage} t={t} />}
-          {messages.map((message, index) => <Message key={message.id || `${message.role}-${index}`} message={message} index={index} quotedMessage={message.quotedMessage || messagesById.get(message.reply_to_message_id)} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onQuote={quoteMessage} onRetry={sendMessage} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
+          {messages.map((message, index) => <Message key={message.id || `${message.role}-${index}`} message={message} index={index} quotedMessage={message.quotedMessage || messagesById.get(message.reply_to_message_id)} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onQuote={quoteMessage} onRetry={sendMessage} onContinue={() => sendMessage(null, t('continuePrompt'))} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
           <div ref={messageEndRef} />
         </div>
         {notice && <div className="notice" role="alert">{notice}<button onClick={() => setNotice('')} title="Dismiss"><X size={15} /></button></div>}
@@ -908,7 +919,7 @@ function TurnstileField({ authConfig, onToken, onError }) {
   return authConfig.turnstile_required ? <div className="turnstile-field" ref={container} aria-label="Turnstile verification" /> : null
 }
 
-function LoginScreen({ onSuccess, t }) {
+function LoginScreen({ onSuccess, locale, setLocale, t }) {
   const [authConfig, setAuthConfig] = useState({ email_auth_enabled: false, legacy_login_enabled: true, turnstile_required: false, turnstile_site_key: '', turnstile_action: 'email-auth' })
   const [mode, setMode] = useState('legacy')
   const [phase, setPhase] = useState('start')
@@ -1024,25 +1035,39 @@ function LoginScreen({ onSuccess, t }) {
 
   const modeControls = authConfig.email_auth_enabled && <div className="login-mode-tabs" role="tablist" aria-label="Sign-in method"><button type="button" role="tab" aria-selected={mode === 'password'} className={mode === 'password' ? 'selected' : ''} onClick={() => chooseMode('password')}>{t('emailSignIn')}</button><button type="button" role="tab" aria-selected={mode === 'register'} className={mode === 'register' ? 'selected' : ''} onClick={() => chooseMode('register')}>{t('createAccount')}</button><button type="button" role="tab" aria-selected={mode === 'migrate'} className={mode === 'migrate' ? 'selected' : ''} onClick={() => chooseMode('migrate')}>{t('migrateLegacyAccount')}</button>{authConfig.legacy_login_enabled && <button type="button" role="tab" aria-selected={mode === 'legacy'} className={mode === 'legacy' ? 'selected' : ''} onClick={() => chooseMode('legacy')}>{t('legacySignIn')}</button>}</div>
 
+  const heading = {
+    register: ['createAccountTitle', 'createAccountHelp'],
+    migrate: ['migrateTitle', 'migrateHelp'],
+    reset: ['resetTitle', 'resetHelp'],
+    legacy: authConfig.email_auth_enabled ? ['legacyTitle', 'legacyHelp'] : ['welcomeBack', 'loginHelp'],
+  }[mode] || ['welcomeBack', 'loginHelp']
+
   let form
   if (!authConfig.email_auth_enabled || (mode === 'legacy' && authConfig.legacy_login_enabled)) {
-    form = <form onSubmit={submitLegacy}><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><label>{t('password')}<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} autoComplete="current-password" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('signIn')}</button></form>
+    form = <form onSubmit={submitLegacy}><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><PasswordField label={t('password')} value={accessKey} onChange={setAccessKey} autoComplete="current-password" t={t} /><button className="login-button" disabled={loading}>{busyLabel || (authConfig.email_auth_enabled ? t('emailSignIn') : t('signIn'))}</button></form>
   } else if (mode === 'password') {
-    form = <form onSubmit={submitPassword}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><label>{t('emailPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="current-password" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('emailSignIn')}</button><button type="button" className="login-secondary" onClick={() => chooseMode('reset')}>{t('forgotPassword')}</button></form>
+    form = <form onSubmit={submitPassword}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><PasswordField label={t('emailPassword')} value={password} onChange={setPassword} autoComplete="current-password" t={t} /><button className="login-button" disabled={loading}>{busyLabel || t('emailSignIn')}</button><button type="button" className="login-secondary" onClick={() => chooseMode('reset')}>{t('forgotPassword')}</button></form>
   } else if (phase === 'start') {
     form = <form onSubmit={startChallenge}><label>{t('email')}<input type="email" value={email} onChange={(event) => setEmail(event.target.value)} autoComplete="email" required /></label><TurnstileField key={turnstileRevision} authConfig={authConfig} onToken={handleTurnstileToken} onError={handleTurnstileError} />{turnstileError && <><p className="login-step-copy" role="status">{turnstileError === 'load_failed' ? t('turnstileLoadFailed') : t('turnstileRetry')}</p><button type="button" className="login-secondary" onClick={retryTurnstile}>{t('retrySecurityCheck')}</button></>}<button className="login-button" disabled={loading || (authConfig.turnstile_required && !turnstileToken)}>{busyLabel || t('sendCode')}</button></form>
   } else if (phase === 'verify') {
     form = <form onSubmit={verifyChallenge}><p className="login-step-copy">{t('codeSent')}</p><label>{t('verificationCode')}<input value={code} onChange={(event) => setCode(event.target.value)} inputMode="numeric" autoComplete="one-time-code" required /></label><button className="login-button" disabled={loading}>{busyLabel || t('verifyCode')}</button><button type="button" className="login-secondary" onClick={() => setPhase('start')}>{t('backToSignIn')}</button></form>
   } else {
-    form = <form onSubmit={completeEmailAuth}><label>{t('setPassword')}<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" minLength="8" required /></label>{mode === 'migrate' && <><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><label>{t('legacyAccessKey')}<input type="password" value={accessKey} onChange={(event) => setAccessKey(event.target.value)} autoComplete="current-password" required /></label></>}<button className="login-button" disabled={loading}>{busyLabel || (mode === 'migrate' ? t('completeMigration') : mode === 'reset' ? t('resetPassword') : t('createAccount'))}</button></form>
+    form = <form onSubmit={completeEmailAuth}><PasswordField label={t('setPassword')} value={password} onChange={setPassword} autoComplete="new-password" minLength={8} t={t} />{mode === 'migrate' && <><label>{t('userId')}<input value={userId} onChange={(event) => setUserId(event.target.value)} autoComplete="username" required /></label><PasswordField label={t('legacyAccessKey')} value={accessKey} onChange={setAccessKey} autoComplete="current-password" t={t} /></>}<button className="login-button" disabled={loading}>{busyLabel || (mode === 'migrate' ? t('completeMigration') : mode === 'reset' ? t('resetPassword') : t('createAccount'))}</button></form>
   }
 
-  return <main className="login-page"><section className="login-intro"><div className="brand"><Sparkles size={20} /><span>{ASSISTANT_NAME}</span></div><div><h1>{t('loginTitle')}</h1><p>{t('loginText')}</p></div><div className="intro-mark"><Bot size={38} /></div></section><section className="login-form"><h2>{t('welcomeBack')}</h2><p>{t('loginHelp')}</p>{modeControls}{form}{statusMessage && <p className="login-step-copy" role="status">{statusMessage}</p>}{error && <div className="login-error" role="alert">{error}</div>}</section></main>
+  return <main className="login-page"><section className="login-intro"><div className="brand"><Sparkles size={20} /><span>{ASSISTANT_NAME}</span></div><div><h1>{t('loginTitle')}</h1><p>{t('loginText')}</p></div><div className="intro-mark"><Bot size={38} /></div></section><section className="login-form"><div className="login-language" role="group" aria-label={t('language')}><button type="button" aria-pressed={locale === 'en'} onClick={() => setLocale('en')}>English</button><button type="button" aria-pressed={locale === 'zh'} onClick={() => setLocale('zh')}>中文</button></div><h2>{t(heading[0])}</h2><p>{t(heading[1])}</p>{modeControls}{form}{statusMessage && <p className="login-step-copy" role="status">{statusMessage}</p>}{error && <div className="login-error" role="alert">{error}</div>}</section></main>
+}
+
+function PasswordField({ label, value, onChange, autoComplete, minLength, t }) {
+  const [visible, setVisible] = useState(false)
+  // The toggle sits outside the <label> so it does not become part of the
+  // input's accessible name.
+  return <div className="password-field"><label>{label}<input type={visible ? 'text' : 'password'} value={value} onChange={(event) => onChange(event.target.value)} autoComplete={autoComplete} minLength={minLength} required /></label><button type="button" className="password-toggle" aria-pressed={visible} aria-label={visible ? t('hidePassword') : t('showPassword')} title={visible ? t('hidePassword') : t('showPassword')} onClick={() => setVisible((current) => !current)}>{visible ? <EyeOff size={16} /> : <Eye size={16} />}</button></div>
 }
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt(null, t('talkPromptMessage'))}>{t('talkPrompt')}</button><button onClick={() => onPrompt(null, t('planPromptMessage'))}>{t('planPrompt')}</button></div></div> }
 
-function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote, onRetry, onRagFeedback, isSending, t }) {
+function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote, onRetry, onContinue, onRagFeedback, isSending, t }) {
   // Only an enforced refusal replaces the reply. When RAG_REQUIRE_EVIDENCE is off
   // the server still reports `insufficient`, but it also answers normally.
   const insufficientEvidence = Boolean(message.ragStatus?.enforced)
@@ -1058,6 +1083,7 @@ function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote
             : message.role === 'assistant' && !message.failed ? <Suspense fallback={displayContent}><AssistantMarkdown content={displayContent} /></Suspense>
               : displayContent}
       </div>
+      {message.truncated && !message.pending && <p className="reply-truncated" role="status">{t('replyTruncated')}<button type="button" disabled={isSending} onClick={onContinue}>{t('continueReply')}</button></p>}
       {quotedMessage && <div className="message-quote"><Reply size={13} /><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div>}
       {message.role === 'assistant' && message.citations?.length > 0 && <div className="rag-citations"><span>{t('sources')}</span>{message.citations.map((citation) => <span className="rag-citation" title={citation.excerpt} key={`${citation.source}-${citation.chunk_index}`}>{citation.source}</span>)}</div>}
       {!message.pending && <div className="message-actions">
@@ -1078,7 +1104,7 @@ function Composer({ draft, setDraft, sendMessage, isSending, cancelGeneration, q
     textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`
     textarea.style.overflowY = textarea.scrollHeight > 180 ? 'auto' : 'hidden'
   }, [draft])
-  return <div className="composer-wrap">{quotedMessage && <div className="composer-quote"><Reply size={14} /><div><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div><button type="button" className="icon-button" title={t('removeQuote')} onClick={clearQuote}><X size={15} /></button></div>}<div className="composer"><textarea ref={textareaRef} value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key !== 'Enter' || event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); sendMessage() }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('composer')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div></div>
+  return <div className="composer-wrap">{quotedMessage && <div className="composer-quote"><Reply size={14} /><div><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div><button type="button" className="icon-button" title={t('removeQuote')} onClick={clearQuote}><X size={15} /></button></div>}<div className="composer"><textarea ref={textareaRef} value={draft} rows="1" placeholder={t('composer')} onChange={(event) => setDraft(event.target.value)} onKeyDown={(event) => { if (event.key !== 'Enter' || event.shiftKey || isComposingEnter(event)) return; event.preventDefault(); sendMessage() }} />{isSending ? <button type="button" className="send-button stop-button" title={t('stopGenerating')} onClick={cancelGeneration}><Square size={15} fill="currentColor" /></button> : <button type="button" className="send-button" title={t('sendMessage')} aria-label={t('sendMessage')} disabled={!draft.trim()} onClick={() => sendMessage()}><SendHorizontal size={18} /></button>}</div></div>
 }
 
 function PreferencesControls({ theme, setTheme, locale, setLocale, t }) { return <div className="preferences-controls"><label><SunMoon size={15} /><span>{t('theme')}</span><select value={theme} onChange={(event) => setTheme(event.target.value)}><option value="light">{t('light')}</option><option value="dark">{t('dark')}</option><option value="system">{t('system')}</option></select></label><label><Languages size={15} /><span>{t('language')}</span><select value={locale} onChange={(event) => setLocale(event.target.value)}><option value="en">{t('english')}</option><option value="zh">{t('chinese')}</option></select></label></div> }

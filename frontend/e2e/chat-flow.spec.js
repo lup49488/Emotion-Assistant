@@ -12,7 +12,7 @@ async function signIn(page) {
 
 async function sendMessage(page, text) {
   await page.getByPlaceholder('Message Serenova').fill(text)
-  await page.getByTitle('Message Serenova').click()
+  await page.getByRole('button', { name: 'Send message' }).click()
 }
 
 async function enableKnowledge(page) {
@@ -120,7 +120,8 @@ test('email registration completes its verification steps before opening the wor
   await page.route('**/api/v1/auth/email/verify', (route) => route.fulfill({ json: { verified_intent: 'verified-intent-for-e2e-registration' } }))
   await page.route('**/api/v1/auth/register', (route) => {
     registered = true
-    return route.fulfill({ json: { token_type: 'cookie', expires_in: 3600, user_id: 'usr_e2e_registration' } })
+    // Like the real API, a successful registration issues the session and CSRF cookies.
+    return route.fulfill({ json: { token_type: 'cookie', expires_in: 3600, user_id: 'usr_e2e_registration' }, headers: { 'set-cookie': 'chatbot_csrf=e2e-csrf; Path=/; SameSite=Lax' } })
   })
   await page.route('**/api/v1/auth/session', (route) => registered
     ? route.fulfill({ json: { user_id: 'usr_e2e_registration', authentication: 'signed_cookie', can_access_operations: false, can_manage_knowledge: false } })
@@ -444,7 +445,7 @@ test('reply context can be enabled and corrected without showing emotion scores'
   await page.getByLabel('Use gentle context').check()
   await page.getByRole('button', { name: 'More steady' }).click()
   await page.getByPlaceholder('Message Serenova').fill('I need a plan for tomorrow.')
-  await page.getByRole('button', { name: 'Message Serenova' }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('This reply uses a clear, steady approach.')).toBeVisible()
   await expect(page.getByText('Based on your saved choice for future replies.')).toBeVisible()
   await expect(page.getByRole('complementary', { name: 'Reply context' })).not.toContainText(/\b\d+(?:\.\d+)?\s*\/\s*\d+\b|confidence/i)
@@ -456,11 +457,11 @@ test('reply-context correction changes the matched turn and future reply approac
   await page.getByRole('button', { name: 'Reply context' }).click()
   await page.getByLabel('Use gentle context').check()
   await page.getByPlaceholder('Message Serenova').fill('I am overwhelmed today.')
-  await page.getByRole('button', { name: 'Message Serenova' }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
   await page.getByRole('button', { name: 'More like frustrated' }).click()
   await expect(page.getByText('This message was corrected to frustration; future replies will use a steadier approach.')).toBeVisible()
   await page.getByPlaceholder('Message Serenova').fill('What should I do next?')
-  await page.getByRole('button', { name: 'Message Serenova' }).click()
+  await page.getByRole('button', { name: 'Send message' }).click()
   await expect(page.getByText('This reply uses a clear, steady approach.')).toBeVisible()
 })
 

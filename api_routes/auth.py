@@ -88,6 +88,7 @@ def create_auth_router(
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=f"Too many failed verification attempts. Try again in {retry_after} seconds.",
+                headers={"Retry-After": str(retry_after)},
             )
         try:
             verified_intent = email_auth.verify_challenge(request.challenge_id, request.code, request.purpose, request_id(raw_request))
@@ -161,7 +162,12 @@ def create_auth_router(
                 detail=f"Too many failed login attempts. Try again in {retry_after} seconds.",
                 headers={"Retry-After": str(retry_after)},
             )
-        user_id, auth_error = authorize(request.user_id, request.access_key)
+        # Once email sign-up exists, it is the only way to create an account: the
+        # legacy form then signs existing users in and nothing more, so it cannot
+        # be used to skip email verification and Turnstile.
+        user_id, auth_error = authorize(
+            request.user_id, request.access_key, allow_create=not email_auth.enabled()
+        )
         if auth_error:
             record_login_failure(address, request.user_id)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=auth_error)

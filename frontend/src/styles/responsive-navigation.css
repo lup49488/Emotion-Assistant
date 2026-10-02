@@ -296,3 +296,59 @@
   .knowledge-page .knowledge-stat-grid .stat span { font-size: 11px; overflow-wrap: anywhere; }
   .knowledge-page .knowledge-stat-grid .small-stat { font-size: 18px; line-height: 1.25; overflow-wrap: anywhere; }
 }
+
+/* The bottom bar and its menu button appear at 900px, so the drawer the button
+   opens has to work from the same width. Its rules used to start at 720px, which
+   left 721-900px with a button that opened nothing. */
+@media (max-width: 900px) {
+  .sidebar.mobile-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 80;
+    display: flex;
+    width: min(320px, calc(100vw - 44px));
+    max-width: 100vw;
+    min-height: 0;
+    height: 100vh;
+    height: 100dvh;
+    padding: 18px 12px 12px;
+    box-shadow: 16px 0 34px rgba(22, 32, 36, .22);
+    transform: translateX(-104%);
+    transition: transform .2s ease;
+  }
+  .sidebar.mobile-sidebar.open { transform: translateX(0); }
+  .mobile-sidebar-backdrop { position: fixed; inset: 0; z-index: 79; border: 0; background: rgba(16, 25, 28, .44); }
+  .app-shell.mobile-sidebar-open .mobile-sidebar-backdrop { display: block; }
+  .mobile-sidebar-close { display: grid; flex: 0 0 34px; }
+  .mobile-sidebar .new-chat { margin: 18px 0 16px; }
+  .mobile-sidebar .conversation-list { padding-right: 2px; }
+  .mobile-sidebar .preferences-controls { margin-top: 12px; }
+}
+
+/* Readability: workspace chrome used 9-10px labels, which are hard to read on
+   high-density screens. */
+.workspace-brand span, .workspace-topbar-controls, .workspace-topbar-controls button { font-size: 11px; }
+.conversation-sidebar .section-label { font-size: 11px; }
+.mood-photo-field small { font-size: 12px; }
+
+/* Touch screens size icon actions for a fingertip; mouse layouts stay compact. */
+@media (pointer: coarse) {
+  .message-action, .icon-button, .danger-icon { min-width: 44px; min-height: 44px; }
+  .mood-page .mood-chip-row button, .mood-page .mood-period-tabs button { min-height: 44px; }
+}
+
+/* Small phones: actions beside content wrap underneath instead of being
+   clipped off-screen, where they could be neither seen nor scrolled to. */
+@media (max-width: 420px) {
+  .record-row { flex-wrap: wrap; }
+  /* The desktop layout stacks these in a one-column grid beside the record. */
+  .record-row .record-actions { display: flex; width: 100%; flex-wrap: wrap; justify-content: flex-start; gap: 4px; }
+  .panel-title-row, .panel-title-actions { flex-wrap: wrap; }
+}
+
+/* Phones: keep the mood form near the top rather than under a large header. */
+@media (max-width: 720px) {
+  .mood-feature-header { padding-bottom: 14px; }
+  .mood-feature-header h1 { font-size: 26px; }
+  .mood-feature-header p { font-size: 14px; line-height: 1.5; }
+}

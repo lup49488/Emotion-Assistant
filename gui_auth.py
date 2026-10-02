@@ -23,13 +23,15 @@ def _localized(message: str | None, locale: str | None) -> str | None:
     return localize_status_text(message, locale)
 
 
-def authorize(user_id: str, access_key: str, locale: str | None = None) -> tuple[str, str | None]:
-    """校验 user_id + 访问密码；首次使用某个用户名会用输入的密码建立密钥。"""
+def authorize(
+    user_id: str, access_key: str, locale: str | None = None, *, allow_create: bool = True
+) -> tuple[str, str | None]:
+    """校验 user_id + 访问密码；allow_create 时首次使用某个用户名会用输入的密码建立密钥。"""
     user_id = (user_id or "").strip()
     if not user_id:
         return "", _localized(AUTH_REQUIRED_MESSAGE, locale)
     try:
-        ok, message = verify_access(user_id, access_key)
+        ok, message = verify_access(user_id, access_key, allow_create=allow_create)
     except Exception as exc:
         return user_id, _localized(f"访问验证失败：{exc}", locale)
     return user_id, (None if ok else _localized(message, locale))

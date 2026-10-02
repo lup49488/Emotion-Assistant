@@ -163,3 +163,26 @@ def test_admin_recovery_does_not_create_unknown_account(tmp_path, monkeypatch):
     assert ok is False
     assert "尚未设置" in message
     assert has_access_key("missing") is False
+
+
+def test_unknown_user_is_rejected_without_creating_it_when_creation_is_off(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    import auth_store
+
+    monkeypatch.setattr(auth_store, "USERS_DIR", tmp_path, raising=False)
+    calls = []
+    original = auth_store._hash_passphrase
+
+    def counting(passphrase, salt):
+        calls.append(1)
+        return original(passphrase, salt)
+
+    with patch.object(auth_store, "_hash_passphrase", counting):
+        ok, message = verify_access("nobody-here", "whatever-1", allow_create=False)
+
+    assert ok is False
+    assert message == "用户名或访问密码不正确。"
+    assert not auth_store.has_access_key("nobody-here")
+    # The rejection still pays for one hash, like a wrong password does.
+    assert calls == [1]

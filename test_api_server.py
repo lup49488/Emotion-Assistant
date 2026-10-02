@@ -303,15 +303,20 @@ def test_service_error_is_redacted_for_clients_but_kept_in_the_log(monkeypatch, 
     assert "sk-secret" in caplog.text
 
 
-def test_versioned_status_exposes_safe_runtime_metrics():
+def test_public_status_withholds_traffic_metrics_that_operators_still_see(monkeypatch, tmp_path):
+    monkeypatch.setattr(api_server, "API_OPERATIONS_USER_IDS", "api-alice")
     with TestClient(api_server.app, base_url="https://testserver") as client:
-        response = client.get("/api/v1/status")
+        public = {path: client.get(path).json() for path in ("/api/v1/status", "/health", "/health/ready")}
+        headers = _login(client, monkeypatch, tmp_path)
+        dashboard = client.get("/api/v1/operations/dashboard?days=1", headers=headers)
 
-    payload = response.json()
-    assert response.status_code == 200
-    assert payload["api_version"] == "v1"
-    assert "api_key" not in str(payload).lower()
-    assert payload["metrics"]["http_requests_total"] >= 1
+    for path, payload in public.items():
+        # Uptime and request counts would reveal traffic and restart times.
+        assert payload["metrics"] == {}, path
+        assert "api_key" not in str(payload).lower()
+    assert public["/api/v1/status"]["api_version"] == "v1"
+    assert dashboard.status_code == 200
+    assert dashboard.json()["runtime"]["http_requests_total"] >= 1
 
 
 def test_model_provider_catalog_exposes_choices_without_secret_values(monkeypatch, tmp_path):
@@ -1384,3 +1389,52 @@ def test_external_import_requires_authentication(monkeypatch, tmp_path):
             files={"file": ("export.zip", _chatgpt_zip(), "application/zip")},
         )
     assert anonymous.status_code in {401, 403}
+
+
+def test_public_mode_never_serves_the_docs_or_schema():
+    import subprocess
+    import sys
+
+    probe = (
+        "import api_server as a; "
+        "print(a.app.docs_url, a.app.redoc_url, a.app.openapi_url)"
+    )
+    env = {
+        **os.environ,
+        "CHATBOT_SKIP_DOTENV": "1",
+        "API_ENABLE_DOCS": "true",  # asked for, as the deployed server did
+        "API_PUBLIC_MODE": "true",
+        "API_COOKIE_SECURE": "true",
+        "API_SESSION_SECRET": "test-secret-for-public-mode-import-only",
+        "API_TRUSTED_HOSTS": "chat.example.test",
+    }
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, env=env, cwd=Path(__file__).parent)
+
+    assert result.returncode == 0, result.stderr[-800:]
+    assert result.stdout.split() == ["None", "None", "None"]
+
+
+def test_stream_announces_a_reply_cut_at_the_length_limit(monkeypatch, tmp_path):
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+
+    def cut_short(_user_id, _message, **kwargs):
+        yield "The first half of an answer that"
+        kwargs["model_config"].run_metadata.update({"finish_reason": "length", "truncated": True})
+
+    def complete(_user_id, _message, **kwargs):
+        yield "A whole answer."
+        kwargs["model_config"].run_metadata.update({"finish_reason": "stop", "truncated": False})
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        monkeypatch.setattr(api_server, "handle_user_message_stream", cut_short)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "hello"}, headers=headers) as response:
+            truncated = "".join(response.iter_text())
+        monkeypatch.setattr(api_server, "handle_user_message_stream", complete)
+        with client.stream("POST", "/api/v1/chat/stream", json={"message": "hello again"}, headers=headers) as response:
+            finished = "".join(response.iter_text())
+
+    assert 'event: truncated\ndata: {"finish_reason": "length"}' in truncated
+    # It arrives before the stream closes, so the client can still mark the reply.
+    assert truncated.index("event: truncated") < truncated.index("event: done")
+    assert "event: truncated" not in finished

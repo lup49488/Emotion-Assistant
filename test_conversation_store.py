@@ -94,3 +94,23 @@ def test_loading_conversation_context_replaces_short_term_history(tmp_path, monk
             {"role": "user", "content": "old"},
             {"role": "assistant", "content": "new"},
         ]
+
+
+def test_long_titles_end_on_a_word_with_an_ellipsis():
+    from conversation_store import _MAX_TITLE_LENGTH, _title_from_text
+
+    english = "I have a job interview tomorrow morning and I can't stop thinking about everything"
+    chinese = "其实我最担心的是面试官问我为什么离职我上一份工作是因为压力太大才辞职的不知道该怎么说才比较好也不想让对方觉得我抗压能力不行" * 2  # well past the limit, with no spaces to break on
+
+    english_title = _title_from_text(english)
+    chinese_title = _title_from_text(chinese)
+
+    assert english_title.endswith("…")
+    assert len(english_title) <= _MAX_TITLE_LENGTH
+    # The cut lands between words, not inside one.
+    assert english.startswith(english_title[:-1])
+    assert english[len(english_title) - 1] == " "
+    assert chinese_title.endswith("…")
+    assert len(chinese_title) <= _MAX_TITLE_LENGTH
+    assert _title_from_text("Short title") == "Short title"
+    assert _title_from_text("   ") == "New conversation"

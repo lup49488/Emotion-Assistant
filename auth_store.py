@@ -162,6 +162,17 @@ def _new_record(passphrase: str, *, previous_created_at: str | None = None) -> d
     return record
 
 
+_UNKNOWN_USER_SALT = secrets.token_bytes(16)
+_INVALID_CREDENTIALS = "用户名或访问密码不正确。"
+
+
+def _reject_unknown_user(passphrase: str) -> tuple[bool, str]:
+    # Spend the same hashing work as a wrong password so the response time does
+    # not reveal that this user ID has no account.
+    _hash_passphrase(passphrase or " ", _UNKNOWN_USER_SALT)
+    return False, _INVALID_CREDENTIALS
+
+
 def _validate_passphrase_length(passphrase: str) -> str | None:
     if len(passphrase) < MIN_PASSPHRASE_LENGTH:
         return f"访问密码需要至少 {MIN_PASSPHRASE_LENGTH} 位。"
@@ -188,17 +199,20 @@ def access_key_version(user_id: str) -> str | None:
     return str(record.get("updated_at", "")) if record else None
 
 
-def verify_access(user_id: str, passphrase: str) -> tuple[bool, str]:
+def verify_access(user_id: str, passphrase: str, *, allow_create: bool = True) -> tuple[bool, str]:
     """
     首次访问某个 user_id 时会用当前输入的密码为它建立访问密钥；
     此后必须提供同一个密码才能再次读写该用户的数据，
     防止任意输入别人的用户名就看到其对话、情绪和 Mood 记录。
+
+    allow_create=False 时只校验已有账号：未知的 user_id 与密码错误返回同样的
+    提示，并做一次等价的哈希运算，避免通过提示或耗时探测哪些用户名存在。
     """
     user_id = validate_user_id(user_id)
     passphrase = (passphrase or "").strip()
 
     if sqlite_enabled():
-        return _verify_access_sqlite(user_id, passphrase)
+        return _verify_access_sqlite(user_id, passphrase, allow_create=allow_create)
 
     with user_file_lock(user_id):
         try:
@@ -206,6 +220,8 @@ def verify_access(user_id: str, passphrase: str) -> tuple[bool, str]:
         except AccessKeyRecordError as exc:
             return False, str(exc)
         if record is None:
+            if not allow_create:
+                return _reject_unknown_user(passphrase)
             length_error = _validate_passphrase_length(passphrase)
             if length_error:
                 return False, f"首次使用该用户名，请设置至少 {MIN_PASSPHRASE_LENGTH} 位的访问密码。"
@@ -312,9 +328,11 @@ def admin_reset_access_key(
         return True, "管理员恢复成功，访问密码已重置。"
 
 
-def _verify_access_sqlite(user_id: str, passphrase: str) -> tuple[bool, str]:
+def _verify_access_sqlite(user_id: str, passphrase: str, *, allow_create: bool = True) -> tuple[bool, str]:
     with user_file_lock(user_id):
         record = _sqlite_record(user_id)
+        if record is None and not allow_create:
+            return _reject_unknown_user(passphrase)
         if record is None:
             length_error = _validate_passphrase_length(passphrase)
             if length_error:

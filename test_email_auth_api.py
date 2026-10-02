@@ -142,3 +142,60 @@ def test_email_service_outages_do_not_count_against_the_caller(tmp_path, monkeyp
         statuses = [_verify(client, "unknown-challenge-0000", "00000000", "203.0.113.7").status_code for _ in range(4)]
 
     assert statuses == [503, 503, 503, 503]
+
+
+def _legacy_client(tmp_path, monkeypatch, *, email_auth_enabled: bool):
+    import auth_rate_limit
+
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setenv("STORAGE_BACKEND", "sqlite")
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "data" / "chatbot.db"))
+    monkeypatch.setattr(config, "EMAIL_AUTH_ENABLED", email_auth_enabled)
+    monkeypatch.setattr(config, "EMAIL_AUTH_PROVIDER", "resend")
+    monkeypatch.setattr(config, "EMAIL_AUTH_FROM", "Serenova <no-reply@example.test>")
+    monkeypatch.setattr(config, "EMAIL_AUTH_RESEND_API_KEY", "test-email-secret")
+    monkeypatch.setattr(config, "EMAIL_AUTH_TURNSTILE_REQUIRED", False)
+    monkeypatch.setattr(config, "EMAIL_AUTH_LEGACY_LOGIN_ENABLED", True)
+    monkeypatch.setattr(auth_rate_limit, "_FAILURES", {})
+
+
+def test_legacy_sign_in_cannot_create_accounts_once_email_sign_up_exists(tmp_path, monkeypatch):
+    from auth_store import has_access_key, verify_access
+
+    _legacy_client(tmp_path, monkeypatch, email_auth_enabled=True)
+    assert verify_access("existing-user", "existing-pass")[0]  # an account from before
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        unknown = client.post("/api/v1/auth/login", json={"user_id": "brand-new-user", "access_key": "any-password-1"})
+        wrong = client.post("/api/v1/auth/login", json={"user_id": "existing-user", "access_key": "wrong-pass-1"})
+        existing = client.post("/api/v1/auth/login", json={"user_id": "existing-user", "access_key": "existing-pass"})
+
+    assert unknown.status_code == 401
+    assert not has_access_key("brand-new-user")
+    # An unknown ID must be indistinguishable from a wrong password.
+    assert unknown.json()["message"] == wrong.json()["message"]
+    assert existing.status_code == 200
+
+
+def test_legacy_sign_in_still_registers_when_email_sign_up_is_off(tmp_path, monkeypatch):
+    from auth_store import has_access_key
+
+    _legacy_client(tmp_path, monkeypatch, email_auth_enabled=False)
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        created = client.post("/api/v1/auth/login", json={"user_id": "first-time-user", "access_key": "first-pass-1"})
+
+    # Without email sign-up this form is the only way in, so it keeps creating accounts.
+    assert created.status_code == 200
+    assert has_access_key("first-time-user")
+
+
+def test_verify_limit_response_carries_retry_after(tmp_path, monkeypatch):
+    _verify_client(tmp_path, monkeypatch, limit=1)
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        _verify(client, "made-up-challenge-0000", "00000000", "203.0.113.7")
+        blocked = _verify(client, "made-up-challenge-0001", "00000000", "203.0.113.7")
+
+    assert blocked.status_code == 429
+    assert int(blocked.headers["Retry-After"]) > 0

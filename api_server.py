@@ -29,6 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import JSONResponse, StreamingResponse
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from api_contracts import (
@@ -97,7 +98,7 @@ from memory_store import (
     undo_memory_event,
 )
 from model_warmup import start_api_background_warmup, warmup_status
-from observability import chat_finished, chat_streaming_first_token, get_request_id, request_finished, request_started, reset_request_id, runtime_metrics, set_request_id
+from observability import chat_finished, chat_streaming_first_token, get_request_id, request_finished, request_started, reset_request_id, set_request_id
 from observability_store import observability_summary, record_http_event
 from operations_store import operations_dashboard
 from provider_registry import provider_catalog
@@ -165,13 +166,21 @@ async def lifespan(_: FastAPI):
     yield
 
 
+# API_ENABLE_DOCS defaults to true for local development. A public deployment
+# never serves the docs or schema, whatever its environment says.
+_DOCS_ENABLED = API_ENABLE_DOCS and not API_PUBLIC_MODE
+if API_ENABLE_DOCS and API_PUBLIC_MODE:
+    logger.warning("event=api_docs_suppressed reason=public_mode")
+
 app = FastAPI(
     title="Emotion-Aware Chat API",
     version=API_VERSION,
     description="Versioned API contract for the Emotion-Aware Chat application.",
     lifespan=lifespan,
-    docs_url="/docs" if API_ENABLE_DOCS else None,
-    redoc_url="/redoc" if API_ENABLE_DOCS else None,
+    docs_url="/docs" if _DOCS_ENABLED else None,
+    redoc_url="/redoc" if _DOCS_ENABLED else None,
+    # The schema maps every route, so it follows the same switch as the docs page.
+    openapi_url="/openapi.json" if _DOCS_ENABLED else None,
 )
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=_trusted_hosts())
 app.add_middleware(
@@ -312,12 +321,19 @@ def _error_code(status_code: int) -> str:
     }.get(status_code, "request_failed")
 
 
-@app.exception_handler(HTTPException)
-async def http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+# Registered on Starlette's class, which FastAPI's HTTPException subclasses, so the
+# router's own 404/405 responses use the same error shape as raised exceptions.
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(_: Request, exc: StarletteHTTPException) -> JSONResponse:
     message = exc.detail if isinstance(exc.detail, str) else "Request failed."
     details = exc.detail if isinstance(exc.detail, list) else None
     payload = ApiError(code=_error_code(exc.status_code), message=message, details=details)
-    return JSONResponse(status_code=exc.status_code, content=payload.model_dump(exclude_none=True))
+    # Keep headers such as Retry-After and WWW-Authenticate that callers rely on.
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=payload.model_dump(exclude_none=True),
+        headers=getattr(exc, "headers", None),
+    )
 
 
 @app.exception_handler(ServiceError)
@@ -482,7 +498,9 @@ def _health_payload() -> dict[str, Any]:
         "status": overall,
         "storage_backend": storage_backend(),
         "components": components,
-        "metrics": runtime_metrics(),
+        # Request and chat counters reveal traffic and restart times to anyone.
+        # Operators read them from the authenticated operations dashboard.
+        "metrics": {},
     }
 
 
@@ -623,12 +641,22 @@ def _quoted_message_context(user_id: str, request: ChatRequest) -> dict[str, str
     }
 
 
+def _stream_and_report(
+    config: Any, sink: dict[str, Any] | None, chunks: Generator[str, None, None]
+) -> Generator[str, None, None]:
+    """Relay the chunks, then copy how the provider finished into ``sink``."""
+    yield from chunks
+    if sink is not None:
+        sink.update(config.run_metadata)
+
+
 def _chat_chunks(
     user_id: str,
     request: ChatRequest,
     knowledge_context: str | None = None,
     quoted_message: dict[str, str] | None = None,
     reply_basis_sink: list[dict[str, str | bool]] | None = None,
+    run_metadata_sink: dict[str, Any] | None = None,
 ) -> Generator[str, None, None]:
     if request.retry_last_response:
         remove_last_exchange(user_id, request.conversation_id, request.message)
@@ -643,7 +671,7 @@ def _chat_chunks(
         max_new_tokens=request.max_new_tokens,
         user_id=user_id,
     )
-    yield from handle_user_message_stream(
+    yield from _stream_and_report(config, run_metadata_sink, handle_user_message_stream(
         user_id,
         request.message,
         model_config=config,
@@ -656,7 +684,7 @@ def _chat_chunks(
         quoted_message=quoted_message,
         reply_to_message_id=request.quoted_message_id,
         on_reply_basis=reply_basis_sink.append if reply_basis_sink is not None else None,
-    )
+    ))
 
 
 def _knowledge_bundle(request: ChatRequest) -> dict[str, Any]:
@@ -818,7 +846,8 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             # 始终复用 bundle 已检索出的上下文（与非流式 /chat 一致），
             # 避免 use_knowledge=True 但检索为空时在 chatbot 内部重复检索。
             reply_basis: list[dict[str, str | bool]] = []
-            generator = _chat_chunks(user_id, request, bundle["context"], quoted_message, reply_basis) if quoted_message else _chat_chunks(user_id, request, bundle["context"], reply_basis_sink=reply_basis)
+            run_metadata: dict[str, Any] = {}
+            generator = _chat_chunks(user_id, request, bundle["context"], quoted_message, reply_basis, run_metadata_sink=run_metadata) if quoted_message else _chat_chunks(user_id, request, bundle["context"], reply_basis_sink=reply_basis, run_metadata_sink=run_metadata)
             first_token_recorded = False
             async for chunk in iterate_in_threadpool(generator):
                 if not first_token_recorded:
@@ -833,6 +862,10 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
                 yield f"event: citations\ndata: {json.dumps({'trace_id': trace_id, 'citations': bundle['citations']}, ensure_ascii=False)}\n\n"
             if reply_basis:
                 yield f"event: response_basis\ndata: {json.dumps(reply_basis[-1], ensure_ascii=False)}\n\n"
+            if run_metadata.get("truncated"):
+                # The provider stopped at the length limit. Say so rather than
+                # letting a reply that ends mid-sentence pass as complete.
+                yield f"event: truncated\ndata: {json.dumps({'finish_reason': run_metadata.get('finish_reason')})}\n\n"
             if request.show_memory_receipt:
                 receipt = await run_in_threadpool(_memory_receipt, user_id)
                 yield f"event: receipt\ndata: {json.dumps({'text': receipt}, ensure_ascii=False)}\n\n"

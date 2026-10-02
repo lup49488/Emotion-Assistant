@@ -34,6 +34,14 @@ export function csrfHeaders() {
   return token ? { 'X-CSRF-Token': decodeURIComponent(token) } : {}
 }
 
+// The CSRF cookie is issued together with the session and, unlike it, is readable
+// by script. Without it there is no session to restore, so the probe (and the
+// 401 a first visit would log) can be skipped.
+export function hasSessionCookie() {
+  const cookieName = `${import.meta.env.VITE_CSRF_COOKIE_NAME || 'chatbot_csrf'}=`
+  return document.cookie.split('; ').some((item) => item.startsWith(cookieName))
+}
+
 export async function readJson(path, options) {
   return (await apiFetch(path, options)).json()
 }

@@ -167,3 +167,26 @@
 .rag-citation { max-width: 200px; overflow: hidden; padding: 3px 7px; border:1px solid var(--line); border-radius:4px; background:var(--surface); color:var(--accent-deep); text-overflow: ellipsis; white-space: nowrap; }
 .rag-evidence-status { margin: 0; padding: 10px 12px; border-left:3px solid var(--warning); background:var(--warning-wash); color:var(--warning-ink); font-size: 13px; line-height: 1.55; }
 .message-action.selected { color:var(--accent-deep); background:var(--accent-wash); }
+
+/* Sign-in: language switch, password visibility, and the privacy analytics note. */
+.login-language { display: flex; justify-content: flex-end; gap: 6px; margin: 0 0 18px; }
+.login-language button { min-height: 32px; padding: 0 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 700; }
+.login-language button[aria-pressed='true'] { border-color: var(--accent); background: var(--accent-wash); color: var(--accent-deep); }
+.password-field { position: relative; }
+.password-field input { width: 100%; padding-right: 44px; }
+.password-toggle { position: absolute; right: 4px; bottom: 4px; width: 36px; height: 35px; display: grid; place-items: center; border: 0; border-radius: 4px; background: transparent; color: var(--muted); }
+.password-toggle:hover, .password-toggle:focus-visible { color: var(--accent-deep); }
+.privacy-analytics-note { margin-top: 6px; color: var(--muted); font-size: 12px; }
+
+@media (max-width: 720px) {
+  /* iOS Safari zooms the page into any field under 16px when it takes focus. The
+     :not() parts lift the specificity above the class rules that set 12px. */
+  :is(input, textarea, select):not([type='checkbox']):not([type='radio']):not([type='range']) { font-size: 16px; }
+  /* Keep the form above the fold so the keyboard does not cover the submit button. */
+  .login-intro { min-height: auto; padding: 22px 24px 18px; gap: 10px; }
+  .login-intro h1 { font-size: 26px; margin-bottom: 6px; }
+  .login-intro p { font-size: 14px; line-height: 1.5; }
+  .login-intro .intro-mark { display: none; }
+  .login-form { margin: 22px auto 32px; }
+  .login-mode-tabs button, .login-secondary, .login-language button { min-height: 44px; }
+}
