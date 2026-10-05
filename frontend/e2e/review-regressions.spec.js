@@ -27,6 +27,20 @@ test('a reply cut at the length limit says so and can be continued', async ({ pa
   await expect(page.getByText('Please continue from where you stopped.')).toBeVisible()
 })
 
+test('regenerating a truncated reply clears the old truncation notice', async ({ page }) => {
+  await signIn(page)
+  await page.getByPlaceholder('Message Serenova').fill('Trigger truncated reply')
+  await page.getByRole('button', { name: 'Send message' }).click()
+
+  const truncation = page.getByRole('status').filter({ hasText: 'reached the length limit' })
+  await expect(truncation).toBeVisible()
+  await page.getByTitle('Regenerate').click()
+
+  await expect(page.getByText('Regenerated answer')).toBeVisible()
+  await expect(truncation).toHaveCount(0)
+  await expect(page.getByRole('button', { name: 'Continue' })).toHaveCount(0)
+})
+
 test('the send button and the message box have different names', async ({ page }) => {
   await signIn(page)
   await expect(page.getByRole('button', { name: 'Send message' })).toBeVisible()

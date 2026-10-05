@@ -352,3 +352,33 @@
   .mood-feature-header h1 { font-size: 26px; }
   .mood-feature-header p { font-size: 14px; line-height: 1.5; }
 }
+
+/* iOS can shrink and pan the visual viewport for the software keyboard without
+   resizing the CSS layout viewport. Keep the workspace aligned to that region. */
+.app-shell { height: var(--serenova-visual-viewport-height, 100dvh); }
+.app-shell.visual-viewport-active {
+  position: fixed;
+  inset: var(--serenova-visual-viewport-offset-top, 0px) 0 auto;
+  width: 100%;
+  height: var(--serenova-visual-viewport-height);
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 900px) {
+  .app-shell.visual-viewport-active { height: var(--serenova-visual-viewport-height); }
+  .app-shell.visual-viewport-active .workspace-frame,
+  .app-shell.visual-viewport-active .workspace-content { height: 100%; min-height: 0; }
+  .app-shell.visual-viewport-active.chat-workspace .chat-panel {
+    height: calc(var(--serenova-visual-viewport-height) - 72px);
+    min-height: 0;
+    max-height: calc(var(--serenova-visual-viewport-height) - 72px);
+  }
+}
+
+@media (max-width: 720px) {
+  .app-shell.visual-viewport-active.chat-workspace .chat-panel {
+    height: calc(var(--serenova-visual-viewport-height) - 124px);
+    max-height: calc(var(--serenova-visual-viewport-height) - 124px);
+  }
+}

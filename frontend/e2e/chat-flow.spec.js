@@ -675,6 +675,67 @@ test('tablet-height chat keeps long message history separate from the composer',
   }
 })
 
+test('tablet chat follows the visual viewport while the software keyboard is open', async ({ page }) => {
+  await page.addInitScript(() => {
+    const viewport = new EventTarget()
+    Object.assign(viewport, {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      offsetLeft: 0,
+      offsetTop: 0,
+      pageLeft: 0,
+      pageTop: 0,
+      scale: 1,
+    })
+    Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport })
+    window.setTestVisualViewport = (height, offsetTop) => {
+      viewport.height = height
+      viewport.offsetTop = offsetTop
+      viewport.dispatchEvent(new Event('resize'))
+      viewport.dispatchEvent(new Event('scroll'))
+    }
+  })
+  await page.setViewportSize({ width: 1180, height: 820 })
+  await signIn(page)
+
+  for (let index = 0; index < 6; index += 1) {
+    const text = `Keyboard viewport history ${index}`
+    await sendMessage(page, text)
+    await expect(page.locator('.message.user').getByText(text, { exact: true })).toBeVisible()
+  }
+
+  await page.getByPlaceholder('Message Serenova').focus()
+  await page.evaluate(() => window.setTestVisualViewport(470, 96))
+  await expect(page.locator('.app-shell')).toHaveClass(/visual-viewport-active/)
+
+  const bounds = await page.locator('.app-shell').evaluate((shell) => {
+    const panel = shell.querySelector('.chat-panel')
+    const messages = panel?.querySelector('.messages')
+    const composer = panel?.querySelector('.composer-wrap')
+    if (!panel || !messages || !composer) return null
+    const shellBounds = shell.getBoundingClientRect()
+    const messageBounds = messages.getBoundingClientRect()
+    const composerBounds = composer.getBoundingClientRect()
+    return {
+      shellTop: shellBounds.top,
+      shellBottom: shellBounds.bottom,
+      messageBottom: messageBounds.bottom,
+      composerTop: composerBounds.top,
+      composerBottom: composerBounds.bottom,
+      messageScrolls: messages.scrollHeight > messages.clientHeight,
+    }
+  })
+  expect(bounds).not.toBeNull()
+  expect(bounds.shellTop).toBeCloseTo(96, 0)
+  expect(bounds.shellBottom).toBeCloseTo(566, 0)
+  expect(bounds.messageBottom).toBeLessThanOrEqual(bounds.composerTop + 1)
+  expect(bounds.composerBottom).toBeLessThanOrEqual(bounds.shellBottom + 1)
+  expect(bounds.messageScrolls).toBe(true)
+
+  await page.evaluate(() => window.setTestVisualViewport(window.innerHeight, 0))
+  await expect(page.locator('.app-shell')).not.toHaveClass(/visual-viewport-active/)
+})
+
 test('mobile bottom navigation keeps chat primary and opens each workspace without overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await signIn(page)

@@ -196,7 +196,7 @@ const server = http.createServer(async (request, response) => {
       response.write('event: error\ndata: {"code":"provider_timeout","retryable":true}\n\n')
       return response.end('event: done\ndata: {}\n\n')
     }
-    if (body.message === 'Trigger truncated reply') {
+    if (body.message === 'Trigger truncated reply' && !body.retry_last_response) {
       response.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' })
       response.write('event: chunk\ndata: {"text":"The first half of an answer that"}\n\n')
       response.write('event: truncated\ndata: {"finish_reason":"length"}\n\n')

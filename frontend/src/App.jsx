@@ -130,6 +130,7 @@ function App() {
   const [toneOpen, setToneOpen] = useState(false)
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false)
   const [mobileMoreOpen, setMobileMoreOpen] = useState(false)
+  const [visualViewportActive, setVisualViewportActive] = useState(false)
   const [options, setOptions] = useState({
     provider: '', model: '', baseUrl: '', apiKey: '',
     useKnowledge: false, useStyle: true, stylePrefix: '', profile: 'balanced',
@@ -188,6 +189,48 @@ function App() {
   useEffect(() => {
     messageEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isSending])
+
+  useEffect(() => {
+    const viewport = window.visualViewport
+    const shell = document.querySelector('.app-shell')
+    if (!session?.user_id || !viewport || !shell) {
+      setVisualViewportActive(false)
+      return undefined
+    }
+
+    let keyboardOpen = false
+    let layoutHeight = Math.max(window.innerHeight, document.documentElement.clientHeight)
+    const updateViewport = () => {
+      const height = Math.round(viewport.height)
+      const activeElement = document.activeElement
+      const editing = activeElement instanceof HTMLElement
+        && activeElement.matches('input, textarea, select, [contenteditable="true"]')
+      if (height > layoutHeight) layoutHeight = height
+      const keyboardReducedViewport = layoutHeight - height > 120
+      keyboardOpen = keyboardReducedViewport && (editing || keyboardOpen)
+
+      shell.style.setProperty('--serenova-visual-viewport-height', `${height}px`)
+      shell.style.setProperty('--serenova-visual-viewport-offset-top', `${Math.round(viewport.offsetTop)}px`)
+      setVisualViewportActive((active) => active === keyboardOpen ? active : keyboardOpen)
+    }
+
+    const handleFocusChange = () => window.requestAnimationFrame(updateViewport)
+    updateViewport()
+    viewport.addEventListener('resize', updateViewport)
+    viewport.addEventListener('scroll', updateViewport)
+    window.addEventListener('resize', updateViewport)
+    document.addEventListener('focusin', handleFocusChange)
+    document.addEventListener('focusout', handleFocusChange)
+    return () => {
+      viewport.removeEventListener('resize', updateViewport)
+      viewport.removeEventListener('scroll', updateViewport)
+      window.removeEventListener('resize', updateViewport)
+      document.removeEventListener('focusin', handleFocusChange)
+      document.removeEventListener('focusout', handleFocusChange)
+      shell.style.removeProperty('--serenova-visual-viewport-height')
+      shell.style.removeProperty('--serenova-visual-viewport-offset-top')
+    }
+  }, [session?.user_id])
 
   useEffect(() => {
     if (!isSending) { setIsSlow(false); return undefined }
@@ -418,7 +461,7 @@ function App() {
         ])
       } else {
         setMessages((current) => current.map((item, index) => index === retryMessageIndex
-          ? { ...item, content: '', pending: true, failed: false }
+          ? { ...item, content: '', pending: true, failed: false, truncated: false }
           : item))
       }
       const response = await apiFetch('/api/v1/chat/stream', {
@@ -645,7 +688,7 @@ function App() {
   }
 
   return (
-    <main className={`app-shell ${isChatView ? 'chat-workspace' : 'feature-workspace'} ${settingsOpen ? 'settings-open' : 'settings-closed'} ${whyOpen ? 'context-open' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${mobileMoreOpen ? 'mobile-more-open' : ''}`}>
+    <main className={`app-shell ${isChatView ? 'chat-workspace' : 'feature-workspace'} ${settingsOpen ? 'settings-open' : 'settings-closed'} ${whyOpen ? 'context-open' : ''} ${mobileSidebarOpen ? 'mobile-sidebar-open' : ''} ${mobileMoreOpen ? 'mobile-more-open' : ''} ${visualViewportActive ? 'visual-viewport-active' : ''}`}>
       <NavigationRail activeView={activeView} navigateWorkspace={navigateWorkspace} t={t} visibleNavigation={visibleNavigation} />
       <section className="workspace-frame">
         <WorkspaceTopbar locale={locale} setLocale={setLocale} setTheme={setTheme} t={t} theme={theme} />

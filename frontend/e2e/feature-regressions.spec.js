@@ -39,6 +39,35 @@ test('the current day loads as an edit and a text draft survives workspace navig
   await expect(page.getByRole('button', { name: 'Update check-in' })).toBeVisible()
 })
 
+test('mood check-in keeps edits made while the save request is in flight', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-07-29T12:00:00Z'))
+  let beginSave
+  let finishSave
+  const saveStarted = new Promise((resolve) => { beginSave = resolve })
+  const holdSave = new Promise((resolve) => { finishSave = resolve })
+  await page.route('**/api/v1/mood/checkins', async (route) => {
+    if (route.request().method() === 'POST') {
+      beginSave()
+      await holdSave
+    }
+    await route.continue()
+  })
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  const note = page.locator('.checkin-form').getByLabel('Note')
+  await note.fill('Submitted version')
+  await page.locator('.checkin-form-actions .primary-button').click()
+  await saveStarted
+
+  await note.fill('Newer unsaved edit')
+  const saveResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes('/api/v1/mood/checkins'))
+  finishSave()
+  await saveResponse
+
+  await expect(note).toHaveValue('Newer unsaved edit')
+  await expect(page.locator('.record-row').filter({ hasText: 'Submitted version' })).toBeVisible()
+})
+
 test('knowledge uploads reset the file chooser after the asynchronous response', async ({ page }) => {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
