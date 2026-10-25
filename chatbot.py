@@ -9,7 +9,7 @@ from typing import Any, Generator
 import goemotions_local as goemotions
 import memory_store as _memory_store
 import session_store as _session_store
-from conversation_store import append_exchange
+from conversation_store import append_exchange, get_conversation
 from config import BASE_DIR as CONFIG_BASE_DIR
 from config import CHAT_MODEL_NAME, DEFAULT_LLM_PROVIDER, KNOWLEDGE_ENABLED, SHORT_TERM_LIMIT, STYLE_ENABLED
 from config import USERS_DIR as CONFIG_USERS_DIR
@@ -134,6 +134,26 @@ class SessionStore(_session_store.SessionStore):
         return super().session(user_id)
 
 
+class ConversationArchiveError(RuntimeError):
+    """The reply was generated but could not be durably archived."""
+
+
+def _turn_history(state: SessionState, conversation_id: str | None, user_text: str, retry: bool) -> list[dict[str, str]]:
+    if conversation_id:
+        record = get_conversation(state.user_id, conversation_id)
+        history = [
+            {"role": str(item["role"]), "content": str(item["content"])}
+            for item in (record or {}).get("messages", [])
+            if item.get("role") in {"user", "assistant"} and str(item.get("content", "")).strip()
+        ]
+    else:
+        history = list(state.history)
+    if (retry and len(history) >= 2 and history[-2].get("role") == "user"
+            and history[-1].get("role") == "assistant" and history[-2].get("content") == user_text):
+        history = history[:-2]
+    return history[-SHORT_TERM_LIMIT:]
+
+
 def chat(
     state: SessionState,
     user_text: str,
@@ -147,12 +167,19 @@ def chat(
     quoted_message: dict[str, str] | None = None,
     reply_to_message_id: str | None = None,
     on_reply_basis: Callable[[dict[str, str | bool]], None] | None = None,
+    retry_last_response: bool = False,
+    exchange_id: str | None = None,
 ) -> Generator[str, None, None]:
     user_text = user_text.strip()
     if not user_text:
         yield "请输入需要分析或回复的内容。"
         return
 
+    # Snapshot the selected thread without changing working memory until the
+    # turn succeeds. Failed/cancelled regeneration retains the old exchange.
+    prior_history = _turn_history(state, conversation_id, user_text, retry_last_response)
+    if mood_checkin is not None:
+        prior_history = []
     mood_note = str((mood_checkin or {}).get("note", "")).strip()
     safety_text = "\n".join(part for part in (user_text, mood_note) if part)
     lang = detect_lang(safety_text)
@@ -161,8 +188,9 @@ def chat(
 
     crisis_reply = check_crisis(state, safety_text, emo_label, emo_score, lang)
     if crisis_reply is not None:
+        _archive_exchange(state.user_id, conversation_id, user_text, crisis_reply, reply_to_message_id=reply_to_message_id, replace_last=retry_last_response, exchange_id=exchange_id)
+        state.history = prior_history
         update_short_term(state, user_text, crisis_reply)
-        _archive_exchange(state.user_id, conversation_id, user_text, crisis_reply, reply_to_message_id=reply_to_message_id)
         yield crisis_reply
         return
 
@@ -195,7 +223,6 @@ def chat(
     # A Mood Check-in reflection starts a new, record-scoped conversation.
     # Carrying earlier working history into it can make the model answer about
     # a previously selected date instead of the record the user just chose.
-    prior_history = [] if mood_checkin is not None else state.history
     full_messages = [messages[0], *prior_history, messages[1]]
 
     collected_chunks: list[str] = []
@@ -236,8 +263,9 @@ def chat(
     if tool_result is not None:
         yield "\n" + tool_result
 
+    _archive_exchange(state.user_id, conversation_id, user_text, final_reply, reply_to_message_id=reply_to_message_id, replace_last=retry_last_response, exchange_id=exchange_id)
+    state.history = prior_history
     update_short_term(state, user_text, final_reply)
-    _archive_exchange(state.user_id, conversation_id, user_text, final_reply, reply_to_message_id=reply_to_message_id)
 
 
 def _archive_exchange(
@@ -247,11 +275,14 @@ def _archive_exchange(
     assistant_text: str,
     *,
     reply_to_message_id: str | None = None,
+    replace_last: bool = False,
+    exchange_id: str | None = None,
 ) -> None:
     try:
-        append_exchange(user_id, conversation_id, user_text, assistant_text, reply_to_message_id=reply_to_message_id)
-    except Exception:
+        append_exchange(user_id, conversation_id, user_text, assistant_text, reply_to_message_id=reply_to_message_id, replace_last=replace_last, exchange_id=exchange_id)
+    except Exception as exc:
         logger.exception("Failed to archive chat exchange. user=%s", user_id)
+        raise ConversationArchiveError("The reply was generated but could not be saved.") from exc
 
 
 def chat_sync(
@@ -267,6 +298,8 @@ def chat_sync(
     quoted_message: dict[str, str] | None = None,
     reply_to_message_id: str | None = None,
     on_reply_basis: Callable[[dict[str, str | bool]], None] | None = None,
+    retry_last_response: bool = False,
+    exchange_id: str | None = None,
 ) -> str:
     return "".join(chat(
         state,
@@ -281,6 +314,8 @@ def chat_sync(
         quoted_message=quoted_message,
         reply_to_message_id=reply_to_message_id,
         on_reply_basis=on_reply_basis,
+        retry_last_response=retry_last_response,
+        exchange_id=exchange_id,
     ))
 
 
@@ -329,6 +364,8 @@ def handle_user_message_stream(
     quoted_message: dict[str, str] | None = None,
     reply_to_message_id: str | None = None,
     on_reply_basis: Callable[[dict[str, str | bool]], None] | None = None,
+    retry_last_response: bool = False,
+    exchange_id: str | None = None,
 ) -> Generator[str, None, None]:
     with session_store.session(user_id) as state:
         yield from chat(
@@ -344,6 +381,8 @@ def handle_user_message_stream(
             quoted_message=quoted_message,
             reply_to_message_id=reply_to_message_id,
             on_reply_basis=on_reply_basis,
+            retry_last_response=retry_last_response,
+            exchange_id=exchange_id,
         )
 
 
@@ -353,6 +392,8 @@ def crisis_precheck(
     conversation_id: str | None = None,
     *,
     reply_to_message_id: str | None = None,
+    retry_last_response: bool = False,
+    exchange_id: str | None = None,
 ) -> str | None:
     """Run the crisis safety layer for callers that will not run a full turn.
 
@@ -371,8 +412,10 @@ def crisis_precheck(
         crisis_reply = check_crisis(state, user_text, emo_label, emo_score, lang)
         if crisis_reply is None:
             return None
+        history = _turn_history(state, conversation_id, user_text, retry_last_response)
+        _archive_exchange(user_id, conversation_id, user_text, crisis_reply, reply_to_message_id=reply_to_message_id, replace_last=retry_last_response, exchange_id=exchange_id)
+        state.history = history
         update_short_term(state, user_text, crisis_reply)
-        _archive_exchange(user_id, conversation_id, user_text, crisis_reply, reply_to_message_id=reply_to_message_id)
     return crisis_reply
 
 

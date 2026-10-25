@@ -584,26 +584,25 @@ def test_chat_stream_emits_retryable_empty_model_response(monkeypatch, tmp_path)
 
 
 def test_chat_retry_replaces_the_last_saved_exchange(monkeypatch, tmp_path):
-    def fake_stream(user_id, message, **kwargs):
-        reply = "Retried reply"
-        append_exchange(user_id, kwargs.get("conversation_id"), message, reply)
-        yield reply
-
-    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+    import chatbot
+    monkeypatch.setattr(chatbot, "stream_model_response", lambda *_: iter(["Retried reply"]))
+    monkeypatch.setattr(chatbot, "safe_analyze", lambda *_: ("neutral", 0.0))
+    monkeypatch.setattr(chatbot, "check_crisis", lambda *_: None)
+    monkeypatch.setattr(chatbot, "smart_memory_filter", lambda *_, **__: None)
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
         created = client.post("/api/v1/conversations", json={"title": "Retry"}, headers=headers)
         conversation_id = created.json()["conversation"]["id"]
         first = client.post(
             "/api/v1/chat",
-            json={"message": "Try again", "conversation_id": conversation_id, "show_memory_receipt": False},
+            json={"message": "Try again", "conversation_id": conversation_id, "show_memory_receipt": False, "use_style": False},
             headers=headers,
         )
         retried = client.post(
             "/api/v1/chat",
             json={
                 "message": "Try again", "conversation_id": conversation_id,
-                "retry_last_response": True, "show_memory_receipt": False,
+                "retry_last_response": True, "show_memory_receipt": False, "use_style": False,
             },
             headers=headers,
         )
@@ -645,6 +644,76 @@ def test_chat_quote_uses_the_owned_stored_message_as_background(monkeypatch, tmp
     assert captured["reply_to_message_id"] == source["id"]
     assert 'event: archived' in body
     assert detail["messages"][-2]["reply_to_message_id"] == source["id"]
+
+
+def test_chat_stream_reports_archive_failure_after_preserving_generated_text(monkeypatch, tmp_path):
+    import chatbot
+
+    def fail_after_generation(*_args, **_kwargs):
+        yield "Generated answer"
+        raise chatbot.ConversationArchiveError("archive unavailable")
+
+    monkeypatch.setattr(api_server, "_chat_chunks", lambda *_args, **_kwargs: fail_after_generation())
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        created = client.post("/api/v1/conversations", json={"title": "Archive failure"}, headers=headers)
+        conversation_id = created.json()["conversation"]["id"]
+        with client.stream(
+            "POST", "/api/v1/chat/stream",
+            json={"message": "Keep this answer", "conversation_id": conversation_id},
+            headers=headers,
+        ) as response:
+            body = "".join(response.iter_text())
+
+    assert response.status_code == 200
+    assert '"text": "Generated answer"' in body
+    assert '"code":"conversation_save_failed"' in body
+
+
+def test_stream_confirms_commit_if_generator_cleanup_fails(monkeypatch, tmp_path):
+    import uuid
+
+    def saved_then_failed(user_id, request, *_args, **_kwargs):
+        yield "Saved replacement"
+        append_exchange(user_id, request.conversation_id, request.message, "Saved replacement", exchange_id=str(request.turn_id))
+        raise RuntimeError("working memory cleanup failed")
+
+    monkeypatch.setattr(api_server, "_chat_chunks", saved_then_failed)
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        conversation_id = client.post("/api/v1/conversations", json={"title": "Saved turn"}, headers=headers).json()["conversation"]["id"]
+        response = client.post(
+            "/api/v1/chat/stream",
+            json={"message": "Question", "conversation_id": conversation_id, "turn_id": str(uuid.uuid4())},
+            headers=headers,
+        )
+    assert response.status_code == 200
+    assert response.text.index("event: archived") < response.text.index("event: error")
+
+
+def test_archive_retry_is_owned_and_idempotent(monkeypatch, tmp_path):
+    import uuid
+    from conversation_store import get_conversation
+
+    with TestClient(api_server.app, base_url="https://testserver") as client:
+        headers = _login(client, monkeypatch, tmp_path)
+        created = client.post("/api/v1/conversations", json={"title": "Recover save"}, headers=headers)
+        conversation_id = created.json()["conversation"]["id"]
+        payload = {
+            "turn_id": str(uuid.uuid4()),
+            "user_text": "User question",
+            "assistant_text": "Generated reply",
+        }
+        first = client.post(f"/api/v1/conversations/{conversation_id}/archive", json=payload, headers=headers)
+        second = client.post(f"/api/v1/conversations/{conversation_id}/archive", json=payload, headers=headers)
+        stored = get_conversation("api-alice", conversation_id)
+        assert client.post(
+            f"/api/v1/conversations/not-owned/archive", json=payload, headers=headers,
+        ).status_code == 404
+
+    assert first.status_code == second.status_code == 200
+    assert first.json() == second.json()
+    assert [message["content"] for message in stored["messages"]] == ["User question", "Generated reply"]
 
 
 def test_chat_quote_rejects_a_message_outside_the_current_conversation(monkeypatch, tmp_path):
@@ -1135,10 +1204,15 @@ def test_retry_rolls_back_short_term_memory(monkeypatch, tmp_path):
 
     monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
 
-    def fake_stream(user_id, message, **kwargs):
+    prompts = []
+    def fake_stream(messages, _config):
+        prompts.append(messages)
         yield "ok"
 
-    monkeypatch.setattr(api_server, "handle_user_message_stream", fake_stream)
+    monkeypatch.setattr(chatbot, "stream_model_response", fake_stream)
+    monkeypatch.setattr(chatbot, "safe_analyze", lambda *_: ("neutral", 0.0))
+    monkeypatch.setattr(chatbot, "check_crisis", lambda *_: None)
+    monkeypatch.setattr(chatbot, "smart_memory_filter", lambda *_, **__: None)
 
     with TestClient(api_server.app, base_url="https://testserver") as client:
         headers = _login(client, monkeypatch, tmp_path)
@@ -1150,7 +1224,7 @@ def test_retry_rolls_back_short_term_memory(monkeypatch, tmp_path):
 
         response = client.post(
             "/api/v1/chat",
-            json={"message": "重试这条", "retry_last_response": True, "show_memory_receipt": False},
+            json={"message": "重试这条", "retry_last_response": True, "show_memory_receipt": False, "use_style": False},
             headers=headers,
         )
         with chatbot.session_store.session("api-alice") as state:
@@ -1159,6 +1233,7 @@ def test_retry_rolls_back_short_term_memory(monkeypatch, tmp_path):
     assert response.status_code == 200
     # 失败的一轮已从短期记忆移除，重试上下文不再包含旧的错误回复。
     assert {"role": "assistant", "content": "模型调用失败：boom"} not in history_after
+    assert prompts[0][1:-1] == []
 
 
 def test_style_preference_round_trip_and_chat_fallback(monkeypatch, tmp_path):

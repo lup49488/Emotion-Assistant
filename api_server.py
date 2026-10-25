@@ -66,13 +66,13 @@ from api_routes.conversations import create_conversations_router
 from api_routes.mood import create_mood_router
 from api_routes.preferences import create_preferences_router
 from api_routes.system import create_system_router
-from chatbot import crisis_precheck, handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
+from chatbot import ConversationArchiveError, _archive_exchange, crisis_precheck, handle_user_message_stream, latest_memory_receipt, make_model_config, session_store
 from emotion import detect_lang
 from auth_store import access_key_version
 from email_auth_store import EmailAuthService
 from config import API_ENABLE_DOCS, API_MAX_REQUEST_BYTES, API_OPERATIONS_USER_IDS, API_PUBLIC_MODE, API_RAG_ADMIN_USER_IDS, API_TRUSTED_HOSTS, API_TRUST_PROXY_HEADERS, BASE_DIR, DEFAULT_LLM_PROVIDER, RAG_REQUIRE_EVIDENCE
 from api_usage_store import list_usage_events, usage_summary
-from conversation_store import append_exchange, get_conversation_message, last_exchange_message_ids, remove_last_exchange
+from conversation_store import append_exchange, exchange_message_ids, get_conversation_message, last_exchange_message_ids
 from export_store import build_user_export_payload
 from knowledge_store import (
     SUPPORTED_EXTENSIONS,
@@ -658,9 +658,6 @@ def _chat_chunks(
     reply_basis_sink: list[dict[str, str | bool]] | None = None,
     run_metadata_sink: dict[str, Any] | None = None,
 ) -> Generator[str, None, None]:
-    if request.retry_last_response:
-        remove_last_exchange(user_id, request.conversation_id, request.message)
-        _rollback_short_term_exchange(user_id, request.message)
     config = make_model_config(
         provider=request.provider or DEFAULT_LLM_PROVIDER,
         model=request.model,
@@ -684,6 +681,8 @@ def _chat_chunks(
         quoted_message=quoted_message,
         reply_to_message_id=request.quoted_message_id,
         on_reply_basis=reply_basis_sink.append if reply_basis_sink is not None else None,
+        retry_last_response=request.retry_last_response,
+        exchange_id=str(request.turn_id) if request.turn_id else None,
     ))
 
 
@@ -744,18 +743,22 @@ def _resolve_insufficient_evidence(
     it runs explicitly here — a distressed message must never be answered with an
     unrelated "no sources" notice.
     """
-    if request.retry_last_response:
-        remove_last_exchange(user_id, request.conversation_id, request.message)
-        _rollback_short_term_exchange(user_id, request.message)
     crisis_reply = crisis_precheck(
         user_id, request.message, request.conversation_id, reply_to_message_id=request.quoted_message_id,
+        retry_last_response=request.retry_last_response,
+        exchange_id=str(request.turn_id) if request.turn_id else None,
     )
     if crisis_reply is not None:
         return crisis_reply, True
     notice = _insufficient_evidence_notice(request.message)
-    append_exchange(
-        user_id, request.conversation_id, request.message, notice, reply_to_message_id=request.quoted_message_id,
+    _archive_exchange(
+        user_id, request.conversation_id, request.message, notice,
+        reply_to_message_id=request.quoted_message_id,
+        replace_last=request.retry_last_response,
+        exchange_id=str(request.turn_id) if request.turn_id else None,
     )
+    if request.retry_last_response and not request.conversation_id:
+        _rollback_short_term_exchange(user_id, request.message)
     return notice, False
 
 
@@ -878,17 +881,28 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             chat_finished(False, duration_ms, streaming=True)
             logger.info("event=chat_cancelled request_id=%s streaming=true duration_ms=%s", request_id, duration_ms)
             raise
-        except ServiceError as exc:
-            duration_ms = int((time.perf_counter() - started) * 1000)
-            chat_finished(False, duration_ms, streaming=True)
-            logger.warning("event=chat_failed request_id=%s code=%s detail=%s streaming=true", request_id, exc.code, exc, exc_info=exc)
-            error = ApiError(code=exc.code, message="模型服务暂时不可用，请稍后重试。", retryable=exc.retryable)
-            yield f"event: error\ndata: {error.model_dump_json()}\n\n"
-        except Exception:
+        except Exception as exc:
+            # A generator may fail during working-memory cleanup after commit,
+            # before it can return and emit the normal archive confirmation.
+            if request.turn_id and request.conversation_id:
+                try:
+                    ids = exchange_message_ids(str(request.turn_id))
+                    saved = await run_in_threadpool(
+                        get_conversation_message, user_id, request.conversation_id, ids["assistant_message_id"],
+                    )
+                    if saved:
+                        yield f"event: archived\ndata: {json.dumps(ids)}\n\n"
+                except Exception:
+                    logger.warning("event=archive_confirmation_unavailable request_id=%s", request_id, exc_info=True)
             duration_ms = int((time.perf_counter() - started) * 1000)
             chat_finished(False, duration_ms, streaming=True)
             logger.exception("event=chat_failed request_id=%s provider=%s streaming=true", request_id, request.provider or DEFAULT_LLM_PROVIDER)
-            error = ApiError(code="generation_failed", message="模型服务暂时不可用，请稍后重试。", retryable=True)
+            if isinstance(exc, ConversationArchiveError):
+                error = ApiError(code="conversation_save_failed", message="The reply was generated but could not be saved. Keep this text and retry saving it.", retryable=True)
+            elif isinstance(exc, ServiceError):
+                error = ApiError(code=exc.code, message="模型服务暂时不可用，请稍后重试。", retryable=exc.retryable)
+            else:
+                error = ApiError(code="generation_failed", message="模型服务暂时不可用，请稍后重试。", retryable=True)
             yield f"event: error\ndata: {error.model_dump_json()}\n\n"
         finally:
             # Closing propagates GeneratorExit through chatbot's session context,

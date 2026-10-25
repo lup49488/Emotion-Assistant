@@ -411,6 +411,7 @@ function App() {
   async function sendMessage(retryIndex = null, directMessage = null, moodCheckin = null, forceNewConversation = false) {
     const retryMessageIndex = Number.isInteger(retryIndex) ? retryIndex : null
     const retryUserMessage = retryMessageIndex === null ? null : messages[retryMessageIndex - 1]
+    const previousReply = retryMessageIndex === null ? null : messages[retryMessageIndex]
     const moodCheckinContext = retryMessageIndex === null
       ? moodCheckin
       : retryUserMessage?.moodCheckin || null
@@ -430,6 +431,9 @@ function App() {
     const restoreDraftOnSetupFailure = retryMessageIndex === null && directMessage === null
     const originalDraft = draft
     let userMessageAdded = false
+    const turnId = crypto.randomUUID()
+    let receivedArchived = false
+    let streamedReply = ''
     if (retryMessageIndex === null) {
       setDraft('')
       setQuotedMessage(null)
@@ -461,7 +465,7 @@ function App() {
         ])
       } else {
         setMessages((current) => current.map((item, index) => index === retryMessageIndex
-          ? { ...item, content: '', pending: true, failed: false, truncated: false }
+          ? { ...item, content: '', pending: true, failed: false, truncated: false, archiveRecovery: null, pendingArchiveReply: null }
           : item))
       }
       const response = await apiFetch('/api/v1/chat/stream', {
@@ -488,6 +492,7 @@ function App() {
             note: moodCheckinContext.note || '',
           } : null,
           quoted_message_id: quoteForRequest?.id || null,
+          turn_id: turnId,
           retry_last_response: retryMessageIndex !== null,
         }),
       })
@@ -497,8 +502,9 @@ function App() {
       let receivedError = ''
       let receivedText = false
       let receivedRagStatus = false
+      let receivedDone = false
 
-      while (true) {
+      while (!receivedDone) {
         const { done, value } = await reader.read()
         if (done) break
         buffer += decoder.decode(value, { stream: true })
@@ -509,13 +515,16 @@ function App() {
           const data = event.match(/^data: (.+)$/m)?.[1]
           if (!eventName || !data) continue
           const payload = JSON.parse(data)
+          if (eventName === 'done') receivedDone = true
           if (eventName === 'chunk') {
             receivedText ||= Boolean(payload.text)
+            streamedReply += payload.text || ''
             setMessages((current) => current.map((item, index) => index === current.length - 1
               ? { ...item, content: item.content + payload.text, pending: false }
               : item))
           }
           if (eventName === 'archived') {
+            receivedArchived = true
             setMessages((current) => current.map((item, index) => {
               if (index === current.length - 2) return { ...item, id: payload.user_message_id }
               if (index === current.length - 1) return { ...item, id: payload.assistant_message_id }
@@ -547,15 +556,39 @@ function App() {
         }
       }
       if (receivedError) throw new ApiRequestError(receivedError.message || receivedError.code, receivedError)
+      if (!receivedDone) throw new ApiRequestError(t('error_incomplete_stream'), { code: 'incomplete_stream', retryable: true })
       if (!receivedText && !receivedRagStatus) throw new Error(t('emptyResponse'))
-      await refreshConversations()
+      // A sidebar refresh failure must not turn a completed reply into a failed
+      // regeneration and restore a version the server has already replaced.
+      await refreshConversations().catch(() => {})
     } catch (error) {
       const cancelled = error.name === 'AbortError'
       const errorCode = error.code || 'generation_failed'
       const retryable = Boolean(error.retryable) || errorCode === 'generation_failed'
-      setNotice(cancelled ? t('requestCancelled') : errorText(errorCode))
+      const archiveFailed = errorCode === 'conversation_save_failed'
+      setNotice(cancelled ? t('requestCancelled') : receivedArchived ? t('replySavedWithWarning') : archiveFailed ? t('replyNotSaved') : errorText(errorCode))
       setMessages((current) => {
         const responseIndex = retryMessageIndex ?? current.length - 1
+        if (receivedArchived) {
+          return current.map((item, index) => index === responseIndex ? { ...item, pending: false, failed: false } : item)
+        }
+        if (archiveFailed) {
+          const archiveRecovery = {
+            conversationId, turnId, userText: text, assistantText: streamedReply,
+            replyToMessageId: quoteForRequest?.id || null, replaceLast: retryMessageIndex !== null,
+          }
+          if (previousReply?.id && previousReply.content && !previousReply.failed) {
+            return current.map((item, index) => index === responseIndex
+              ? { ...previousReply, pendingArchiveReply: streamedReply, archiveRecovery }
+              : item)
+          }
+          return current.map((item, index) => index === responseIndex
+            ? { ...item, content: streamedReply, pending: false, failed: false, archiveRecovery }
+            : item)
+        }
+        if (previousReply?.id && previousReply.content && !previousReply.failed) {
+          return current.map((item, index) => index === responseIndex ? previousReply : item)
+        }
         return current.map((item, index) => index === responseIndex
           ? { ...item, content: item.content || (cancelled ? '' : errorText(errorCode)), pending: false, failed: !cancelled, retryable: !cancelled && retryable, errorCode }
           : item).filter((item, index) => !(cancelled && index === responseIndex && item.role === 'assistant' && !item.content))
@@ -567,6 +600,42 @@ function App() {
     } finally {
       setIsSending(false)
       activeRequestRef.current = null
+    }
+  }
+
+  async function retryArchive(index, message) {
+    const recovery = message.archiveRecovery
+    if (!recovery || isSending) return
+    setIsSending(true)
+    try {
+      const result = await readJson(`/api/v1/conversations/${recovery.conversationId}/archive`, {
+        method: 'POST', headers: csrfHeaders(), body: JSON.stringify({
+          turn_id: recovery.turnId,
+          user_text: recovery.userText,
+          assistant_text: recovery.assistantText,
+          reply_to_message_id: recovery.replyToMessageId,
+          replace_last: recovery.replaceLast,
+        }),
+      })
+      const ids = result.message_ids || {}
+      setMessages((current) => current.map((item, itemIndex) => {
+        if (itemIndex === index) return {
+          ...item,
+          ...(item.pendingArchiveReply ? { content: item.pendingArchiveReply } : {}),
+          id: ids.assistant_message_id || item.id,
+          pendingArchiveReply: null,
+          archiveRecovery: null,
+          failed: false,
+        }
+        if (itemIndex === index - 1 && item.role === 'user') return { ...item, id: ids.user_message_id || item.id }
+        return item
+      }))
+      setNotice('')
+      await refreshConversations().catch(() => {})
+    } catch {
+      setNotice(t('archiveRetryFailed'))
+    } finally {
+      setIsSending(false)
     }
   }
 
@@ -754,7 +823,7 @@ function App() {
         <header className="chat-header"><button className="mobile-chat-menu icon-button" title={t('openSidebar')} aria-label={t('openSidebar')} onClick={() => setMobileSidebarOpen(true)}><Menu size={22} /></button><div className="chat-title-block"><h1>{activeTitle}</h1><div className="chat-summary-row"><div className="tone-control"><button className={`conversation-summary tone-summary ${toneOpen ? 'active' : ''}`} aria-expanded={toneOpen} onClick={() => { setSettingsOpen(false); setToneOpen((open) => !open) }}><Sparkles size={13} />{t('conversationTone')}{t('labelSeparator')}{activeToneLabel}<ChevronDown size={13} /></button>{toneOpen && <ToneMenu activeStyle={options.stylePrefix} onClose={() => setToneOpen(false)} onSelect={saveStylePrefix} styleName={styleName} styles={visibleStylePrefixes} t={t} />}</div><button className="conversation-summary model-summary" aria-label={t('modelResponseSettings')} onClick={() => { setToneOpen(false); setWhyOpen(false); setSettingsOpen(true) }}><Settings2 size={13} />{activeModelLabel} · {activeToneLabel}{options.useKnowledge && <> · {t('knowledgeShort')}</>}<ChevronDown size={13} /></button></div></div><div className="chat-header-actions"><button className={`icon-button context-toggle ${whyOpen ? 'active' : ''}`} title={t('replyContext')} aria-label={t('replyContext')} onClick={() => { setSettingsOpen(false); setToneOpen(false); setWhyOpen((open) => !open) }}><Info size={18} /></button><button className="icon-button settings-toggle" title={settingsOpen ? t('hidePreferences') : t('modelResponseSettings')} onClick={() => { setWhyOpen(false); setToneOpen(false); setSettingsOpen((open) => !open) }}>{settingsOpen ? <ChevronLeft size={18} /> : <Settings2 size={18} />}</button></div></header>
         <div className="messages" aria-live="polite">
           {!hasMessages && <Welcome onPrompt={sendMessage} t={t} />}
-          {messages.map((message, index) => <Message key={message.id || `${message.role}-${index}`} message={message} index={index} quotedMessage={message.quotedMessage || messagesById.get(message.reply_to_message_id)} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onQuote={quoteMessage} onRetry={sendMessage} onContinue={() => sendMessage(null, t('continuePrompt'))} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
+          {messages.map((message, index) => <Message key={message.id || `${message.role}-${index}`} message={message} index={index} quotedMessage={message.quotedMessage || messagesById.get(message.reply_to_message_id)} canRegenerate={message.role === 'assistant' && index === messages.length - 1 && messages[index - 1]?.role === 'user'} onCopy={copyReply} onQuote={quoteMessage} onRetry={sendMessage} onRetryArchive={retryArchive} onContinue={() => sendMessage(null, t('continuePrompt'))} onRagFeedback={submitRagFeedback} isSending={isSending} t={t} />)}
           <div ref={messageEndRef} />
         </div>
         {notice && <div className="notice" role="alert">{notice}<button onClick={() => setNotice('')} title="Dismiss"><X size={15} /></button></div>}
@@ -1110,12 +1179,12 @@ function PasswordField({ label, value, onChange, autoComplete, minLength, t }) {
 
 function Welcome({ onPrompt, t }) { return <div className="welcome"><div className="welcome-icon"><Sparkles size={24} /></div><h2>{t('welcomeTitle')}</h2><p>{t('welcomeText')}</p><div className="prompt-row"><button onClick={() => onPrompt(null, t('talkPromptMessage'))}>{t('talkPrompt')}</button><button onClick={() => onPrompt(null, t('planPromptMessage'))}>{t('planPrompt')}</button></div></div> }
 
-function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote, onRetry, onContinue, onRagFeedback, isSending, t }) {
+function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote, onRetry, onRetryArchive, onContinue, onRagFeedback, isSending, t }) {
   // Only an enforced refusal replaces the reply. When RAG_REQUIRE_EVIDENCE is off
   // the server still reports `insufficient`, but it also answers normally.
   const insufficientEvidence = Boolean(message.ragStatus?.enforced)
   const displayContent = insufficientEvidence ? '' : message.content
-  const canRetry = !insufficientEvidence && (message.failed ? message.retryable : canRegenerate && Boolean(displayContent))
+  const canRetry = !message.archiveRecovery && !insufficientEvidence && (message.failed ? message.retryable : canRegenerate && Boolean(displayContent))
 
   return <article className={`message ${message.role} ${message.failed ? 'failed' : ''}`}>
     <div className="message-avatar">{message.role === 'assistant' ? <Sparkles size={15} /> : 'You'}</div>
@@ -1127,6 +1196,7 @@ function Message({ message, index, quotedMessage, canRegenerate, onCopy, onQuote
               : displayContent}
       </div>
       {message.truncated && !message.pending && <p className="reply-truncated" role="status">{t('replyTruncated')}<button type="button" disabled={isSending} onClick={onContinue}>{t('continueReply')}</button></p>}
+      {message.archiveRecovery && <p className="reply-truncated" role="status">{message.pendingArchiveReply ? t('replacementNotSaved') : t('replyNotSaved')} <button type="button" disabled={isSending} onClick={() => onRetryArchive(index, message)}>{t('retrySave')}</button></p>}
       {quotedMessage && <div className="message-quote"><Reply size={13} /><span>{quotedMessage.role === 'assistant' ? t('quotedAssistant') : t('quotedUser')}</span><p>{quotedMessage.content}</p></div>}
       {message.role === 'assistant' && message.citations?.length > 0 && <div className="rag-citations"><span>{t('sources')}</span>{message.citations.map((citation) => <span className="rag-citation" title={citation.excerpt} key={`${citation.source}-${citation.chunk_index}`}>{citation.source}</span>)}</div>}
       {!message.pending && <div className="message-actions">

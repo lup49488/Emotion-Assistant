@@ -2362,6 +2362,105 @@
         }
       }
     },
+    "/api/v1/conversations/{conversation_id}/archive": {
+      "post": {
+        "summary": "Archive Exchange",
+        "operationId": "archive_exchange_api_v1_conversations__conversation_id__archive_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "X-CSRF-Token",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Csrf-Token"
+            }
+          },
+          {
+            "name": "chatbot_csrf",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Csrf"
+            }
+          },
+          {
+            "name": "chatbot_session",
+            "in": "cookie",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Chatbot Session"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConversationArchiveRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "title": "Response Archive Exchange Api V1 Conversations  Conversation Id  Archive Post"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/memory": {
       "get": {
         "summary": "Memory Snapshot",
@@ -4564,6 +4663,18 @@
             ],
             "title": "Conversation Id"
           },
+          "turn_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "uuid"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Turn Id"
+          },
           "quoted_message_id": {
             "anyOf": [
               {
@@ -4671,6 +4782,52 @@
           "contract_version"
         ],
         "title": "ContractInfoResponse"
+      },
+      "ConversationArchiveRequest": {
+        "properties": {
+          "turn_id": {
+            "type": "string",
+            "format": "uuid",
+            "title": "Turn Id"
+          },
+          "user_text": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "User Text"
+          },
+          "assistant_text": {
+            "type": "string",
+            "maxLength": 100000,
+            "minLength": 1,
+            "title": "Assistant Text"
+          },
+          "reply_to_message_id": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply To Message Id"
+          },
+          "replace_last": {
+            "type": "boolean",
+            "title": "Replace Last",
+            "default": false
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "turn_id",
+          "user_text",
+          "assistant_text"
+        ],
+        "title": "ConversationArchiveRequest"
       },
       "ConversationCreateRequest": {
         "properties": {

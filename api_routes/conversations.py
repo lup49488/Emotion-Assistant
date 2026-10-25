@@ -8,11 +8,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from api_contracts import (
     ConversationCreateRequest,
+    ConversationArchiveRequest,
     ConversationListResponse,
     ConversationRenameRequest,
     ConversationResponse,
 )
-from conversation_store import create_conversation, delete_conversation, get_conversation, list_conversations, rename_conversation
+from conversation_store import append_exchange, create_conversation, delete_conversation, exchange_message_ids, get_conversation, list_conversations, rename_conversation
 
 
 def create_conversations_router(
@@ -39,6 +40,22 @@ def create_conversations_router(
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation was not found.")
         return {"conversation": result}
+
+    @router.post("/api/v1/conversations/{conversation_id}/archive")
+    def archive_exchange(
+        conversation_id: str,
+        request: ConversationArchiveRequest,
+        user_id: str = Depends(csrf_protected_user),
+    ) -> dict[str, Any]:
+        if get_conversation(user_id, conversation_id) is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Conversation was not found.")
+        append_exchange(
+            user_id, conversation_id, request.user_text, request.assistant_text,
+            reply_to_message_id=request.reply_to_message_id,
+            replace_last=request.replace_last,
+            exchange_id=str(request.turn_id),
+        )
+        return {"message_ids": exchange_message_ids(str(request.turn_id))}
 
     @router.put("/api/v1/conversations/{conversation_id}", response_model=ConversationResponse)
     def rename_saved_conversation(

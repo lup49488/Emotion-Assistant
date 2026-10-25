@@ -39,6 +39,34 @@ test('the current day loads as an edit and a text draft survives workspace navig
   await expect(page.getByRole('button', { name: 'Update check-in' })).toBeVisible()
 })
 
+test('mood check-in loading does not replace edits made before records arrive', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-07-29T12:00:00Z'))
+  let beginLoad
+  let finishLoad
+  const loadStarted = new Promise((resolve) => { beginLoad = resolve })
+  const holdLoad = new Promise((resolve) => { finishLoad = resolve })
+  await page.route('**/api/v1/mood/checkins', async (route) => {
+    if (route.request().method() === 'GET') {
+      beginLoad()
+      await holdLoad
+    }
+    await route.continue()
+  })
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await loadStarted
+
+  const form = page.locator('.checkin-form')
+  await form.getByLabel('Mood').fill('User started before load')
+  await form.getByLabel('Note').fill('Keep this newer draft')
+  finishLoad()
+
+  await expect(form.getByLabel('Mood')).toHaveValue('User started before load')
+  await expect(form.getByLabel('Note')).toHaveValue('Keep this newer draft')
+  await expect(page.getByRole('heading', { name: 'Editing the check-in for 2026-07-29' })).toBeVisible()
+  await expect(form.getByRole('button', { name: 'Update check-in' })).toBeVisible()
+})
+
 test('mood check-in keeps edits made while the save request is in flight', async ({ page }) => {
   await page.clock.setFixedTime(new Date('2026-07-29T12:00:00Z'))
   let beginSave
@@ -60,12 +88,61 @@ test('mood check-in keeps edits made while the save request is in flight', async
   await saveStarted
 
   await note.fill('Newer unsaved edit')
+  await expect(note).toHaveValue('Newer unsaved edit')
   const saveResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes('/api/v1/mood/checkins'))
   finishSave()
   await saveResponse
 
   await expect(note).toHaveValue('Newer unsaved edit')
   await expect(page.locator('.record-row').filter({ hasText: 'Submitted version' })).toBeVisible()
+})
+
+test('a late mood save response cannot change the newly selected record', async ({ page }) => {
+  await page.clock.setFixedTime(new Date('2026-07-29T12:00:00Z'))
+  let beginSave
+  let finishSave
+  const saveStarted = new Promise((resolve) => { beginSave = resolve })
+  const holdSave = new Promise((resolve) => { finishSave = resolve })
+  await page.route('**/api/v1/mood/checkins', async (route) => {
+    if (route.request().method() === 'GET') {
+      const response = await route.fetch()
+      const payload = await response.json()
+      payload.records.push({
+        date: '2026-07-28', mood: 'historical calm', intensity: 2,
+        note: 'Historical entry', images: [],
+      })
+      return route.fulfill({ response, json: payload })
+    }
+    if (route.request().method() === 'POST') {
+      beginSave()
+      await holdSave
+    }
+    await route.continue()
+  })
+  await signIn(page)
+  await page.getByRole('button', { name: 'Mood check-in' }).click()
+  await page.getByLabel('Note').fill('Saved today while switching')
+  await page.locator('.checkin-form-actions .primary-button').click()
+  await saveStarted
+
+  await page.getByTitle('Edit check-in 2026-07-28').click()
+  const form = page.locator('.checkin-form')
+  await expect(page.getByRole('heading', { name: 'Editing the check-in for 2026-07-28' })).toBeVisible()
+  await expect(form.getByLabel('Mood')).toHaveValue('historical calm')
+  await expect(form.getByLabel('Note')).toHaveValue('Historical entry')
+
+  const saveResponse = page.waitForResponse((response) => response.request().method() === 'POST' && response.url().includes('/api/v1/mood/checkins'))
+  finishSave()
+  await saveResponse
+
+  await expect(page.getByRole('heading', { name: 'Editing the check-in for 2026-07-28' })).toBeVisible()
+  await expect(form.getByLabel('Mood')).toHaveValue('historical calm')
+  await expect(form.getByLabel('Note')).toHaveValue('Historical entry')
+  await form.getByLabel('Note').fill('Updated historical entry')
+  const historicalSave = page.waitForRequest((request) => request.method() === 'POST' && request.url().includes('/api/v1/mood/checkins'))
+  await form.getByRole('button', { name: 'Update check-in' }).click()
+  const request = await historicalSave
+  expect(JSON.parse(request.postData()).checkin_date).toBe('2026-07-28')
 })
 
 test('knowledge uploads reset the file chooser after the asynchronous response', async ({ page }) => {

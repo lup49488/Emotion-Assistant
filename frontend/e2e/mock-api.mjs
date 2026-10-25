@@ -115,6 +115,22 @@ const server = http.createServer(async (request, response) => {
     conversations.push(item)
     return send(response, 200, { conversation: item })
   }
+  const archiveMatch = url.pathname.match(/^\/api\/v1\/conversations\/([^/]+)\/archive$/)
+  if (request.method === 'POST' && archiveMatch) {
+    const item = conversation(archiveMatch[1])
+    if (!item) return send(response, 404, { detail: 'Conversation was not found.' })
+    const userId = body.turn_id.replaceAll('-', '').slice(0, 32)
+    const assistantId = `${userId.slice(0, 31)}a`
+    const userMessage = { id: userId, role: 'user', content: body.user_text, reply_to_message_id: body.reply_to_message_id || null }
+    const assistantMessage = { id: assistantId, role: 'assistant', content: body.assistant_text }
+    const existing = item.messages.find((message) => message.id === userId)
+    if (!existing) {
+      if (body.replace_last && item.messages.length >= 2) item.messages.splice(-2)
+      item.messages.push(userMessage, assistantMessage)
+      item.message_count = item.messages.length
+    }
+    return send(response, 200, { message_ids: { user_message_id: userId, assistant_message_id: assistantId } })
+  }
   if (request.method === 'PUT' && /^\/api\/v1\/conversations\/[^/]+$/.test(url.pathname)) {
     const item = conversation(url.pathname.split('/').at(-1))
     if (!item) return send(response, 404, { detail: 'Conversation was not found.' })

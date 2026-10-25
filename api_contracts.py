@@ -7,6 +7,7 @@ version (or an explicitly documented compatibility period).
 from __future__ import annotations
 
 from typing import Any, Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -183,8 +184,17 @@ class ChatRequest(ContractModel):
     # The server places it in a bounded, non-instructional prompt context.
     mood_checkin: MoodCheckinContext | None = None
     conversation_id: str | None = Field(default=None, max_length=64)
+    turn_id: UUID | None = None
     quoted_message_id: str | None = Field(default=None, max_length=64)
     retry_last_response: bool = False
+
+
+class ConversationArchiveRequest(ContractModel):
+    turn_id: UUID
+    user_text: str = Field(min_length=1, max_length=20_000)
+    assistant_text: str = Field(min_length=1, max_length=100_000)
+    reply_to_message_id: str | None = Field(default=None, max_length=64)
+    replace_last: bool = False
 
 
 class RagEvidenceStatus(ContractModel):

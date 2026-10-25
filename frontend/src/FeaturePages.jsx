@@ -175,6 +175,7 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
   const emptyForm = { date: null, mood: '', intensity: 3, note: '' }
   const [form, setForm] = useState(emptyForm)
   const formRevisionRef = useRef(0)
+  const selectionRevisionRef = useRef(0)
   const [imageFiles, setImageFiles] = useState([])
   const [imagePreviews, setImagePreviews] = useState([])
   const imagePreviewsRef = useRef([])
@@ -197,8 +198,12 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
   useEffect(() => { refresh() }, [refresh])
   useEffect(() => {
     if (loading || moodDraftHydrated) return
+    const todayRecord = records.find((record) => record.date === localCalendarDate())
+    const hasUserEdits = formRevisionRef.current > 0
     const savedDraft = moodDraftKey ? sessionStorage.getItem(moodDraftKey) : null
-    if (savedDraft) {
+    if (hasUserEdits) {
+      setForm((current) => ({ ...current, date: current.date || todayRecord?.date || null }))
+    } else if (savedDraft) {
       try {
         const parsed = JSON.parse(savedDraft)
         if (parsed && typeof parsed === 'object') setForm((current) => ({ ...current, ...parsed }))
@@ -206,7 +211,6 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
         sessionStorage.removeItem(moodDraftKey)
       }
     } else {
-      const todayRecord = records.find((record) => record.date === localCalendarDate())
       if (todayRecord) setForm({ date: todayRecord.date, mood: todayRecord.mood, intensity: todayRecord.intensity, note: todayRecord.note || '' })
     }
     setMoodDraftHydrated(true)
@@ -260,6 +264,7 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
   const saveCheckin = async () => {
     if (saving) return null
     const submittedRevision = formRevisionRef.current
+    const submittedSelectionRevision = selectionRevisionRef.current
     setSaving(true)
     setError('')
     try {
@@ -268,9 +273,12 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
       const { record, error: uploadError } = await uploadImages(result.record)
       const savedForm = { date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }
       const hasNewerEdits = formRevisionRef.current !== submittedRevision
+      const selectionChanged = selectionRevisionRef.current !== submittedSelectionRevision
       // A saved check-in and its photos are separate requests. Keep the saved
       // date and failed files together so retrying cannot write into today.
-      if (uploadError) {
+      if (selectionChanged) {
+        setSavedRecord(null)
+      } else if (uploadError) {
         setSavedRecord(null)
         setForm((current) => hasNewerEdits ? { ...current, date: record.date } : savedForm)
       } else {
@@ -279,10 +287,10 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
         if (!hasNewerEdits && moodDraftKey) sessionStorage.removeItem(moodDraftKey)
       }
       await refresh()
-      if (uploadError) setError(uploadError)
+      if (uploadError && !selectionChanged) setError(uploadError)
       return uploadError ? null : record
     } catch (requestError) {
-      setError(requestError.message)
+      if (selectionRevisionRef.current === submittedSelectionRevision) setError(requestError.message)
       return null
     } finally {
       setSaving(false)
@@ -293,11 +301,12 @@ function MoodCheckinContent({ t, onReflect, locale, userId }) {
     await saveCheckin()
   }
   const saveAndReflect = async () => {
+    const submittedSelectionRevision = selectionRevisionRef.current
     const record = await saveCheckin()
-    if (record) onReflect(record)
+    if (record && selectionRevisionRef.current === submittedSelectionRevision) onReflect(record)
   }
-  const startEdit = (record) => { setError(''); setSavedRecord(null); clearSelectedImages(); updateForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
-  const cancelEdit = () => { setSavedRecord(null); clearSelectedImages(); updateForm(emptyForm); if (moodDraftKey) sessionStorage.removeItem(moodDraftKey) }
+  const startEdit = (record) => { selectionRevisionRef.current += 1; setError(''); setSavedRecord(null); clearSelectedImages(); updateForm({ date: record.date, mood: record.mood, intensity: record.intensity, note: record.note || '' }) }
+  const cancelEdit = () => { selectionRevisionRef.current += 1; setSavedRecord(null); clearSelectedImages(); updateForm(emptyForm); if (moodDraftKey) sessionStorage.removeItem(moodDraftKey) }
   const remove = async (date) => { if (!window.confirm(t('deleteMoodCheckinConfirm').replace('{date}', date))) return; try { await apiFetch(`/api/v1/mood/checkins/${date}`, { method: 'DELETE', headers: csrfHeaders() }); if (form.date === date) cancelEdit(); await refresh() } catch (requestError) { setError(requestError.message) } }
   const removeImage = async (record, image) => { try { await apiFetch(`/api/v1/mood/checkins/${encodeURIComponent(record.date)}/images/${encodeURIComponent(image.id)}`, { method: 'DELETE', headers: csrfHeaders() }); await refresh() } catch (requestError) { setError(requestError.message) } }
   const chartPoints = filterMoodTrendRecords(records, trendDays)

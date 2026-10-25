@@ -90,6 +90,15 @@ def _normalized_messages(conversation_id: str, messages: list[dict[str, Any]]) -
     return [_normalized_message(conversation_id, position, message) for position, message in enumerate(messages)]
 
 
+def exchange_message_ids(exchange_id: str) -> dict[str, str]:
+    """Return stable IDs so an uncertain archive write can be retried safely."""
+    normalized = str(uuid.UUID(str(exchange_id)))
+    return {
+        "user_message_id": uuid.uuid5(uuid.NAMESPACE_URL, f"serenova-exchange:{normalized}:user").hex,
+        "assistant_message_id": uuid.uuid5(uuid.NAMESPACE_URL, f"serenova-exchange:{normalized}:assistant").hex,
+    }
+
+
 def create_conversation(user_id: str, title: str = "New conversation") -> dict[str, Any]:
     user_id = validate_user_id(user_id)
     timestamp = _now()
@@ -184,23 +193,57 @@ def append_exchange(
     assistant_text: str,
     *,
     reply_to_message_id: str | None = None,
+    replace_last: bool = False,
+    exchange_id: str | None = None,
 ) -> str:
     record = ensure_conversation(user_id, conversation_id, user_text)
     conversation_id = str(record["id"])
     timestamp = _now()
     quote_id = str(reply_to_message_id or "").strip() or None
+    stable_ids = exchange_message_ids(exchange_id) if exchange_id else None
     messages = [
         {
-            "id": uuid.uuid4().hex,
+            "id": stable_ids["user_message_id"] if stable_ids else uuid.uuid4().hex,
             "role": "user",
             "content": str(user_text),
             "created_at": timestamp,
             "reply_to_message_id": quote_id,
         },
-        {"id": uuid.uuid4().hex, "role": "assistant", "content": str(assistant_text), "created_at": timestamp},
+        {"id": stable_ids["assistant_message_id"] if stable_ids else uuid.uuid4().hex, "role": "assistant", "content": str(assistant_text), "created_at": timestamp},
     ]
     if sqlite_enabled():
         with sqlite_connection() as conn:
+            # Keep replacement and insertion in one transaction. A failed write
+            # must leave the previously saved reply intact.
+            conn.execute("BEGIN IMMEDIATE")
+            if stable_ids:
+                existing = conn.execute(
+                    "SELECT message_id, role, content, reply_to_message_id FROM conversation_messages WHERE conversation_id = ? AND message_id IN (?, ?)",
+                    (conversation_id, stable_ids["user_message_id"], stable_ids["assistant_message_id"]),
+                ).fetchall()
+                if existing:
+                    by_id = {row["message_id"]: row for row in existing}
+                    expected = (
+                        (stable_ids["user_message_id"], "user", str(user_text), quote_id),
+                        (stable_ids["assistant_message_id"], "assistant", str(assistant_text), None),
+                    )
+                    if len(existing) == 2 and all(
+                        item_id in by_id and by_id[item_id]["role"] == role
+                        and by_id[item_id]["content"] == content
+                        and by_id[item_id]["reply_to_message_id"] == reply_to
+                        for item_id, role, content, reply_to in expected
+                    ):
+                        return conversation_id
+                    raise ValueError("An exchange ID was already used for different conversation content.")
+            if replace_last:
+                tail = conn.execute(
+                    """SELECT id, role, content FROM conversation_messages
+                    WHERE conversation_id = ? ORDER BY position DESC, id DESC LIMIT 2""",
+                    (conversation_id,),
+                ).fetchall()
+                if (len(tail) == 2 and tail[0]["role"] == "assistant"
+                        and tail[1]["role"] == "user" and tail[1]["content"] == user_text):
+                    conn.executemany("DELETE FROM conversation_messages WHERE id = ?", [(item["id"],) for item in tail])
             row = conn.execute(
                 "SELECT COALESCE(MAX(position), -1) AS position FROM conversation_messages WHERE conversation_id = ?",
                 (conversation_id,),
@@ -222,6 +265,26 @@ def append_exchange(
         conversations = _load_json_conversations(user_id)
         for item in conversations:
             if str(item.get("id")) == conversation_id:
+                previous = item.setdefault("messages", [])
+                if stable_ids:
+                    existing_by_id = {str(message.get("id")): message for message in previous}
+                    expected = (
+                        (stable_ids["user_message_id"], "user", str(user_text), quote_id),
+                        (stable_ids["assistant_message_id"], "assistant", str(assistant_text), None),
+                    )
+                    found = [existing_by_id.get(item_id) for item_id, *_ in expected]
+                    if any(found):
+                        if all(message is not None and message.get("role") == role
+                               and message.get("content") == content
+                               and message.get("reply_to_message_id") == reply_to
+                               for message, (_, role, content, reply_to) in zip(found, expected)):
+                            return conversation_id
+                        raise ValueError("An exchange ID was already used for different conversation content.")
+                if (replace_last and len(previous) >= 2
+                        and previous[-2].get("role") == "user"
+                        and previous[-1].get("role") == "assistant"
+                        and previous[-2].get("content") == user_text):
+                    item["messages"] = previous[:-2]
                 item.setdefault("messages", []).extend(messages)
                 item["updated_at"] = timestamp
                 break

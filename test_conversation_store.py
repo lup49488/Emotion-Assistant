@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
 import chatbot
 import conversation_store
 import gui_conversations
@@ -68,6 +69,49 @@ def test_json_quote_archive(tmp_path, monkeypatch):
 def test_sqlite_quote_archive(tmp_path, monkeypatch):
     _use_sqlite_backend(tmp_path, monkeypatch)
     _exercise_quote_archive()
+
+
+def _exercise_idempotent_archive():
+    import uuid
+
+    conversation = conversation_store.create_conversation("archive-user", "Retryable archive")
+    exchange_id = str(uuid.uuid4())
+    ids = conversation_store.exchange_message_ids(exchange_id)
+    for _ in range(2):
+        conversation_store.append_exchange(
+            "archive-user", conversation["id"], "hello", "saved once", exchange_id=exchange_id,
+        )
+    stored = conversation_store.get_conversation("archive-user", conversation["id"])
+    assert [message["content"] for message in stored["messages"]] == ["hello", "saved once"]
+    assert [message["id"] for message in stored["messages"]] == [ids["user_message_id"], ids["assistant_message_id"]]
+
+
+def test_json_archive_retry_is_idempotent(tmp_path, monkeypatch):
+    _use_json_backend(tmp_path, monkeypatch)
+    _exercise_idempotent_archive()
+
+
+def test_sqlite_archive_retry_is_idempotent(tmp_path, monkeypatch):
+    _use_sqlite_backend(tmp_path, monkeypatch)
+    _exercise_idempotent_archive()
+
+
+def test_chat_surfaces_archive_failure_after_streaming_reply(tmp_path, monkeypatch):
+    _use_json_backend(tmp_path, monkeypatch)
+    conversation = conversation_store.create_conversation("archive-user", "Archive failure")
+    state = SessionState(user_id="archive-user")
+    monkeypatch.setattr(chatbot, "safe_analyze", lambda *_args: ("neutral", 0.0))
+    monkeypatch.setattr(chatbot, "smart_memory_filter", lambda *_args, **_kwargs: "discard")
+    monkeypatch.setattr(chatbot, "stream_model_response", lambda *_args: iter(["generated reply"]))
+    monkeypatch.setattr(chatbot, "append_exchange", lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("disk full")))
+
+    streamed = []
+    with pytest.raises(chatbot.ConversationArchiveError):
+        for chunk in chatbot.chat(state, "archive prompt", conversation_id=conversation["id"], use_style=False):
+            streamed.append(chunk)
+
+    assert streamed == ["generated reply"]
+    assert conversation_store.get_conversation("archive-user", conversation["id"])["messages"] == []
 
 
 def test_chat_archives_normal_reply_to_selected_conversation(tmp_path, monkeypatch):
