@@ -172,8 +172,12 @@ class ChatRequest(ContractModel):
     api_key: str | None = None
     temperature: float = Field(default=0.8, ge=0, le=2)
     top_p: float = Field(default=0.9, ge=0, le=1)
-    # Omitted by the React client: honor the server's LLM_MAX_NEW_TOKENS value.
+    # Clients that omit this limit use the server default unless a DeepSeek profile applies.
     max_new_tokens: int = Field(default=DEFAULT_MAX_NEW_TOKENS, ge=1, le=8_192)
+    reply_profile: Literal["fast", "balanced", "detailed"] | None = Field(
+        default=None,
+        description="When supplied for DeepSeek, selects its output budget instead of max_new_tokens.",
+    )
     use_knowledge: bool = False
     use_style: bool = True
     # Empty means "use the whole style corpus"; otherwise filter documents whose

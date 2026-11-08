@@ -568,9 +568,10 @@ def test_chat_stream_emits_structured_retryable_service_error(monkeypatch, tmp_p
     assert '"retryable":true' in body
 
 
-def test_chat_stream_emits_retryable_empty_model_response(monkeypatch, tmp_path):
+@pytest.mark.parametrize("code", ["empty_model_response", "model_output_budget_exhausted"])
+def test_chat_stream_emits_retryable_empty_model_response(monkeypatch, tmp_path, code):
     def empty_response(*_, **__):
-        raise ServiceError("empty_model_response", "no displayable text", retryable=True)
+        raise ServiceError(code, "no displayable text", retryable=True)
         yield "unreachable"
 
     monkeypatch.setattr(api_server, "_chat_chunks", empty_response)
@@ -579,8 +580,30 @@ def test_chat_stream_emits_retryable_empty_model_response(monkeypatch, tmp_path)
         with client.stream("POST", "/api/v1/chat/stream", json={"message": "hi"}, headers=headers) as response:
             body = "".join(response.iter_text())
 
-    assert '"code":"empty_model_response"' in body
+    assert f'"code":"{code}"' in body
     assert '"retryable":true' in body
+    assert 'event: done' not in body
+
+
+@pytest.mark.parametrize("provider,profile,budget,disable_thinking", [
+    (None, "fast", 2048, True),
+    ("deepseek", "balanced", 4096, False),
+    ("deepseek", "detailed", 8192, False),
+    ("deepseek", None, 1500, False),
+    ("openai", "detailed", 1500, False),
+    ("local_hf", "detailed", 1500, False),
+])
+def test_chat_deepseek_reply_profile_controls_budget(monkeypatch, provider, profile, budget, disable_thinking):
+    def reply(*_args, model_config, **_kwargs):
+        assert model_config.max_new_tokens == budget
+        assert model_config.disable_deepseek_thinking is disable_thinking
+        yield "reply"
+
+    monkeypatch.setattr(api_server, "DEFAULT_LLM_PROVIDER", "deepseek")
+    monkeypatch.setattr(api_server, "handle_user_message_stream", reply)
+    monkeypatch.setattr(api_server, "_resolved_style_prefix", lambda *_: "")
+    request = api_server.ChatRequest(message="hi", provider=provider, reply_profile=profile, max_new_tokens=1500)
+    assert list(api_server._chat_chunks("api-alice", request)) == ["reply"]
 
 
 def test_chat_retry_replaces_the_last_saved_exchange(monkeypatch, tmp_path):

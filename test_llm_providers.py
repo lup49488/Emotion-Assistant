@@ -87,6 +87,62 @@ def test_gpt6_chat_request_uses_its_supported_parameters():
     assert "top_p" not in request
 
 
+@pytest.mark.parametrize("base_url,model,disabled,expected", [
+    (None, "deepseek-flash", True, {"thinking": {"type": "disabled"}}),
+    (None, "deepseek-v4-pro", False, None),
+    ("https://compatible.example", "deepseek-flash", True, None),
+    (None, "custom-model", True, None),
+])
+def test_deepseek_fast_mode_only_overrides_thinking_for_supported_official_models(base_url, model, disabled, expected):
+    event = SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="ok"), finish_reason="stop")])
+    client = Mock()
+    client.chat.completions.create.return_value = iter([event])
+    config = llm_providers.ModelRuntimeConfig(
+        provider="deepseek", model=model, base_url=base_url, api_key="test-key",
+        max_new_tokens=2048, disable_deepseek_thinking=disabled,
+    )
+    with patch.object(llm_providers, "require_openai_client", return_value=Mock(return_value=client)):
+        assert list(llm_providers._stream_openai_compatible([], config)) == ["ok"]
+
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["max_tokens"] == 2048
+    assert kwargs.get("extra_body") == expected
+
+
+@pytest.mark.parametrize("content,finish_reason,error_code", [
+    (None, "length", "model_output_budget_exhausted"),
+    ("  ", "stop", "empty_model_response"),
+    ("Partial answer", "length", None),
+])
+def test_openai_compatible_stream_records_provider_usage_and_classifies_empty_reply(content, finish_reason, error_code):
+    events = [
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=None, reasoning_content="not a reply"), finish_reason=None)]),
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content=content), finish_reason=finish_reason)]),
+        SimpleNamespace(choices=[], usage=SimpleNamespace(prompt_tokens=74, completion_tokens=1600)),
+    ]
+    client = Mock()
+    client.chat.completions.create.return_value = iter(events)
+    config = llm_providers.ModelRuntimeConfig(provider="deepseek", api_key="test-key", max_new_tokens=1600)
+    with patch.object(llm_providers, "require_openai_client", return_value=Mock(return_value=client)), \
+         patch.object(llm_providers, "record_usage") as usage:
+        stream = llm_providers._stream_openai_compatible([], config)
+        if error_code:
+            with pytest.raises(llm_providers.ServiceError) as error:
+                list(stream)
+            assert error.value.code == error_code
+            assert error.value.retryable
+        else:
+            assert list(stream) == [content]
+
+    usage.assert_called_once()
+    assert usage.call_args.kwargs["input_tokens"] == 74
+    assert usage.call_args.kwargs["output_tokens"] == 1600
+    assert usage.call_args.kwargs["success"] == (error_code is None)
+    assert usage.call_args.kwargs["error_kind"] == (error_code or "")
+    assert config.run_metadata["truncated"] == (finish_reason == "length")
+    assert client.chat.completions.create.call_count == 1
+
+
 def test_existing_openai_models_keep_sampling_parameters():
     definition = provider_definition("openai")
     assert definition is not None
@@ -175,13 +231,15 @@ def test_blank_deepseek_model_falls_back_to_the_default(monkeypatch):
 def test_deepseek_uses_its_default_endpoint():
     config = llm_providers.ModelRuntimeConfig(provider="deepseek", api_key="deepseek-key")
     client = Mock()
-    client.chat.completions.create.return_value = iter([])
+    client.chat.completions.create.return_value = iter([
+        SimpleNamespace(choices=[SimpleNamespace(delta=SimpleNamespace(content="hello"))]),
+    ])
     factory = Mock(return_value=client)
 
     with patch.object(llm_providers, "require_openai_client", return_value=factory), \
          patch.object(llm_providers, "record_usage"), \
          patch.object(llm_providers, "check_request_allowed"):
-        list(llm_providers._stream_openai_compatible([{"role": "user", "content": "hi"}], config))
+        assert list(llm_providers._stream_openai_compatible([{"role": "user", "content": "hi"}], config)) == ["hello"]
 
     assert factory.call_args.kwargs["base_url"] == "https://api.deepseek.com"
 

@@ -4614,6 +4614,19 @@
             "title": "Max New Tokens",
             "default": 1024
           },
+          "reply_profile": {
+            "anyOf": [
+              {
+                "type": "string",
+                "enum": ["fast", "balanced", "detailed"]
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reply Profile",
+            "description": "When supplied for DeepSeek, selects its output budget instead of max_new_tokens."
+          },
           "use_knowledge": {
             "type": "boolean",
             "title": "Use Knowledge",

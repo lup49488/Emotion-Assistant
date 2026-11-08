@@ -1,5 +1,6 @@
 const messages = {
   en: {
+    error_model_output_budget_exhausted: 'The model reached its reply limit before writing an answer. Try Detailed mode or a shorter request.',
     deleteMoodCheckinConfirm: 'Delete the Mood Check-in for {date}?',
     deleteKnowledgeDocumentConfirm: 'Delete {name} and rebuild the knowledge index?',
     exportDownloaded: 'Your export has been downloaded.',
@@ -29,6 +30,7 @@ const messages = {
     ragInsufficientEvidence: 'The knowledge base does not contain enough relevant information for a grounded answer. Try rephrasing, add a source document, or turn off knowledge retrieval for a general response.',
   },
   zh: {
+    error_model_output_budget_exhausted: '模型在生成正文前已用完回复额度。请切换到深入档位，或缩短请求。',
     error_provider_timeout: '服务商请求超时，请重试。',
     deleteMoodCheckinConfirm: '确定删除 {date} 的心情记录吗？',
     deleteKnowledgeDocumentConfirm: '确定删除 {name} 并重建知识库索引吗？',

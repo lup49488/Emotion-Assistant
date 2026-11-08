@@ -191,6 +191,7 @@ class ModelRuntimeConfig:
     user_id: str | None = None
     allow_fallback: bool = True
     run_metadata: dict[str, Any] = field(default_factory=dict, repr=False)
+    disable_deepseek_thinking: bool = False
 
     def normalized_provider(self) -> str:
         return (self.provider or DEFAULT_LLM_PROVIDER).strip().lower()
@@ -595,20 +596,35 @@ def _stream_openai_compatible(
             "max_tokens": config.max_new_tokens,
         }
     )
+    extra_body = {}
+    if (config.disable_deepseek_thinking and provider == "deepseek"
+            and base_url == "https://api.deepseek.com" and definition is not None
+            and model in definition.model_choices):
+        extra_body["thinking"] = {"type": "disabled"}
 
     try:
         for attempt in range(API_MAX_RETRIES + 1):
             emitted_content = False
             finish_reason: str | None = None
+            reported_input_tokens: int | None = None
+            reported_output_tokens: int | None = None
             response = None
             try:
                 response = client.chat.completions.create(
                     model=model,
                     messages=full_messages,
                     stream=True,
+                    **({"extra_body": extra_body} if extra_body else {}),
                     **request_parameters,
                 )
                 for event in response:
+                    usage = getattr(event, "usage", None)
+                    prompt_tokens = getattr(usage, "prompt_tokens", None)
+                    completion_tokens = getattr(usage, "completion_tokens", None)
+                    if type(prompt_tokens) is int and prompt_tokens >= 0:
+                        reported_input_tokens = prompt_tokens
+                    if type(completion_tokens) is int and completion_tokens >= 0:
+                        reported_output_tokens = completion_tokens
                     if not event.choices:
                         continue
                     choice = event.choices[0]
@@ -631,16 +647,32 @@ def _stream_openai_compatible(
                         "event=model_output_truncated request_id=%s provider=%s model=%s max_new_tokens=%s",
                         get_request_id(), provider, model, config.max_new_tokens,
                     )
+                reply = "".join(chunks)
+                has_reply = bool(reply.strip())
+                empty_error = "" if has_reply else (
+                    "model_output_budget_exhausted" if finish_reason == "length" else "empty_model_response"
+                )
                 record_usage(
                     config.user_id,
                     provider=provider,
                     model=model,
-                    input_tokens=input_tokens,
-                    output_tokens=estimate_tokens("".join(chunks)) if chunks else 0,
+                    input_tokens=reported_input_tokens if reported_input_tokens is not None else input_tokens,
+                    output_tokens=reported_output_tokens if reported_output_tokens is not None else (
+                        estimate_tokens(reply) if reply else 0
+                    ),
                     duration_ms=int((time.perf_counter() - started) * 1000),
-                    success=True,
+                    success=has_reply,
+                    error_kind=empty_error,
                 )
+                if empty_error:
+                    message = (
+                        "模型在生成正文前已用完回复额度，请切换到深入档位或缩短请求。"
+                        if finish_reason == "length" else "模型本次没有返回可显示的文本。"
+                    )
+                    raise ServiceError(empty_error, message, retryable=True)
                 return
+            except ServiceError:
+                raise
             except Exception as exc:
                 retryable = _is_retryable_api_error(exc)
                 if emitted_content or attempt >= API_MAX_RETRIES or not retryable:

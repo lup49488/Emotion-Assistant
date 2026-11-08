@@ -11,6 +11,26 @@ test.beforeEach(async ({ page, request }) => {
   await expect(page.getByPlaceholder('Message Serenova')).toBeVisible()
 })
 
+test('the selected reply profile is sent and a spent budget suggests a longer profile', async ({ page }) => {
+  let sentProfile
+  await page.route('**/api/v1/chat/stream', (route) => {
+    sentProfile = route.request().postDataJSON().reply_profile
+    return route.fulfill({
+      contentType: 'text/event-stream',
+      body: 'event: error\ndata: {"code":"model_output_budget_exhausted","retryable":true}\n\n',
+    })
+  })
+  await page.getByRole('button', { name: 'Model & reply style' }).first().click()
+  const settings = page.getByRole('complementary', { name: 'Model & reply style' })
+  await settings.getByRole('button', { name: 'Fast and concise' }).click()
+  await settings.getByRole('button', { name: 'Hide preferences' }).click()
+  await page.getByPlaceholder('Message Serenova').fill('Test the reply budget')
+  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByRole('alert')).toContainText('Try Detailed mode or a shorter request.')
+  await expect(page.locator('.message.assistant').getByTitle('Regenerate')).toBeEnabled()
+  expect(sentProfile).toBe('fast')
+})
+
 test('a partial stream without done keeps its text and offers retry', async ({ page }) => {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))

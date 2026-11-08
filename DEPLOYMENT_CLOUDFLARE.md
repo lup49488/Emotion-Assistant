@@ -39,6 +39,20 @@ Public mode refuses to start unless secure cookies, a fixed session secret, and
 an explicit public host allowlist are configured. The API also applies strict
 security response headers, a request-size limit, and failed-login rate limits.
 
+### DeepSeek reply budgets
+
+The web reply profiles use 2048 (Fast), 4096 (Balanced), and 8192 (Detailed)
+generated tokens for DeepSeek. Fast disables thinking on supported models at
+the official DeepSeek endpoint; the other profiles keep the provider's default.
+The cap covers both thinking and answer tokens. Other providers keep their
+existing profile limits.
+
+Deploy both the API and web images together. No new environment variable,
+secret, or database migration is required. `LLM_MAX_NEW_TOKENS` remains the
+default for API calls without a profile or an explicit `max_new_tokens` value;
+it does not set the web profile budgets. An API client can omit `reply_profile`
+to set `max_new_tokens` directly.
+
 ## 2. Start the Docker stack
 
 Docker Compose runs the FastAPI container behind the frontend Nginx container.

@@ -481,6 +481,7 @@ function App() {
           api_key: options.apiKey || null,
           temperature: MODEL_PROFILES[options.profile].temperature,
           max_new_tokens: MODEL_PROFILES[options.profile].maxNewTokens,
+          reply_profile: options.profile,
           use_knowledge: moodCheckinContext ? false : options.useKnowledge,
           use_style: options.useStyle,
           style_prefix: options.stylePrefix,

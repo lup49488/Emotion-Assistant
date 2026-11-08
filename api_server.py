@@ -650,6 +650,9 @@ def _stream_and_report(
         sink.update(config.run_metadata)
 
 
+_DEEPSEEK_PROFILE_BUDGETS = {"fast": 2048, "balanced": 4096, "detailed": 8192}
+
+
 def _chat_chunks(
     user_id: str,
     request: ChatRequest,
@@ -668,6 +671,9 @@ def _chat_chunks(
         max_new_tokens=request.max_new_tokens,
         user_id=user_id,
     )
+    if request.reply_profile and config.normalized_provider() == "deepseek":
+        config.max_new_tokens = _DEEPSEEK_PROFILE_BUDGETS[request.reply_profile]
+        config.disable_deepseek_thinking = request.reply_profile == "fast"
     yield from _stream_and_report(config, run_metadata_sink, handle_user_message_stream(
         user_id,
         request.message,
@@ -899,6 +905,8 @@ async def chat_stream(request: ChatRequest, user_id: CsrfCurrentUser) -> Streami
             logger.exception("event=chat_failed request_id=%s provider=%s streaming=true", request_id, request.provider or DEFAULT_LLM_PROVIDER)
             if isinstance(exc, ConversationArchiveError):
                 error = ApiError(code="conversation_save_failed", message="The reply was generated but could not be saved. Keep this text and retry saving it.", retryable=True)
+            elif isinstance(exc, ServiceError) and exc.code == "model_output_budget_exhausted":
+                error = ApiError(code=exc.code, message="模型达到回复额度，未生成正文。", retryable=exc.retryable)
             elif isinstance(exc, ServiceError):
                 error = ApiError(code=exc.code, message="模型服务暂时不可用，请稍后重试。", retryable=exc.retryable)
             else:
