@@ -66,8 +66,7 @@ React 前端和 FastAPI 是公开网站的主要路径；Gradio GUI 适合本地
 
 ## 环境要求
 
-- Python 3.10+
-- Node.js/npm，用于 React 前端
+- CI 使用 Python 3.12 和 Node.js 22（含 npm）。
 - 模型服务 API Key，除非使用 `LLM_PROVIDER=local_hf`
 
 安装 Python 依赖：
@@ -92,7 +91,7 @@ python -m pip install -r requirements/dev.txt
 
 ```powershell
 cd frontend
-npm install
+npm ci
 cd ..
 ```
 
@@ -273,7 +272,7 @@ FastAPI 也提供管理员权限的 RAG 上传、重建、搜索诊断、质量�
 
 ### 检索回归集
 
-[`knowledge_base/rag_evaluation_cases.json`](knowledge_base/rag_evaluation_cases.json) 是随仓库版本管理、面向当前知识语料的回归集。它同时包含应当依据资料回答的自然问题，以及以 `expected_outcome: "insufficient"` 标记的资料库外问题。
+[`knowledge_base/rag_evaluation_cases.json`](knowledge_base/rag_evaluation_cases.json) 是随仓库版本管理的回归用例。要按预期来源复现评估，需要另行取得参考语料并建索引。它同时包含应当依据资料回答的自然问题，以及以 `expected_outcome: "insufficient"` 标记的资料库外问题。
 
 资料命中样本需要填写 `expected_sources` 和/或 `expected_keywords`；资料不足样本不应填写这两个字段。可在 Gradio 的 RAG 面板导入更新后的 JSON 或 JSONL 评估集后再运行评估。启用发布门槛时，只要评估集包含资料不足样本，还会检查 `RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL`。
 
@@ -366,3 +365,12 @@ Serenova 在 `safety.py` 中包含代码层面的危机兜底逻辑。当聊天�
 - 希望24热线: 400 161 9995
 
 如果用户不在中国，请联系所在地可用的紧急服务或危机干预资源。
+
+## 许可证
+
+项目自有源代码和配套文档采用 [MIT 许可证](LICENSE)。第三方依赖、模型权重和上游素材适用各自的条款。
+可选本地模型 [Qwen2.5-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE)
+采用 Qwen Research License，商业使用需另行取得许可。
+
+MIT 授权范围不包括停用词表、前端插图和标识、评估数据集、原始语料及摘录、运行时用户数据。
+再分发这些材料需依据各自适用的权利和许可。

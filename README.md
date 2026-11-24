@@ -66,8 +66,7 @@ The React frontend and FastAPI API are the public web path. The Gradio GUI can a
 
 ## Requirements
 
-- Python 3.10+
-- Node.js/npm for the React frontend
+- Python 3.12 and Node.js 22 with npm are the versions used by CI.
 - A model provider API key, unless you run `LLM_PROVIDER=local_hf`
 
 Install Python dependencies:
@@ -92,7 +91,7 @@ Install frontend dependencies:
 
 ```powershell
 cd frontend
-npm install
+npm ci
 cd ..
 ```
 
@@ -276,7 +275,7 @@ The API also exposes administrator-protected RAG management routes for uploads, 
 
 ### Retrieval regression set
 
-[`knowledge_base/rag_evaluation_cases.json`](knowledge_base/rag_evaluation_cases.json) is a versioned regression set for the bundled knowledge corpus. It contains natural grounded questions plus `expected_outcome: "insufficient"` cases for questions the corpus should decline to answer from sources.
+[`knowledge_base/rag_evaluation_cases.json`](knowledge_base/rag_evaluation_cases.json) is a versioned regression set for the reference knowledge corpus. The repository includes the cases; running them against their expected sources requires obtaining the corpus separately and building its index. It contains natural grounded questions plus `expected_outcome: "insufficient"` cases for questions the corpus should decline to answer from sources.
 
 For a grounded case, set `expected_sources` and/or `expected_keywords`. For an insufficient-evidence case, omit both fields. Import a revised JSON or JSONL set from the Gradio RAG panel before running an evaluation. When the release gate is enabled, it also checks `RAG_RELEASE_MIN_INSUFFICIENT_REFUSAL` whenever the set contains insufficient-evidence cases.
 
@@ -372,3 +371,15 @@ For users in the United States:
 - 988 Lifeline website: [https://988lifeline.org](https://988lifeline.org?oai_link_source=model_response_hotline)
 
 If you are outside the United States, use the emergency or crisis service available in your location.
+
+## License
+
+The project-owned source code and associated documentation are available under
+the [MIT License](LICENSE). Third-party dependencies, model weights, and
+upstream assets remain subject to their own terms. The optional local model
+[Qwen2.5-3B-Instruct](https://huggingface.co/Qwen/Qwen2.5-3B-Instruct/blob/main/LICENSE)
+uses the Qwen Research License, which requires a separate license for commercial use.
+
+The MIT grant excludes the stopword list, frontend artwork and logos, evaluation
+datasets, source corpora and excerpts, and runtime user data. Redistribution of
+those materials depends on their applicable rights and permissions.

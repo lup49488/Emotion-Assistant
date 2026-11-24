@@ -102,6 +102,15 @@ def submit_feedback(user_id: str, trace_id: str, helpful: bool, comment: str = "
     return {"trace_id": trace_id, **record}
 
 
+def delete_json_user_feedback(user_id: str) -> None:
+    user_id = validate_user_id(user_id)
+    with _LOCK:
+        records = _records()
+        remaining = [record for record in records if record.get("user_id") != user_id]
+        if len(remaining) != len(records):
+            _save(remaining)
+
+
 def feedback_summary(limit: int = 12) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     with _LOCK:
