@@ -17,6 +17,8 @@ data/*.db
 data/*.db-shm
 data/*.db-wal
 data/observability_events.json
+/data/rag_feedback.json
+/data/rag_feedback.json.tmp
 data/job_uploads/
 data/model_offload/
 data/hf_cache/

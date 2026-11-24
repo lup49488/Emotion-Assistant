@@ -10,6 +10,7 @@ from conversation_store import list_conversations
 from export_store import EXPORTS_DIR
 from memory_backup import BACKUPS_DIR
 from mood_store import load_mood_checkins
+from rag_feedback_store import delete_json_user_feedback
 from session_store import load_state, user_dir, user_file_lock, validate_user_id
 from sqlite_store import connection, sqlite_enabled, storage_backend
 
@@ -75,6 +76,7 @@ def delete_all_user_data(user_id: str) -> dict[str, int | str]:
                 cursor = conn.execute("DELETE FROM users WHERE user_id = ?", (user_id,))
                 database_rows = max(0, int(cursor.rowcount))
         else:
+            delete_json_user_feedback(user_id)
             database_rows = 0
         directory_removed = int(user_directory.exists())
         if user_directory.exists():

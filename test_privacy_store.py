@@ -3,9 +3,15 @@ from pathlib import Path
 import pytest
 
 import privacy_store
+import rag_feedback_store
 import session_store
 from auth_store import verify_access
 from sqlite_store import connection
+
+
+@pytest.fixture(autouse=True)
+def isolate_rag_feedback(tmp_path, monkeypatch):
+    monkeypatch.setattr(rag_feedback_store, "_JSON_PATH", tmp_path / "rag_feedback.json")
 
 
 def test_delete_all_user_data_removes_json_files_exports_and_backups(tmp_path, monkeypatch):
@@ -89,3 +95,28 @@ def test_delete_preserves_exports_owned_by_users_with_shared_prefix(tmp_path, mo
     assert all(not path.exists() for path in own_files)
     assert result["exports"] == 1
     assert result["backups"] == 2
+
+
+
+@pytest.mark.parametrize("backend", ["json", "sqlite"])
+def test_delete_removes_owned_rag_traces_and_feedback(tmp_path, monkeypatch, backend):
+    monkeypatch.setenv("STORAGE_BACKEND", backend)
+    monkeypatch.setenv("SQLITE_DATABASE_PATH", str(tmp_path / "chatbot.db"))
+    monkeypatch.setattr(session_store, "USERS_DIR", tmp_path / "users")
+    monkeypatch.setattr(privacy_store, "EXPORTS_DIR", tmp_path / "exports")
+    monkeypatch.setattr(privacy_store, "BACKUPS_DIR", tmp_path / "backups")
+    monkeypatch.setattr(privacy_store, "_clear_cached_session", lambda user_id: None)
+
+    citations = [{"source": "Synthetic source", "excerpt": "Synthetic excerpt"}]
+    own_trace = rag_feedback_store.create_citation_trace("alice", None, citations)
+    other_trace = rag_feedback_store.create_citation_trace("alice_bob", None, citations)
+    rag_feedback_store.submit_feedback("alice", own_trace, False, "Synthetic feedback")
+    rag_feedback_store.submit_feedback("alice_bob", other_trace, True)
+
+    privacy_store.delete_all_user_data("alice")
+    privacy_store.delete_all_user_data("alice")
+
+    with pytest.raises(LookupError):
+        rag_feedback_store.submit_feedback("alice", own_trace, True)
+    assert rag_feedback_store.submit_feedback("alice_bob", other_trace, True)["helpful"]
+    assert rag_feedback_store.feedback_summary()["total"] == 1

@@ -156,6 +156,14 @@ CI verified, so `/opt/Emotion-Assistant` sits on a **detached HEAD**. A manual
 manually with `workflow_dispatch` and a full 40-character `commit_sha`, or leave
 that input empty to deploy the current `origin/main` tip.
 
+Before the first deploy that removes the tracked `data/rag_feedback.json`,
+check the host copy if you use JSON storage. Stop writes and save any live copy
+to a private location outside the checkout before switching revisions. Git can
+remove the tracked file during checkout. Restore the saved runtime file to
+`data/rag_feedback.json` after the revision switch, before resuming traffic.
+Keep that private copy available if rolling back to a revision that tracks the
+file.
+
 Each deployment records where it came from and makes an integrity-checked SQLite
 backup in `.deployment/backups/` before starting the new image. If the stack
 fails its health check, the workflow restores the previous revision only when
